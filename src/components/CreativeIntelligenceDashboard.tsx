@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Table,
   TableBody,
@@ -117,6 +118,7 @@ export function CreativeIntelligenceDashboard({
   projectFilter?: string,
   ownerFilter?: string
 }) {
+  const navigate = useNavigate();
   const [activeSubTab, setActiveSubTab] = useState<"preview" | "metrics" | "trends">("preview");
   const [searchTerm, setSearchTerm] = useState("");
   const [creatives, setCreatives] = useState<CreativeData[]>([]);
@@ -126,6 +128,7 @@ export function CreativeIntelligenceDashboard({
   const [storesList, setStoresList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<any>(null);
 
   const handleSyncCreatives = async () => {
     setSyncing(true);
@@ -275,8 +278,8 @@ export function CreativeIntelligenceDashboard({
       const endStr = endDate ? format(endDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
 
       const [resGrouped, resDaily, resStores] = await Promise.all([
-        axios.get("/api/intelligence/creatives", {
-          params: { startDate: startStr, endDate: endStr, storeFilter: localStoreFilter }
+        axios.get("/api/data-center/creative-insights", {
+          params: { startDate: startStr, endDate: endStr, storeFilter: localStoreFilter, pageSize: 1000, includeZeroSpend: true }
         }),
         axios.get("/api/intelligence/creatives/daily", {
           params: { startDate: startStr, endDate: endStr, storeFilter: localStoreFilter }
@@ -284,12 +287,13 @@ export function CreativeIntelligenceDashboard({
         axios.get("/api/stores").catch(() => ({ data: [] }))
       ]);
 
-      const formattedGrouped = (resGrouped.data || []).map((item: any) => ({
+      const formattedGrouped = (resGrouped.data?.data || []).map((item: any) => ({
         ...item,
         type: item.type || "IMAGE"
       }));
 
       setCreatives(formattedGrouped);
+      setDiagnostics(resGrouped.data?.diagnostics || null);
       setDailyRecords(resDaily.data || []);
       setStoresList(resStores.data || []);
 
@@ -855,6 +859,28 @@ export function CreativeIntelligenceDashboard({
           <span className="text-[11px]">同步监测: <strong className="text-slate-600 font-semibold">自动同步 (近24小时)</strong></span>
         </div>
       </div>
+
+      {/* Diagnostics Health Warnings Alert */}
+      {diagnostics && (diagnostics.noAdLevelInsightsWarning || diagnostics.adCreativeNotLinkedWarning || diagnostics.creativeStaticMissingWarning) && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-950 rounded-xl p-4 space-y-2 shadow-sm animate-in fade-in duration-200">
+          <div className="flex items-center gap-2 font-bold text-amber-800 text-xs">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>素材洞察诊断状态：请参照以下原因进行排查与引导</span>
+          </div>
+          <ul className="list-disc pl-5 space-y-1 text-xs text-amber-800 font-medium leading-relaxed">
+            {diagnostics.noAdLevelInsightsWarning && (
+              <li>素材表现需要 Ad Level Insights，请先同步广告级成效。</li>
+            )}
+            {diagnostics.adCreativeNotLinkedWarning && (
+              <li>Ad 与 Creative 未关联，请先同步广告结构与素材。</li>
+            )}
+            {diagnostics.creativeStaticMissingWarning && (
+              <li>Creative 静态信息未同步，但该 Ad 有真实成效。</li>
+            )}
+          </ul>
+        </div>
+      )}
+
       {/* Dynamic coupled BI Header */}
       <div className="bg-white px-6 py-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-end">
         
@@ -1882,9 +1908,22 @@ export function CreativeIntelligenceDashboard({
 
             </div>
 
-            <div className="p-4 border-t border-slate-100 bg-slate-50 flex">
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex gap-3">
               <Button 
-                className="w-full h-10 bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs rounded-lg"
+                className="flex-1 h-10 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg"
+                onClick={() => {
+                  setPreviewModalOpen(false);
+                  const cleanAccId = selectedPreviewCreative.accountId ? (selectedPreviewCreative.accountId.toLowerCase().startsWith("act_") ? selectedPreviewCreative.accountId : `act_${selectedPreviewCreative.accountId}`) : "";
+                  // Navigate using router search params
+                  navigate(`/?tab=data-campaigns&accountId=${cleanAccId}&campaignId=${selectedPreviewCreative.campaignId || ""}&adsetId=${selectedPreviewCreative.adsetId || ""}&creativeId=${selectedPreviewCreative.id || ""}`);
+                  setSelectedPreviewCreative(null);
+                }}
+              >
+                查看关联 Ad
+              </Button>
+              <Button 
+                variant="outline"
+                className="flex-1 h-10 border-slate-200 text-slate-700 bg-white font-semibold text-xs rounded-lg"
                 onClick={() => { setPreviewModalOpen(false); setSelectedPreviewCreative(null); }}
               >
                 确认关闭

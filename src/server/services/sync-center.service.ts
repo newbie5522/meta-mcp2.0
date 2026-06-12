@@ -5,6 +5,7 @@ import dayjs from "dayjs";
 import { getMetaToken, normalizeMetaAccountId } from "../utils.js";
 import { ensureAdAccounts } from "./meta-hierarchy-sync.service.js";
 import { syncMetaInsightsForActiveAccounts } from "./meta-insights.service.js";
+import { syncAudienceBreakdownsForActiveAccounts } from "./audience-insights.service.js";
 import { syncStoreData } from "./store-sync.service.js";
 import { extractMetaAssetHash } from "./metaFetchPatch.service.js";
 
@@ -493,6 +494,53 @@ export class SyncCenter {
             recordsUpdated: stats.recordsUpdated,
             recordsFailed: stats.recordsFailed,
             levelCounts: stats.levelCounts,
+            completedAt: new Date().toISOString()
+          }
+        };
+      }
+    );
+  }
+
+  // 6b. sync_meta_audience
+  static async syncMetaAudience(
+    taskChainId: string,
+    triggeredBy: string,
+    parentTaskId: string | null = null,
+    days: number = 3,
+    accountId: string | null = null,
+    startDate: string | null = null,
+    endDate: string | null = null
+  ): Promise<string> {
+    return this.runTask(
+      "sync_meta_audience",
+      "meta",
+      triggeredBy,
+      taskChainId,
+      parentTaskId,
+      null,
+      accountId,
+      async () => {
+        const stats = await syncAudienceBreakdownsForActiveAccounts({
+          days,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          accountId: accountId || undefined,
+          taskChainId,
+          parentTaskId,
+          triggeredBy
+        });
+        
+        return {
+          recordsFetched: stats.recordsFetched,
+          recordsSaved: stats.recordsSaved,
+          metadata: {
+            days,
+            startDate,
+            endDate,
+            accountId,
+            targetTable: "FactAudienceBreakdown",
+            recordsUpdated: stats.recordsUpdated,
+            recordsFailed: stats.recordsFailed,
             completedAt: new Date().toISOString()
           }
         };

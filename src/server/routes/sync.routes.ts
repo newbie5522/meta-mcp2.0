@@ -195,6 +195,14 @@ router.post("/sync/trigger", async (req, res) => {
       message = accountId
         ? `已开始对账户 ${accountId} 同步指定范围的 Meta 广告成效数据。`
         : `已开始同步 Meta 过去 ${daysVal} 天的广告成效与展现/消耗报表。`;
+    } else if (taskType === "sync_meta_audience") {
+      const daysVal = days ? parseInt(days, 10) : 3;
+      SyncCenter.syncMetaAudience(chainId, "manual_trigger", null, daysVal, accountId, startDate, endDate)
+        .catch(e => console.error(e));
+      
+      message = accountId
+        ? `已开始对账户 ${accountId} 同步指定范围的 Meta 受众、设备与渠道版位细分洞察。`
+        : `已开始从 Meta API 单步同步过去 ${daysVal} 天的受众/版位/设备等事实事实级细分归档。`;
     } else if (taskType === "sync_store_orders") {
       if (!storeId) return res.status(400).json({ error: "Store ID is required for sync_store_orders" });
       SyncCenter.syncStoreOrders(parseInt(storeId, 10), chainId, "manual_trigger")

@@ -3,6 +3,7 @@ import { Router } from "express";
 import prisma from "../../db/index.js";
 import { getProductIntelligence } from "../services/product-intelligence.service.js";
 import { getCreativeIntelligence } from "../services/creative-intelligence.service.js";
+import { getAggregatedCreativeInsights } from "../services/creative-insights.service.js";
 import { attributePurchases } from "../services/attribution.service.js";
 import { aggregateData } from "../services/aggregation.service.js";
 
@@ -23,7 +24,14 @@ router.get("/creatives", async (req, res) => {
   const { startDate, endDate, storeFilter } = req.query;
   if (!startDate || !endDate) return res.status(400).json({ error: "Missing dates" });
   try {
-    const data = await getCreativeIntelligence(startDate as string, endDate as string, storeFilter as string);
+    const result = await getAggregatedCreativeInsights({
+      startDate: startDate as string,
+      endDate: endDate as string,
+      storeId: storeFilter as string,
+      pageSize: 1000
+    });
+    
+    const data = result.data || [];
     
     // Set headers for chunked streaming response
     res.setHeader('Content-Type', 'application/json');

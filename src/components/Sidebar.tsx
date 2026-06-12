@@ -23,6 +23,7 @@ export const menuGroups: MenuItem[] = [
     icon: Database,
     subs: [
       { id: 'data-details', label: '账户表现' },
+      { id: 'data-store', label: '店铺订单' },
       { id: 'data-campaigns', label: '广告层级' },
       { id: 'data-audiences', label: '受众洞察' },
       { id: 'data-creatives', label: '素材洞察' },

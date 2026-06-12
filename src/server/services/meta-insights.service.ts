@@ -12,17 +12,51 @@ async function fetchEdges(path: string, params: Record<string, any>, token: stri
   let after: string | undefined;
 
   for (let page = 0; page < maxPages; page++) {
-    try {
-      const res = await axios.get(url, {
-        params: { ...params, access_token: token, after }
-      });
-      const data = res.data?.data || [];
-      rows.push(...data);
-      after = res.data?.paging?.cursors?.after;
-      if (!after || !res.data?.paging?.next) break;
-    } catch (err: any) {
-      console.error(`[Meta API Fetch] Error fetching path ${path}:`, err.response?.data || err.message);
-      throw err;
+    let retries = 3;
+    let success = false;
+    let lastErr: any = null;
+
+    while (retries > 0 && !success) {
+      try {
+        const res = await axios.get(url, {
+          params: { ...params, access_token: token, after }
+        });
+        const data = res.data?.data || [];
+        rows.push(...data);
+        after = res.data?.paging?.cursors?.after;
+        success = true;
+        if (!after || !res.data?.paging?.next) break;
+      } catch (err: any) {
+        lastErr = err;
+        const fbError = err.response?.data?.error;
+        const msg = fbError?.message || err.message || "";
+        const code = fbError?.code;
+        const subcode = fbError?.error_subcode;
+
+        console.warn(`[Meta API Fetch Warn] Attempt failed for path ${path} (Retries left: ${retries - 1}). Error: [Code ${code}, Subcode ${subcode}] ${msg}`);
+        
+        // Wait longer on each retry
+        const waitMs = (4 - retries) * 1500;
+        await delay(waitMs);
+        retries--;
+      }
+    }
+
+    if (!success && lastErr) {
+      const fbError = lastErr.response?.data?.error;
+      const msg = fbError?.message || lastErr.message || "";
+      const code = fbError?.code;
+      const subcode = fbError?.error_subcode;
+      
+      const isTransient = code === 1 || subcode === 99 || msg.includes("An unknown error occurred") || msg.includes("timeout") || lastErr.code === "ECONNABORTED";
+      
+      if (isTransient) {
+        console.error(`[Meta API Fetch] Fallback recovery on transient/internal error [Code ${code}, Subcode ${subcode}] for ${path}. Returning cached/partial rows instead of crashing.`);
+        break; 
+      } else {
+        console.error(`[Meta API Fetch] Non-transient fatal error fetching path ${path}:`, lastErr.response?.data || lastErr.message);
+        throw lastErr;
+      }
     }
   }
   return rows;

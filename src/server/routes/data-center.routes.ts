@@ -5,6 +5,7 @@ import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import { getCreativeIntelligence } from "../services/creative-intelligence.service.js";
+import { getAggregatedCreativeInsights } from "../services/creative-insights.service.js";
 import { syncStoreData } from "../services/store-sync.service.js";
 import { normalizeMetaAccountId } from "../utils.js";
 
@@ -1131,142 +1132,547 @@ router.get("/accounts-performance", async (req, res) => {
 });
 
 /**
- * GET /api/data-center/ad-hierarchy
- * Returns fully detailed, aggregated visual metrics across campaigns, adsets, and ads
+ * GET /api/data-center/ad-hierarchy/accounts
+ * Returns account hierarchy list aggregated from fact_meta_performance level='account'
  */
-router.get("/ad-hierarchy", async (req, res) => {
-  const { selectedAccount, startDate, endDate, level = "campaigns" } = req.query;
+router.get("/ad-hierarchy/accounts", async (req, res) => {
+  const { startDate, endDate, storeId, includeZeroSpend } = req.query;
   try {
-    const isAll = (!selectedAccount || selectedAccount === "all" || selectedAccount === "all_active");
-    const dateStart = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-    const dateEnd = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
-    
-    const normAccountId = selectedAccount ? normalizeMetaAccountId(String(selectedAccount)) : "";
+    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
+    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const showAll = includeZeroSpend === "true";
 
-    const targetLevel = (level === "campaigns" || level === "campaign") ? "campaign" : (level === "adsets" || level === "adset") ? "adset" : "ad";
-
-    // Query directly from AdInsight table at the requested level, bypassing DailySummary constraints entirely.
-    const insights = await prisma.adInsight.findMany({
+    // 1. Fetch performance rows from fact_meta_performance
+    const performanceRows = await prisma.factMetaPerformance.findMany({
       where: {
-        level: targetLevel,
-        date: { gte: dateStart, lte: dateEnd },
-        ...(isAll ? {} : {
-          accountId: normAccountId
-        })
+        level: "account",
+        date: { gte: startStr, lte: endStr }
       }
     });
 
-    // Sub-tables lookups to supplement accurate names if structure records exist
-    let campaignMap = new Map();
-    let adsetMap = new Map();
-    let adMap = new Map();
+    // 2. Fetch structural adAccounts, maps, and stores
+    const [adAccounts, accountMappings] = await Promise.all([
+      prisma.adAccount.findMany({ include: { store: true } }),
+      prisma.accountMapping.findMany({ include: { store: true } })
+    ]);
 
-    if (targetLevel === "campaign") {
-      const dbCamps = await prisma.campaign.findMany();
-      dbCamps.forEach(c => campaignMap.set(c.id, c));
-    } else if (targetLevel === "adset") {
-      const dbAdsets = await prisma.adSet.findMany();
-      dbAdsets.forEach(s => adsetMap.set(s.id, s));
-    } else if (targetLevel === "ad") {
-      const dbAds = await prisma.ad.findMany();
-      dbAds.forEach(a => adMap.set(a.id, a));
-    }
+    // 3. Structural counts
+    const [campaignGroup, adsetGroup, adGroup] = await Promise.all([
+      prisma.campaign.groupBy({
+        by: ['accountId'],
+        _count: { id: true }
+      }),
+      prisma.adSet.groupBy({
+        by: ['accountId'],
+        _count: { id: true }
+      }),
+      prisma.ad.groupBy({
+        by: ['accountId'],
+        _count: { id: true }
+      })
+    ]);
 
-    // Run real-time in-memory grouping on real multi-level data
-    const aggMap = new Map<string, {
-      id: string;
-      name: string;
-      accountId: string;
-      campaignId?: string;
-      adsetId?: string;
-      creativeId?: string;
-      spend: number;
-      impressions: number;
-      clicks: number;
-      orders: number;
-      revenue: number;
-    }>();
+    const campaignCounts = new Map<string, number>();
+    campaignGroup.forEach(g => campaignCounts.set(normalizeMetaAccountId(g.accountId), g._count.id));
 
-    for (const row of insights) {
-      const entityId = targetLevel === "campaign" ? row.campaignId : targetLevel === "adset" ? row.adsetId : row.adId;
-      if (!entityId) continue;
+    const adsetCounts = new Map<string, number>();
+    adsetGroup.forEach(g => adsetCounts.set(normalizeMetaAccountId(g.accountId), g._count.id));
 
-      if (!aggMap.has(entityId)) {
-        let parentCampId = row.campaignId || "";
-        let parentAdsetId = row.adsetId || "";
-        let creativeId = "";
+    const adCounts = new Map<string, number>();
+    adGroup.forEach(g => adCounts.set(normalizeMetaAccountId(g.accountId), g._count.id));
 
-        let name = row.accountName || `${targetLevel.toUpperCase()} ${entityId}`;
+    const adAccountsMap = new Map<string, any>();
+    adAccounts.forEach(a => adAccountsMap.set(normalizeMetaAccountId(a.fb_account_id), a));
 
-        // Match accurate naming if structural records are present
-        if (targetLevel === "campaign") {
-          const companion = campaignMap.get(entityId);
-          if (companion) {
-            name = companion.name;
-          }
-        } else if (targetLevel === "adset") {
-          const companion = adsetMap.get(entityId);
-          if (companion) {
-            name = companion.name;
-            parentCampId = companion.campaignId;
-          }
-        } else if (targetLevel === "ad") {
-          const companion = adMap.get(entityId);
-          if (companion) {
-            name = companion.name;
-            parentCampId = companion.campaignId || "";
-            parentAdsetId = companion.adsetId || "";
-            creativeId = companion.creativeId || "";
-          }
-        }
+    const mappingsMap = new Map<string, any>();
+    accountMappings.forEach(m => mappingsMap.set(normalizeMetaAccountId(m.fbAccountId), m));
 
-        aggMap.set(entityId, {
-          id: entityId,
-          name,
-          accountId: row.accountId,
-          campaignId: parentCampId,
-          adsetId: parentAdsetId,
-          creativeId,
+    // 4. Group and aggregate daily performance
+    const performanceMap = new Map<string, any>();
+    for (const row of performanceRows) {
+      const normId = normalizeMetaAccountId(row.account_id);
+      if (!performanceMap.has(normId)) {
+        performanceMap.set(normId, {
           spend: 0,
           impressions: 0,
           clicks: 0,
-          orders: 0,
-          revenue: 0
+          purchases: 0,
+          purchase_value: 0
         });
       }
-
-      const entry = aggMap.get(entityId)!;
-      entry.spend += Number(row.spend || 0);
-      entry.impressions += Number(row.impressions || 0);
-      entry.clicks += Number(row.clicks || 0);
-      entry.orders += Number(row.purchases || 0);
-      entry.revenue += Number(row.purchaseValue || 0);
+      const agg = performanceMap.get(normId);
+      agg.spend += row.spend || 0;
+      agg.impressions += row.impressions || 0;
+      agg.clicks += row.clicks || 0;
+      agg.purchases += row.purchases || 0;
+      agg.purchase_value += row.purchase_value || 0;
     }
 
-    const processed = Array.from(aggMap.values()).map(item => {
-      return {
-        id: item.id,
-        name: item.name,
-        accountId: item.accountId,
-        campaignId: item.campaignId,
-        adsetId: item.adsetId,
-        creativeId: item.creativeId,
-        status: "ACTIVE",
-        spend: item.spend,
-        impressions: item.impressions,
-        clicks: item.clicks,
-        orders: item.orders,
-        revenue: item.revenue,
-        roas: item.spend > 0 ? item.revenue / item.spend : 0,
-        ctr: item.impressions > 0 ? (item.clicks / item.impressions) * 100 : 0,
-        cpc: item.clicks > 0 ? item.spend / item.clicks : 0
+    // 5. Build union of all possible accounts
+    const allAccountIds = new Set<string>([
+      ...performanceMap.keys(),
+      ...adAccountsMap.keys(),
+      ...mappingsMap.keys()
+    ]);
+
+    let results: any[] = [];
+    for (const rawId of allAccountIds) {
+      const normId = normalizeMetaAccountId(rawId);
+      const agg = performanceMap.get(normId) || {
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        purchases: 0,
+        purchase_value: 0
       };
+
+      const adAcc = adAccountsMap.get(normId);
+      const mapping = mappingsMap.get(normId);
+
+      // Determine bound store info
+      let storeIdVal: number | null = null;
+      let storeName = "未关联店铺";
+      let isBound = false;
+
+      if (adAcc && adAcc.storeId) {
+        storeIdVal = adAcc.storeId;
+        storeName = adAcc.store?.name || "未关联店铺";
+        isBound = true;
+      } else if (mapping && mapping.storeId) {
+        storeIdVal = mapping.storeId;
+        storeName = mapping.store?.name || "未关联店铺";
+        isBound = true;
+      }
+
+      // Filter by storeId if specified
+      if (storeId && storeId !== "all" && storeId !== "undefined") {
+        if (storeIdVal !== Number(storeId)) {
+          continue; // Skip this account
+        }
+      }
+
+      const name = adAcc?.fb_account_name || mapping?.name || `Meta Account ${normId}`;
+      const currency = adAcc?.currency || "USD";
+      const timezone = adAcc?.timezone || "America/Los_Angeles";
+
+      const ctr = agg.impressions > 0 ? (agg.clicks / agg.impressions) * 100 : 0;
+      const cpc = agg.clicks > 0 ? agg.spend / agg.clicks : 0;
+      const cpm = agg.impressions > 0 ? (agg.spend / agg.impressions) * 1000 : 0;
+      const cpa = agg.purchases > 0 ? agg.spend / agg.purchases : 0;
+      const roas = agg.spend > 0 ? agg.purchase_value / agg.spend : 0;
+
+      results.push({
+        id: normId,
+        fb_account_id: normId,
+        fb_account_name: name,
+        currency,
+        timezone,
+        isBound,
+        storeName,
+        spend: agg.spend,
+        impressions: agg.impressions,
+        clicks: agg.clicks,
+        purchases: agg.purchases,
+        purchaseValue: agg.purchase_value,
+        purchase_value: agg.purchase_value,
+        ctr,
+        cpc,
+        cpm,
+        cpa,
+        roas,
+        campaignCount: campaignCounts.get(normId) || 0,
+        adsetCount: adsetCounts.get(normId) || 0,
+        adCount: adCounts.get(normId) || 0
+      });
+    }
+
+    if (!showAll) {
+      results = results.filter(r => r.spend > 0);
+    }
+
+    results.sort((a, b) => b.spend - a.spend);
+
+    res.json({ success: true, data: results });
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to list hierarchy accounts", details: error.message });
+  }
+});
+
+/**
+ * GET /api/data-center/ad-hierarchy/campaigns
+ * Returns campaign level hierarchy aggregated from fact_meta_performance level='campaign'
+ */
+router.get("/ad-hierarchy/campaigns", async (req, res) => {
+  const { accountId, startDate, endDate, includeZeroSpend } = req.query;
+  try {
+    if (!accountId) {
+      return res.status(400).json({ error: "Missing accountId parameter" });
+    }
+    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
+    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const showAll = includeZeroSpend === "true";
+    const normAccountId = normalizeMetaAccountId(String(accountId));
+
+    // 1. Fetch performance rows
+    const performanceRows = await prisma.factMetaPerformance.findMany({
+      where: {
+        level: "campaign",
+        account_id: normAccountId,
+        date: { gte: startStr, lte: endStr }
+      }
     });
 
-    return res.json({ success: true, data: processed });
+    // 2. Fetch structural Campaigns
+    const structuralCamps = await prisma.campaign.findMany({
+      where: { accountId: normAccountId }
+    });
+
+    const structMap = new Map<string, any>();
+    structuralCamps.forEach(c => structMap.set(c.id, c));
+
+    // 3. Aggregate daily performance
+    const perfMap = new Map<string, any>();
+    for (const row of performanceRows) {
+      const campId = row.campaign_id || row.entity_id;
+      if (!campId) continue;
+      if (!perfMap.has(campId)) {
+        perfMap.set(campId, {
+          spend: 0,
+          impressions: 0,
+          clicks: 0,
+          purchases: 0,
+          purchase_value: 0
+        });
+      }
+      const agg = perfMap.get(campId);
+      agg.spend += row.spend || 0;
+      agg.impressions += row.impressions || 0;
+      agg.clicks += row.clicks || 0;
+      agg.purchases += row.purchases || 0;
+      agg.purchase_value += row.purchase_value || 0;
+    }
+
+    // 4. Build union keys of Campaigns
+    const allCampIds = new Set<string>([
+      ...perfMap.keys(),
+      ...structMap.keys()
+    ]);
+
+    let results: any[] = [];
+    for (const id of allCampIds) {
+      const agg = perfMap.get(id) || {
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        purchases: 0,
+        purchase_value: 0
+      };
+
+      const struct = structMap.get(id);
+
+      let name = struct?.name || id;
+      let unsynced = !struct;
+      if (unsynced) {
+        name = `${id} (结构未同步)`;
+      }
+
+      const status = struct?.status || "ACTIVE";
+      const objective = struct?.region || "N/A"; // Region/Objective
+      const budget = 0; // standard fallback budget
+
+      const ctr = agg.impressions > 0 ? (agg.clicks / agg.impressions) * 100 : 0;
+      const cpc = agg.clicks > 0 ? agg.spend / agg.clicks : 0;
+      const cpm = agg.impressions > 0 ? (agg.spend / agg.impressions) * 1000 : 0;
+      const cpa = agg.purchases > 0 ? agg.spend / agg.purchases : 0;
+      const roas = agg.spend > 0 ? agg.purchase_value / agg.spend : 0;
+
+      results.push({
+        id,
+        name,
+        status,
+        objective,
+        budget,
+        spend: agg.spend,
+        impressions: agg.impressions,
+        clicks: agg.clicks,
+        purchases: agg.purchases,
+        purchaseValue: agg.purchase_value,
+        purchase_value: agg.purchase_value,
+        ctr,
+        cpc,
+        cpm,
+        cpa,
+        roas,
+        unsynced
+      });
+    }
+
+    if (!showAll) {
+      results = results.filter(r => r.spend > 0);
+    }
+
+    results.sort((a, b) => b.spend - a.spend);
+
+    res.json({ success: true, data: results });
   } catch (error: any) {
-    console.error("Ad hierarchy aggregation error:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to load hierarchy campaigns", details: error.message });
+  }
+});
+
+/**
+ * GET /api/data-center/ad-hierarchy/adsets
+ * Returns adset level hierarchy aggregated from fact_meta_performance level='adset'
+ */
+router.get("/ad-hierarchy/adsets", async (req, res) => {
+  const { accountId, campaignId, startDate, endDate, includeZeroSpend } = req.query;
+  try {
+    if (!accountId || !campaignId) {
+      return res.status(400).json({ error: "Missing accountId or campaignId parameter" });
+    }
+    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
+    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const showAll = includeZeroSpend === "true";
+    const normAccountId = normalizeMetaAccountId(String(accountId));
+
+    // 1. Fetch performance rows
+    const performanceRows = await prisma.factMetaPerformance.findMany({
+      where: {
+        level: "adset",
+        account_id: normAccountId,
+        campaign_id: String(campaignId),
+        date: { gte: startStr, lte: endStr }
+      }
+    });
+
+    // 2. Fetch structural AdSets
+    const structuralAdsets = await prisma.adSet.findMany({
+      where: { campaignId: String(campaignId) }
+    });
+
+    const structMap = new Map<string, any>();
+    structuralAdsets.forEach(s => structMap.set(s.id, s));
+
+    const campaign = await prisma.campaign.findUnique({
+      where: { id: String(campaignId) }
+    });
+    const campaignName = campaign?.name || "未知广告系列";
+
+    // 3. Aggregate daily performance
+    const perfMap = new Map<string, any>();
+    for (const row of performanceRows) {
+      const adsetId = row.adset_id || row.entity_id;
+      if (!adsetId) continue;
+      if (!perfMap.has(adsetId)) {
+        perfMap.set(adsetId, {
+          spend: 0,
+          impressions: 0,
+          clicks: 0,
+          purchases: 0,
+          purchase_value: 0
+        });
+      }
+      const agg = perfMap.get(adsetId);
+      agg.spend += row.spend || 0;
+      agg.impressions += row.impressions || 0;
+      agg.clicks += row.clicks || 0;
+      agg.purchases += row.purchases || 0;
+      agg.purchase_value += row.purchase_value || 0;
+    }
+
+    // 4. Build union keys of AdSets
+    const allAdsetIds = new Set<string>([
+      ...perfMap.keys(),
+      ...structMap.keys()
+    ]);
+
+    let results: any[] = [];
+    for (const id of allAdsetIds) {
+      const agg = perfMap.get(id) || {
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        purchases: 0,
+        purchase_value: 0
+      };
+
+      const struct = structMap.get(id);
+
+      let name = struct?.name || id;
+      let unsynced = !struct;
+      if (unsynced) {
+        name = `${id} (结构未同步)`;
+      }
+
+      const status = "ACTIVE"; 
+
+      const ctr = agg.impressions > 0 ? (agg.clicks / agg.impressions) * 100 : 0;
+      const cpc = agg.clicks > 0 ? agg.spend / agg.clicks : 0;
+      const cpm = agg.impressions > 0 ? (agg.spend / agg.impressions) * 1000 : 0;
+      const cpa = agg.purchases > 0 ? agg.spend / agg.purchases : 0;
+      const roas = agg.spend > 0 ? agg.purchase_value / agg.spend : 0;
+
+      results.push({
+        id,
+        name,
+        status,
+        campaignName,
+        spend: agg.spend,
+        impressions: agg.impressions,
+        clicks: agg.clicks,
+        purchases: agg.purchases,
+        purchaseValue: agg.purchase_value,
+        purchase_value: agg.purchase_value,
+        ctr,
+        cpc,
+        cpm,
+        cpa,
+        roas,
+        unsynced
+      });
+    }
+
+    if (!showAll) {
+      results = results.filter(r => r.spend > 0);
+    }
+
+    results.sort((a, b) => b.spend - a.spend);
+
+    res.json({ success: true, data: results });
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to load hierarchy adsets", details: error.message });
+  }
+});
+
+/**
+ * GET /api/data-center/ad-hierarchy/ads
+ * Returns ad level hierarchy aggregated from fact_meta_performance level='ad'
+ */
+router.get("/ad-hierarchy/ads", async (req, res) => {
+  const { accountId, adsetId, startDate, endDate, includeZeroSpend } = req.query;
+  try {
+    if (!accountId || !adsetId) {
+      return res.status(400).json({ error: "Missing accountId or adsetId parameter" });
+    }
+    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
+    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const showAll = includeZeroSpend === "true";
+    const normAccountId = normalizeMetaAccountId(String(accountId));
+
+    // 1. Fetch performance rows
+    const performanceRows = await prisma.factMetaPerformance.findMany({
+      where: {
+        level: "ad",
+        account_id: normAccountId,
+        adset_id: String(adsetId),
+        date: { gte: startStr, lte: endStr }
+      }
+    });
+
+    // 2. Fetch structural Ads
+    const structuralAds = await prisma.ad.findMany({
+      where: { adsetId: String(adsetId) },
+      include: { adSet: { include: { campaign: true } } }
+    });
+
+    const structMap = new Map<string, any>();
+    structuralAds.forEach(a => structMap.set(a.id, a));
+
+    const adset = await prisma.adSet.findUnique({
+      where: { id: String(adsetId) },
+      include: { campaign: true }
+    });
+    const adsetName = adset?.name || "未知广告组";
+    const campaignName = adset?.campaign?.name || "未知广告系列";
+
+    // 3. Aggregate daily performance
+    const perfMap = new Map<string, any>();
+    for (const row of performanceRows) {
+      const adId = row.ad_id || row.entity_id;
+      if (!adId) continue;
+      if (!perfMap.has(adId)) {
+        perfMap.set(adId, {
+          spend: 0,
+          impressions: 0,
+          clicks: 0,
+          purchases: 0,
+          purchase_value: 0,
+          creative_id: row.creative_id
+        });
+      }
+      const agg = perfMap.get(adId);
+      agg.spend += row.spend || 0;
+      agg.impressions += row.impressions || 0;
+      agg.clicks += row.clicks || 0;
+      agg.purchases += row.purchases || 0;
+      agg.purchase_value += row.purchase_value || 0;
+      if (row.creative_id) agg.creative_id = row.creative_id;
+    }
+
+    // 4. Build union keys of Ads
+    const allAdIds = new Set<string>([
+      ...perfMap.keys(),
+      ...structMap.keys()
+    ]);
+
+    let results: any[] = [];
+    for (const id of allAdIds) {
+      const agg = perfMap.get(id) || {
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        purchases: 0,
+        purchase_value: 0,
+        creative_id: ""
+      };
+
+      const struct = structMap.get(id);
+
+      let name = struct?.name || id;
+      let unsynced = !struct;
+      if (unsynced) {
+        name = `${id} (结构未同步)`;
+      }
+
+      const status = "ACTIVE"; 
+      const creativeId = struct?.creativeId || agg.creative_id || "N/A";
+
+      const ctr = agg.impressions > 0 ? (agg.clicks / agg.impressions) * 100 : 0;
+      const cpc = agg.clicks > 0 ? agg.spend / agg.clicks : 0;
+      const cpm = agg.impressions > 0 ? (agg.spend / agg.impressions) * 1000 : 0;
+      const cpa = agg.purchases > 0 ? agg.spend / agg.purchases : 0;
+      const roas = agg.spend > 0 ? agg.purchase_value / agg.spend : 0;
+
+      results.push({
+        id,
+        name,
+        status,
+        adsetName,
+        campaignName,
+        creativeId,
+        spend: agg.spend,
+        impressions: agg.impressions,
+        clicks: agg.clicks,
+        purchases: agg.purchases,
+        purchaseValue: agg.purchase_value,
+        purchase_value: agg.purchase_value,
+        ctr,
+        cpc,
+        cpm,
+        cpa,
+        roas,
+        unsynced
+      });
+    }
+
+    if (!showAll) {
+      results = results.filter(r => r.spend > 0);
+    }
+
+    results.sort((a, b) => b.spend - a.spend);
+
+    res.json({ success: true, data: results });
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to load hierarchy ads", details: error.message });
   }
 });
 
@@ -1313,12 +1719,38 @@ router.get("/audience-insights", async (req, res) => {
  */
 router.get("/creative-insights", async (req, res) => {
   try {
-    const { startDate, endDate, storeFilter } = req.query;
-    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const {
+      startDate,
+      endDate,
+      accountId,
+      storeId,
+      storeFilter,
+      campaignId,
+      adsetId,
+      creativeType,
+      minSpend,
+      includeZeroSpend,
+      page,
+      pageSize,
+      sortBy
+    } = req.query;
 
-    const data = await getCreativeIntelligence(startStr, endStr, storeFilter as string);
-    res.json(data);
+    const result = await getAggregatedCreativeInsights({
+      startDate: startDate as string,
+      endDate: endDate as string,
+      accountId: accountId as string,
+      storeId: (storeId || storeFilter) as string,
+      campaignId: campaignId as string,
+      adsetId: adsetId as string,
+      creativeType: creativeType as string,
+      minSpend: minSpend as string,
+      includeZeroSpend: includeZeroSpend as string,
+      page: page as string,
+      pageSize: pageSize as string,
+      sortBy: sortBy as string
+    });
+
+    res.json(result);
   } catch (error: any) {
     res.status(500).json({ error: "Failed to load creative insights", details: error.message });
   }
