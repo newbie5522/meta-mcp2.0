@@ -1,0 +1,458 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum StorePlatform {
+  shopline
+  shoplazza
+  shopify
+}
+
+enum StoreStatus {
+  active
+  inactive
+}
+
+enum SyncType {
+  store_profile
+  orders
+  meta_ad_accounts
+  meta_structure
+  meta_insights
+  meta_creatives
+  mapping_import
+}
+
+enum SyncStatus {
+  pending
+  running
+  success
+  failed
+}
+
+enum AiProvider {
+  openai
+  gemini
+}
+
+enum AiReportType {
+  media_buyer
+  creative
+  anomaly
+  chat_followup
+}
+
+enum AiSuggestionStatus {
+  pending
+  accepted
+  rejected
+  done
+}
+
+model Store {
+  id                String       @id @default(cuid())
+  name              String
+  platform          StorePlatform
+  domain            String
+  apiBaseUrl        String       @map("api_base_url")
+  currency          String?
+  timezone          String?
+  timezoneSource    String?      @map("timezone_source")
+  timezoneVerifiedAt DateTime?   @map("timezone_verified_at")
+  appKey            String?      @map("app_key")
+  appSecretEncrypted Json?       @map("app_secret_encrypted")
+  apiTokenEncrypted Json         @map("api_token_encrypted")
+  status            StoreStatus  @default(active)
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  adAccountMaps StoreAdAccountMap[]
+  orders        Order[]
+  syncLogs      SyncLog[]
+
+  @@unique([platform, domain])
+  @@index([status])
+  @@map("stores")
+}
+
+model AdAccount {
+  id            String   @id @default(cuid())
+  metaAccountId String   @unique @map("meta_account_id")
+  name          String?
+  currency      String?
+  timezone      String?
+  status        String?
+  recentActivity90d Boolean  @default(false) @map("recent_activity_90d")
+  lastActivityCheckedAt DateTime? @map("last_activity_checked_at")
+  lastSyncedAt   DateTime? @map("last_synced_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  storeMap      StoreAdAccountMap?
+  campaigns     Campaign[]
+  adsets        AdSet[]
+  ads           Ad[]
+  dailyInsights MetaDailyInsight[]
+  adCreatives   MetaAdCreative[]
+
+  @@index([status])
+  @@map("ad_accounts")
+}
+
+model Campaign {
+  id            String   @id @default(cuid())
+  adAccountId   String   @map("ad_account_id")
+  metaCampaignId String  @map("meta_campaign_id")
+  name          String?
+  status        String?
+  objective     String?
+  dailyBudget   String?  @map("daily_budget")
+  lifetimeBudget String? @map("lifetime_budget")
+  lastSeenAt    DateTime @default(now()) @map("last_seen_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  adAccount AdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  adsets    AdSet[]
+  ads       Ad[]
+
+  @@unique([adAccountId, metaCampaignId])
+  @@index([adAccountId])
+  @@index([status])
+  @@map("campaigns")
+}
+
+model AdSet {
+  id            String   @id @default(cuid())
+  adAccountId   String   @map("ad_account_id")
+  campaignId    String?  @map("campaign_id")
+  metaAdSetId   String   @map("meta_adset_id")
+  metaCampaignId String? @map("meta_campaign_id")
+  name          String?
+  status        String?
+  dailyBudget   String?  @map("daily_budget")
+  bidStrategy   String?  @map("bid_strategy")
+  optimizationGoal String? @map("optimization_goal")
+  targetingGeo  Json?    @map("targeting_geo")
+  lastSeenAt    DateTime @default(now()) @map("last_seen_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  adAccount AdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  campaign  Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  ads       Ad[]
+
+  @@unique([adAccountId, metaAdSetId])
+  @@index([adAccountId])
+  @@index([campaignId])
+  @@index([status])
+  @@map("adsets")
+}
+
+model Ad {
+  id            String   @id @default(cuid())
+  adAccountId   String   @map("ad_account_id")
+  campaignId    String?  @map("campaign_id")
+  adsetId       String?  @map("adset_id")
+  metaAdId      String   @map("meta_ad_id")
+  metaCampaignId String? @map("meta_campaign_id")
+  metaAdSetId   String? @map("meta_adset_id")
+  name          String?
+  status        String?
+  creativeId    String? @map("creative_id")
+  lastSeenAt    DateTime @default(now()) @map("last_seen_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  adAccount AdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  campaign  Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  adset     AdSet?    @relation(fields: [adsetId], references: [id], onDelete: SetNull)
+
+  @@unique([adAccountId, metaAdId])
+  @@index([adAccountId])
+  @@index([campaignId])
+  @@index([adsetId])
+  @@index([status])
+  @@map("ads")
+}
+
+model StoreAdAccountMap {
+  id          String   @id @default(cuid())
+  storeId     String   @map("store_id")
+  adAccountId String   @unique @map("ad_account_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  store     Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  adAccount AdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, adAccountId])
+  @@index([storeId])
+  @@map("store_ad_account_map")
+}
+
+model Order {
+  id                String   @id @default(cuid())
+  platformOrderId   String   @map("platform_order_id")
+  storeId           String   @map("store_id")
+  orderNumber       String?  @map("order_number")
+  createdAt         DateTime @map("created_at")
+  createdAtUtc      DateTime? @map("created_at_utc")
+  storeTimezone     String?  @map("store_timezone")
+  storeLocalDatetime DateTime? @map("store_local_datetime")
+  storeLocalDate    DateTime? @db.Date @map("store_local_date")
+  country           String?
+  province          String?
+  city              String?
+  currency          String?
+  totalAmount       Decimal? @db.Decimal(18, 4) @map("total_amount")
+  subtotalAmount    Decimal? @db.Decimal(18, 4) @map("subtotal_amount")
+  discountAmount    Decimal? @db.Decimal(18, 4) @map("discount_amount")
+  shippingAmount    Decimal? @db.Decimal(18, 4) @map("shipping_amount")
+  paymentStatus     String?  @map("payment_status")
+  fulfillmentStatus String?  @map("fulfillment_status")
+  sourceName        String?  @map("source_name")
+  landingPage       String?  @map("landing_page")
+  utmSource         String?  @map("utm_source")
+  utmMedium         String?  @map("utm_medium")
+  utmCampaign       String?  @map("utm_campaign")
+  utmContent        String?  @map("utm_content")
+  createdAtSystem   DateTime @default(now()) @map("created_at_system")
+  updatedAtSystem   DateTime @updatedAt @map("updated_at_system")
+
+  store Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  items OrderItem[]
+
+  @@unique([storeId, platformOrderId])
+  @@index([storeId, createdAt])
+  @@index([storeId, storeLocalDate])
+  @@index([country])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  orderId     String   @map("order_id")
+  productId   String?  @map("product_id")
+  productName String?  @map("product_name")
+  variantId   String?  @map("variant_id")
+  sku         String?
+  quantity    Int
+  price       Decimal? @db.Decimal(18, 4)
+  totalPrice  Decimal? @db.Decimal(18, 4) @map("total_price")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([sku])
+  @@map("order_items")
+}
+
+model MetaDailyInsight {
+  id              String   @id @default(cuid())
+  adAccountId     String   @map("ad_account_id")
+  date            DateTime @db.Date
+  campaignId      String?  @map("campaign_id")
+  campaignName    String?  @map("campaign_name")
+  adsetId         String?  @map("adset_id")
+  adsetName       String?  @map("adset_name")
+  adId            String?  @map("ad_id")
+  adName          String?  @map("ad_name")
+  country         String?
+  spend           Decimal? @db.Decimal(18, 4)
+  impressions     Int?
+  reach           Int?
+  frequency       Decimal? @db.Decimal(18, 6)
+  clicks          Int?
+  ctr             Decimal? @db.Decimal(18, 6)
+  cpc             Decimal? @db.Decimal(18, 6)
+  cpm             Decimal? @db.Decimal(18, 6)
+  purchases       Int?
+  purchaseValue   Decimal? @db.Decimal(18, 4) @map("purchase_value")
+  purchaseRoas    Decimal? @db.Decimal(18, 6) @map("purchase_roas")
+  addToCart       Int?     @map("add_to_cart")
+  initiateCheckout Int?    @map("initiate_checkout")
+  costPerPurchase Decimal? @db.Decimal(18, 6) @map("cost_per_purchase")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  adAccount AdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+
+  @@index([adAccountId, date])
+  @@index([country])
+  @@index([campaignId])
+  @@index([adsetId])
+  @@index([adId])
+  @@map("meta_daily_insights")
+}
+
+model MetaBreakdown {
+  id          String   @id @default(cuid())
+  adAccountId String   @map("ad_account_id")
+  date        DateTime @db.Date
+  level       String
+  entityId    String?  @map("entity_id")
+  entityName  String?  @map("entity_name")
+  breakdownType String @map("breakdown_type")
+  breakdownValue String @map("breakdown_value")
+  metrics     Json
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([adAccountId, date])
+  @@index([level, entityId])
+  @@index([breakdownType, breakdownValue])
+  @@map("meta_breakdowns")
+}
+
+model DailySummary {
+  id          String   @id @default(cuid())
+  scope       String
+  scopeId     String   @map("scope_id")
+  date        DateTime @db.Date
+  metrics     Json
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([scope, scopeId, date])
+  @@index([scope, date])
+  @@map("daily_summaries")
+}
+
+model MetaAdCreative {
+  id          String   @id @default(cuid())
+  adAccountId String   @map("ad_account_id")
+  adId        String   @map("ad_id")
+  adName      String?  @map("ad_name")
+  creativeId  String?  @map("creative_id")
+  title       String?
+  body        String?
+  imageUrl    String?  @map("image_url")
+  videoId     String?  @map("video_id")
+  linkUrl     String?  @map("link_url")
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  adAccount AdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([adAccountId, adId])
+  @@index([adAccountId])
+  @@index([creativeId])
+  @@map("meta_ad_creatives")
+}
+
+model SyncLog {
+  id             String     @id @default(cuid())
+  type           SyncType
+  status         SyncStatus @default(pending)
+  storeId        String?    @map("store_id")
+  adAccountId    String?    @map("ad_account_id")
+  startedAt      DateTime   @default(now()) @map("started_at")
+  finishedAt     DateTime?  @map("finished_at")
+  rangeStart     DateTime?  @map("range_start")
+  rangeEnd       DateTime?  @map("range_end")
+  recordsFetched Int        @default(0) @map("records_fetched")
+  recordsSaved   Int        @default(0) @map("records_saved")
+  errorMessage   String?    @map("error_message")
+  metadata       Json?
+
+  store Store? @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
+  @@index([type, status])
+  @@index([storeId, startedAt])
+  @@index([adAccountId, startedAt])
+  @@map("sync_logs")
+}
+
+model AiProviderSetting {
+  id              String     @id @default(cuid())
+  provider        AiProvider
+  displayName     String     @map("display_name")
+  apiKeyEncrypted Json       @map("api_key_encrypted")
+  defaultChatModel String?   @map("default_chat_model")
+  defaultAnalysisModel String? @map("default_analysis_model")
+  defaultCreativeModel String? @map("default_creative_model")
+  enabled         Boolean    @default(true)
+  priority        Int        @default(100)
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  @@unique([provider, displayName])
+  @@index([enabled, priority])
+  @@index([provider, enabled])
+  @@map("ai_provider_settings")
+}
+
+model AiConversation {
+  id          String   @id @default(cuid())
+  title       String?
+  context     Json?
+  createdBy   String?  @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  messages AiMessage[]
+
+  @@index([createdAt])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id             String   @id @default(cuid())
+  conversationId String   @map("conversation_id")
+  role           String
+  content        String
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+model AiAnalysisReport {
+  id          String       @id @default(cuid())
+  type        AiReportType
+  entityType  String       @map("entity_type")
+  entityId    String       @map("entity_id")
+  dateRange   Json?        @map("date_range")
+  conclusion  String
+  dataBasis   Json         @map("data_basis")
+  riskPoints  Json         @map("risk_points")
+  priority    Int          @default(3)
+  observationWindow String? @map("observation_window")
+  model       String?
+  metadata    Json?
+  createdAt   DateTime     @default(now()) @map("created_at")
+
+  suggestions AiActionSuggestion[]
+
+  @@index([type, entityType, entityId])
+  @@index([createdAt])
+  @@map("ai_analysis_reports")
+}
+
+model AiActionSuggestion {
+  id          String             @id @default(cuid())
+  reportId    String             @map("report_id")
+  action      String
+  rationale   String
+  priority    Int                @default(3)
+  status      AiSuggestionStatus @default(pending)
+  executionChecklist Json?       @map("execution_checklist")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+
+  report AiAnalysisReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
+  @@index([status])
+  @@map("ai_action_suggestions")
+}
