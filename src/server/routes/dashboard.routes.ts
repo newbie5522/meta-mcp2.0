@@ -14,7 +14,14 @@ router.get("/", async (req, res) => {
     });
     
     // UI expects API result wrapper { data: ... }
-    res.json({ data: summary });
+    res.json({
+      data: summary,
+      dataSourceExplain: {
+        primarySource: "FactMetaPerformance",
+        legacySource: "AdInsight",
+        legacyUsed: false
+      }
+    });
   } catch (err: any) {
     console.error("Dashboard endpoint error:", err);
     res.status(500).json({ error: "Failed to generate dashboard summary" });

@@ -60,32 +60,34 @@ router.get("/accounts", async (req, res) => {
       cachedAccounts = await prisma.metaAccountMonitoring.findMany();
     }
 
-    // 2. Filter logic based on AdInsight (Last 30 days and 7 days)
+    // 2. Filter logic based on FactMetaPerformance (Last 30 days and 7 days)
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
 
-    const activeAccounts = await prisma.adInsight.groupBy({
-      by: ["accountId"],
+    const activeAccounts = await prisma.factMetaPerformance.groupBy({
+      by: ["account_id"],
       where: {
         date: { gte: thirtyDaysAgoStr },
-        spend: { gt: 0 }
+        spend: { gt: 0 },
+        level: "account"
       },
     });
-    const activeAccountIds = activeAccounts.map(acc => acc.accountId);
+    const activeAccountIds = activeAccounts.map(acc => acc.account_id);
 
     const todayStr = new Date().toISOString().split('T')[0];
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0];
 
-    const weeklySpend = await prisma.adInsight.groupBy({
-      by: ["accountId"],
+    const weeklySpend = await prisma.factMetaPerformance.groupBy({
+      by: ["account_id"],
       where: {
         date: { 
           gte: sevenDaysAgoStr,
           lt: todayStr // 排除今天，取过去 7 个完整自然日的数据
-        }
+        },
+        level: "account"
       },
       _sum: {
         spend: true
@@ -94,7 +96,7 @@ router.get("/accounts", async (req, res) => {
 
     const weeklySpendMap = new Map();
     weeklySpend.forEach(ws => {
-      weeklySpendMap.set(ws.accountId, (ws._sum.spend || 0) / 7);
+      weeklySpendMap.set(ws.account_id, (ws._sum.spend || 0) / 7);
     });
 
     // 3. Combine Cache + DB Insights
@@ -168,6 +170,11 @@ router.get("/accounts", async (req, res) => {
         total: filteredMonitoringData.length,
         active: filteredMonitoringData.filter(a => a.accountStatus === 1).length,
         hasSpend: filteredMonitoringData.length
+      },
+      dataSourceExplain: {
+        primarySource: "FactMetaPerformance",
+        legacySource: "AdInsight",
+        legacyUsed: false
       }
     });
   } catch (error: any) {

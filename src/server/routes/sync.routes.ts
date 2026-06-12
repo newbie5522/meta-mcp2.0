@@ -18,7 +18,7 @@ router.get("/sync/status", async (req, res) => {
     const metaToken = await getMetaToken();
     const stores = await prisma.store.findMany();
     const mappings = await prisma.accountMapping.findMany();
-    const totalInsights = await prisma.adInsight.count();
+    const totalInsights = await prisma.factMetaPerformance.count();
     const runningTasks = await prisma.syncLog.findMany({
       where: { status: "running" }
     });
@@ -70,7 +70,12 @@ router.get("/sync/status", async (req, res) => {
       mappingsCount: mappings.length,
       totalInsightsCount: totalInsights,
       activeSyncCount: runningTasks.length,
-      runningTasksList: runningTasks.map(t => ({ id: t.id, type: t.type, taskType: t.taskType, taskChainId: t.taskChainId }))
+      runningTasksList: runningTasks.map(t => ({ id: t.id, type: t.type, taskType: t.taskType, taskChainId: t.taskChainId })),
+      dataSourceExplain: {
+        primarySource: "FactMetaPerformance",
+        legacySource: "AdInsight",
+        legacyUsed: false
+      }
     });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to evaluate sync status", details: error.message });

@@ -638,17 +638,18 @@ export class SyncCenter {
           for (let i = 0; i < days; i++) {
             const dateStr = dayjs().subtract(i, "day").format("YYYY-MM-DD");
 
-            const insights = await prisma.adInsight.findMany({
+            const insights = await prisma.factMetaPerformance.findMany({
               where: {
-                accountId: cleanId,
-                date: dateStr
+                account_id: cleanId,
+                date: dateStr,
+                level: "account"
               }
             });
 
             const spend = insights.reduce((sum, item) => sum + (item.spend || 0), 0);
             const clicks = insights.reduce((sum, item) => sum + (item.clicks || 0), 0);
             const impressions = insights.reduce((sum, item) => sum + (item.impressions || 0), 0);
-            const purchasesRevenue = insights.reduce((sum, item) => sum + (item.purchaseValue || 0), 0);
+            const purchasesRevenue = insights.reduce((sum, item) => sum + (item.purchase_value || 0), 0);
             const purchases = insights.reduce((sum, item) => sum + (item.purchases || 0), 0);
             const metaRoas = spend > 0 ? (purchasesRevenue / spend) : 0;
 
@@ -742,17 +743,18 @@ export class SyncCenter {
             let mappedMetaRevenue = 0;
 
             if (hasMappings) {
-              const insights = await prisma.adInsight.findMany({
+              const insights = await prisma.factMetaPerformance.findMany({
                 where: {
-                  accountId: { in: mappedFbIds },
-                  date: dateStr
+                  account_id: { in: mappedFbIds },
+                  date: dateStr,
+                  level: "account"
                 }
               });
 
               mappedSpend = insights.reduce((sum, idx) => sum + (idx.spend || 0), 0);
               mappedClicks = insights.reduce((sum, idx) => sum + (idx.clicks || 0), 0);
               mappedImpressions = insights.reduce((sum, idx) => sum + (idx.impressions || 0), 0);
-              mappedMetaRevenue = insights.reduce((sum, idx) => sum + (idx.purchaseValue || 0), 0);
+              mappedMetaRevenue = insights.reduce((sum, idx) => sum + (idx.purchase_value || 0), 0);
             }
 
             const realRoas = mappedSpend > 0 ? (storeRevenue / mappedSpend) : 0;

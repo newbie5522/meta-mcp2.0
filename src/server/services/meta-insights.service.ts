@@ -336,7 +336,15 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
             console.log(`[Meta Insights Sync] Sandbox account filtered out from fact_meta_performance: ${actId}`);
           }
 
-          // Compatibility Double-Writing to AdInsight table
+          /* 
+           * GLOBLAL METRIC GOVERNANCE PROTOCOL - READINESS TRANSITION
+           * Primary single source of truth: FactMetaPerformance model
+           * Legacy fallback source of truth: AdInsight model
+           * 
+           * [LEGACY-DOUBLE-WRITE]: The block below performs double-writing ONLY to support legacy backward-compatibility.
+           * No new features or endpoints are allowed to read from AdInsight.
+           * TODO: Decommission this write block during retirement Phase 4.
+           */
           let entityName = row.account_name || acc.fb_account_name || actId;
           if (currentLevel === "campaign") {
             entityName = row.campaign_name || "Campaign";

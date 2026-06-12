@@ -300,7 +300,13 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
     entry.purchaseValue += purchaseValue;
   }
 
-  // 5. Save the aggregated AdInsight items corresponding exactly to the same date/data
+  // GLOBLAL METRIC GOVERNANCE PROTOCOL - READINESS TRANSITION
+  // Primary single source of truth: FactMetaPerformance model
+  // Legacy fallback source of truth: AdInsight model
+  // 
+  // [LEGACY-DOUBLE-WRITE]: The block below performs double-writing to AdInsight ONLY to support legacy backward-compatibility.
+  // No new features or endpoints are allowed to read from AdInsight.
+  // TODO: Decommission this write block during retirement Phase 4.
   for (const dateKey of Object.keys(accountInsightsByDate)) {
     const item = accountInsightsByDate[dateKey];
     const cpc = item.clicks > 0 ? item.spend / item.clicks : 0;

@@ -496,13 +496,14 @@ router.get("/:id/dashboard-summary", async (req, res) => {
     });
 
     const accountIds = store.accounts.map(a => a.fb_account_id);
-    const adInsights = await prisma.adInsight.findMany({
+    const performanceRows = await prisma.factMetaPerformance.findMany({
       where: {
-        accountId: { in: accountIds },
+        account_id: { in: accountIds },
         date: {
           gte: startStr,
           lte: endStr,
         },
+        level: "account"
       }
     });
 
@@ -531,7 +532,7 @@ router.get("/:id/dashboard-summary", async (req, res) => {
       }
     }
 
-    const totalSpend = adInsights.reduce((sum, ad) => sum + (ad.spend || 0), 0);
+    const totalSpend = performanceRows.reduce((sum, ad) => sum + (ad.spend || 0), 0);
     
     // totalROAS
     const totalROAS = totalSpend > 0 ? (totalSales / totalSpend) : 0;
@@ -555,6 +556,11 @@ router.get("/:id/dashboard-summary", async (req, res) => {
         isConfigured: !!(store.shopline_token || store.shopify_token || store.shoplazza_token),
         error: null,
         errorMessage: "",
+      },
+      dataSourceExplain: {
+        primarySource: "FactMetaPerformance",
+        legacySource: "AdInsight",
+        legacyUsed: false
       }
     });
   } catch (error: any) {

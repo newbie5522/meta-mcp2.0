@@ -56,16 +56,23 @@ export async function aggregateData(startDate: string, endDate: string, options:
             const refunds = orders.filter(o => o.refunded).length;
             const totalOrders = orders.length;
 
-            // Find ad insights.
-            const ads = await prisma.adInsight.findMany({
+            // Find ad insights. First, fetch mapped accounts for store
+            const storeMappings = await prisma.accountMapping.findMany({
+              where: { storeId: store.id },
+              select: { fbAccountId: true }
+            });
+            const storeFbAccountIds = storeMappings.map(m => normalizeMetaAccountId(m.fbAccountId));
+
+            const ads = await prisma.factMetaPerformance.findMany({
               where: {
                 date: { gte: startDate, lte: endDate },
-                accountName: { contains: store.name } // A rough proxy for store's ad insights
+                account_id: { in: storeFbAccountIds },
+                level: "account"
               }
             });
 
             const storeSpend = ads.reduce((sum, ad) => sum + (ad.spend || 0), 0);
-            const adSpend = products.length > 0 ? storeSpend / products.length : 0; 
+            const adSpend = products.length > 0 ? storeSpend / products.length : 0;
             
             await prisma.productPerformanceDaily.upsert({
               where: {
@@ -124,19 +131,17 @@ export async function aggregateData(startDate: string, endDate: string, options:
         });
         const fbAccountIdsOnStore = mappings.map(m => normalizeMetaAccountId(m.fbAccountId));
 
-        const storeInsights = await prisma.adInsight.findMany({
+        const storeInsights = await prisma.factMetaPerformance.findMany({
           where: {
             date: { gte: startDate, lte: endDate },
-            OR: [
-              { accountId: { in: fbAccountIdsOnStore } },
-              { accountName: { contains: store.name } }
-            ]
+            account_id: { in: fbAccountIdsOnStore },
+            level: "account"
           }
         });
 
         const totalStoreSpend = storeInsights.reduce((sum, i) => sum + (i.spend || 0), 0);
         const totalStorePurchases = Math.round(storeInsights.reduce((sum, i) => sum + (i.purchases || 0), 0));
-        const totalStoreRevenue = storeInsights.reduce((sum, i) => sum + (i.purchaseValue || 0), 0);
+        const totalStoreRevenue = storeInsights.reduce((sum, i) => sum + (i.purchase_value || 0), 0);
 
         let allocatedSpend = 0;
         let allocatedPurchases = 0;

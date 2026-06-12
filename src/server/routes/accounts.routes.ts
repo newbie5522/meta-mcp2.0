@@ -756,22 +756,56 @@ router.get("/:accountId/audience-insights", async (req, res) => {
     const dateStart = startDate ? String(startDate) : dayjs().subtract(30, 'day').format('YYYY-MM-DD');
     const dateEnd = endDate ? String(endDate) : dayjs().format('YYYY-MM-DD');
 
-    const rawInsights = await prisma.adInsight.findMany({
-      where: {
-        accountId: cleanAccountId,
-        date: { gte: dateStart, lte: dateEnd }
-      }
+    const mappedDimType = breakdown === "gender_age" ? "gender" : String(breakdown || "country");
+
+    const whereClause: any = {
+      date: { gte: dateStart, lte: dateEnd },
+      dimension_type: mappedDimType,
+      account_id: cleanAccountId
+    };
+
+    const dbRows = await prisma.factAudienceBreakdown.findMany({
+      where: whereClause
     });
 
-    const totalSpend = rawInsights.reduce((sum, item) => sum + (item.spend || 0), 0);
-    const totalPurchases = rawInsights.reduce((sum, item) => sum + (item.purchases || 0), 0);
-    const totalImpressions = rawInsights.reduce((sum, item) => sum + (item.impressions || 0), 0);
-    const totalClicks = rawInsights.reduce((sum, item) => sum + (item.clicks || 0), 0);
-    const totalAddToCart = rawInsights.reduce((sum, item) => sum + (item.addToCart || 0), 0);
-    const totalReach = rawInsights.reduce((sum, item) => sum + (item.reach || 0), 0);
+    const groups: Record<string, any> = {};
+    for (const r of dbRows) {
+      const val = r.dimension_value || "unknown";
+      if (!groups[val]) {
+        groups[val] = {
+          dimensionType: r.dimension_type,
+          dimensionValue: val,
+          spend: 0,
+          impressions: 0,
+          clicks: 0,
+          purchases: 0,
+          purchaseValue: 0
+        };
+      }
+      groups[val].spend += r.spend || 0;
+      groups[val].impressions += r.impressions || 0;
+      groups[val].clicks += r.clicks || 0;
+      groups[val].purchases += r.purchases || 0;
+      groups[val].purchaseValue += r.purchase_value || 0;
+    }
 
-    // Clear faked simulated percentage breakdown modeling for honest reporting
-    return res.json([]);
+    const rows = Object.values(groups).map(g => {
+      const ctr = g.impressions > 0 ? (g.clicks / g.impressions) : 0;
+      const cpc = g.clicks > 0 ? (g.spend / g.clicks) : 0;
+      return {
+        ...g,
+        ctr,
+        cpc
+      };
+    });
+
+    return res.json({
+      rows,
+      dataSourceExplain: {
+        primarySource: "FactAudienceBreakdown",
+        legacyUsed: false
+      }
+    });
   } catch (err: any) {
     console.error("Audience breakdown error:", err);
     return res.status(500).json({ error: "Failed to load audience breakdowns", details: err.message });

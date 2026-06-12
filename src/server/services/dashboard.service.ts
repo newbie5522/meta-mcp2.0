@@ -29,7 +29,7 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
     adAccountCount,
     mappedAdAccounts,
     adAccounts,
-    totalInsightCount,
+    totalInsightCount, // represents FactMetaPerformance count now
     creativeCount,
     totalOrderCount,
     orders,
@@ -46,7 +46,7 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
     prisma.adAccount.findMany({ 
       include: { store: true } 
     }),
-    prisma.adInsight.count(),
+    prisma.factMetaPerformance.count({ where: { level: "account" } }),
     prisma.adCreative.count(),
     prisma.order.count(),
     prisma.order.findMany({
@@ -65,9 +65,10 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
         ]
       }
     }),
-    prisma.adInsight.findMany({
+    prisma.factMetaPerformance.findMany({
       where: {
-        date: { gte: sinceStr, lte: untilStr }
+        date: { gte: sinceStr, lte: untilStr },
+        level: "account"
       }
     }),
     prisma.syncLog.findMany({
@@ -135,11 +136,11 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
   let metaSpend = 0, metaPurchases = 0, metaPurchaseValue = 0, impressions = 0, clicks = 0;
 
   for (const row of insights) {
-    const normId = normalizeMetaAccountId(row.accountId);
+    const normId = normalizeMetaAccountId(row.account_id || row.accountId);
 
     metaSpend += toNumber(row.spend);
     metaPurchases += toNumber(row.purchases);
-    metaPurchaseValue += toNumber(row.purchaseValue);
+    metaPurchaseValue += toNumber(row.purchase_value !== undefined ? row.purchase_value : row.purchaseValue);
     impressions += toNumber(row.impressions);
     clicks += toNumber(row.clicks);
 
@@ -151,7 +152,7 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
     ast.imp += toNumber(row.impressions);
     ast.clicks += toNumber(row.clicks);
     ast.pur += toNumber(row.purchases);
-    ast.pVal += toNumber(row.purchaseValue);
+    ast.pVal += toNumber(row.purchase_value !== undefined ? row.purchase_value : row.purchaseValue);
   }
 
   const stores = rawStores.map(s => {

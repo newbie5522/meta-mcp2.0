@@ -174,6 +174,11 @@ router.get("/detail", async (req, res) => {
         lastSyncTime: lastSyncLog?.finishedAt || lastSyncLog?.startedAt || null,
         lastSyncStatus: lastSyncLog?.status || "none",
         isSyncActive
+      },
+      dataSourceExplain: {
+        primarySource: "FactMetaPerformance",
+        legacySource: "AdInsight",
+        legacyUsed: false
       }
     });
 
@@ -324,55 +329,303 @@ router.get("/structure", async (req, res) => {
  * Returns real database-integrated breakdown demographic aggregates, filtered by storeId, accountId, campaignId, adsetId, and date range.
  */
 router.get("/audience", async (req, res) => {
-  const { storeId, accountId, campaignId, adsetId, productId, breakdown, startDate, endDate } = req.query;
+  const {
+    storeId,
+    accountId,
+    campaignId,
+    adsetId,
+    adId,
+    dimensionType,
+    includeZeroSpend,
+    minSpend,
+    page,
+    pageSize,
+    sortBy,
+    startDate,
+    endDate
+  } = req.query;
 
   try {
     const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const currentDimType = String(dimensionType || "country");
 
-    // Fetch accounts and bound stores
-    const accounts = await prisma.adAccount.findMany({ include: { store: true } });
-
-    // Build insights filters
-    const insightsWhereClause: any = {
-      date: { gte: startStr, lte: endStr }
-    };
-
-    if (accountId && accountId !== "all" && accountId !== "undefined") {
-      insightsWhereClause.accountId = String(accountId);
-    } else if (storeId && storeId !== "all" && storeId !== "undefined") {
+    // 1. Store filtering: resolve store mapped accounts
+    let filterAccountIds: string[] | null = null;
+    if (storeId && storeId !== "all" && storeId !== "undefined") {
       const targetStoreId = Number(storeId);
-      const mappedAccs = accounts.filter(a => a.storeId === targetStoreId);
-      const accIds = mappedAccs.map(a => a.fb_account_id);
-      insightsWhereClause.accountId = { in: accIds };
+      const mappings = await prisma.accountMapping.findMany({
+        where: { storeId: targetStoreId }
+      });
+      const mappedFromMapping = mappings.map(m => m.fbAccountId);
+
+      const directAccounts = await prisma.adAccount.findMany({
+        where: { storeId: targetStoreId }
+      });
+      const mappedFromAdAccount = directAccounts.map(a => a.fb_account_id);
+
+      const merged = Array.from(new Set([
+        ...mappedFromMapping,
+        ...mappedFromAdAccount
+      ])).map(id => normalizeMetaAccountId(id));
+
+      filterAccountIds = merged;
     }
 
-    // Load actual DB insights
-    const rawInsights = await prisma.adInsight.findMany({
-      where: insightsWhereClause
+    if (accountId && accountId !== "all" && accountId !== "undefined") {
+      const normId = normalizeMetaAccountId(String(accountId));
+      if (filterAccountIds !== null) {
+        filterAccountIds = filterAccountIds.filter(id => id === normId);
+      } else {
+        filterAccountIds = [normId];
+      }
+    }
+
+    // Short-circuit if Store filter specified but no accounts map to it
+    if (filterAccountIds !== null && filterAccountIds.length === 0) {
+      return res.json({
+        rows: [],
+        summary: {
+          totalSpend: 0,
+          totalImpressions: 0,
+          totalClicks: 0,
+          totalPurchases: 0,
+          totalPurchaseValue: 0,
+          ctr: 0,
+          cpc: 0,
+          cpm: 0,
+          cpa: 0,
+          roas: 0
+        },
+        filters: { startDate: startStr, endDate: endStr, storeId, accountId, campaignId, adsetId, adId, dimensionType: currentDimType },
+        pagination: { page: Number(page || 1), pageSize: Number(pageSize || 50), totalItems: 0, totalPages: 0 },
+        dataHealth: {
+          status: "EMPTY",
+          warnings: [],
+          missing: ["该店铺未绑定任何广告账户，无法加载广告受众数据。"],
+          source: "FactAudienceBreakdown"
+        },
+        dataSourceExplain: {
+          primarySource: "FactAudienceBreakdown",
+          legacyUsed: false
+        }
+      });
+    }
+
+    // 2. Build where clause for FactAudienceBreakdown
+    const whereClause: any = {
+      date: { gte: startStr, lte: endStr },
+      dimension_type: currentDimType
+    };
+
+    if (filterAccountIds !== null) {
+      whereClause.account_id = { in: filterAccountIds };
+    }
+
+    if (campaignId && campaignId !== "all" && campaignId !== "undefined") {
+      whereClause.campaign_id = String(campaignId);
+    }
+    if (adsetId && adsetId !== "all" && adsetId !== "undefined") {
+      whereClause.adset_id = String(adsetId);
+    }
+    if (adId && adId !== "all" && adId !== "undefined") {
+      whereClause.ad_id = String(adId);
+    }
+
+    // 3. Query FactAudienceBreakdown database
+    const dbRows = await prisma.factAudienceBreakdown.findMany({
+      where: whereClause
     });
 
-    const totalSpend = rawInsights.reduce((sum, item) => sum + (item.spend || 0), 0);
-    const totalPurchases = rawInsights.reduce((sum, item) => sum + (item.purchases || 0), 0);
-    const totalImpressions = rawInsights.reduce((sum, item) => sum + (item.impressions || 0), 0);
-    const totalClicks = rawInsights.reduce((sum, item) => sum + (item.clicks || 0), 0);
-    const totalValue = rawInsights.reduce((sum, item) => sum + (item.purchaseValue || 0), 0);
+    // 4. Perform TypeScript/JavaScript based aggregate grouping by dimension_value
+    const groups: Record<string, {
+      dimensionType: string;
+      dimensionValue: string;
+      spend: number;
+      impressions: number;
+      clicks: number;
+      purchases: number;
+      purchaseValue: number;
+      accountsSet: Set<string>;
+      lastSyncedAt: Date;
+    }> = {};
 
-    const type = breakdown || "gender_age";
-    let partitions: any[] = [];
+    for (const r of dbRows) {
+      const val = r.dimension_value || "unknown";
+      if (!groups[val]) {
+        groups[val] = {
+          dimensionType: r.dimension_type,
+          dimensionValue: val,
+          spend: 0,
+          impressions: 0,
+          clicks: 0,
+          purchases: 0,
+          purchaseValue: 0,
+          accountsSet: new Set<string>(),
+          lastSyncedAt: r.synced_at
+        };
+      }
+      const g = groups[val];
+      g.spend += r.spend || 0;
+      g.impressions += r.impressions || 0;
+      g.clicks += r.clicks || 0;
+      g.purchases += r.purchases || 0;
+      g.purchaseValue += r.purchase_value || 0;
+      if (r.account_id) g.accountsSet.add(r.account_id);
+      if (r.synced_at > g.lastSyncedAt) {
+        g.lastSyncedAt = r.synced_at;
+      }
+    }
 
-    // Map account and store names for display
-    const firstMatchingAcc = accounts.find(a => 
-      insightsWhereClause.accountId && typeof insightsWhereClause.accountId === "string" 
-        ? a.fb_account_id === insightsWhereClause.accountId 
-        : true
-    ) || accounts[0];
+    // 5. Build rows list with full indicators
+    const aggregatedRows = Object.values(groups).map(g => {
+      const ctr = g.impressions > 0 ? (g.clicks / g.impressions) : 0;
+      const cpc = g.clicks > 0 ? (g.spend / g.clicks) : 0;
+      const cpm = g.impressions > 0 ? (g.spend / g.impressions) * 1000 : 0;
+      const cpa = g.purchases > 0 ? (g.spend / g.purchases) : 0;
+      const roas = g.spend > 0 ? (g.purchaseValue / g.spend) : 0;
 
-    const storeName = firstMatchingAcc?.store?.name || "常规店铺";
-    const accountName = firstMatchingAcc?.fb_account_name || firstMatchingAcc?.fb_account_id || "常规广告账户";
+      return {
+        dimensionType: g.dimensionType,
+        dimensionValue: g.dimensionValue,
+        spend: Number(g.spend.toFixed(4)),
+        impressions: g.impressions,
+        clicks: g.clicks,
+        purchases: g.purchases,
+        purchaseValue: Number(g.purchaseValue.toFixed(4)),
+        ctr: Number(ctr.toFixed(6)),
+        cpc: Number(cpc.toFixed(4)),
+        cpm: Number(cpm.toFixed(4)),
+        cpa: Number(cpa.toFixed(4)),
+        roas: Number(roas.toFixed(4)),
+        accountsCount: g.accountsSet.size,
+        lastSyncedAt: g.lastSyncedAt.toISOString()
+      };
+    });
 
-    // Clear faked simulated percentage breakdown modeling for honest reporting
-    res.json([]);
+    // 6. Applies filters
+    let filteredRows = aggregatedRows;
+
+    // Default: do not return zero spend records
+    if (includeZeroSpend !== "true" && includeZeroSpend !== true) {
+      filteredRows = filteredRows.filter(r => r.spend > 0);
+    }
+
+    // Apply minSpend if provided
+    const minSpendNum = minSpend ? parseFloat(String(minSpend)) : null;
+    if (minSpendNum !== null && !isNaN(minSpendNum)) {
+      filteredRows = filteredRows.filter(r => r.spend >= minSpendNum);
+    }
+
+    // Special restrictions for high cardinality 'region'
+    if (currentDimType === "region") {
+      filteredRows = filteredRows.filter(r => r.spend > 0);
+      if (minSpendNum !== null && !isNaN(minSpendNum)) {
+        filteredRows = filteredRows.filter(r => r.spend >= minSpendNum);
+      }
+    }
+
+    // 7. Dynamic Sorting
+    const sortByField = String(sortBy || "spend");
+    filteredRows.sort((a: any, b: any) => {
+      const valA = a[sortByField];
+      const valB = b[sortByField];
+      if (typeof valA === "number" && typeof valB === "number") {
+        return valB - valA; // Descending order for performance metrics
+      }
+      return String(valB).localeCompare(String(valA));
+    });
+
+    // 8. Dynamic Pagination & default Top limits
+    const pageNum = Number(page || 1);
+    let pageSizeNum = Number(pageSize || 50);
+
+    // Default limit Region type to Top 20 unless pageSize explicitly defined
+    if (currentDimType === "region" && !req.query.pageSize) {
+      pageSizeNum = 20;
+    }
+
+    const totalItems = filteredRows.length;
+    const totalPages = Math.ceil(totalItems / pageSizeNum);
+    const paginatedRows = filteredRows.slice((pageNum - 1) * pageSizeNum, pageNum * pageSizeNum);
+
+    // 9. Aggregated overall Summary
+    const summarySpend = filteredRows.reduce((s, r) => s + r.spend, 0);
+    const summaryImpressions = filteredRows.reduce((s, r) => s + r.impressions, 0);
+    const summaryClicks = filteredRows.reduce((s, r) => s + r.clicks, 0);
+    const summaryPurchases = filteredRows.reduce((s, r) => s + r.purchases, 0);
+    const summaryPurchaseValue = filteredRows.reduce((s, r) => s + r.purchaseValue, 0);
+
+    const summaryCtr = summaryImpressions > 0 ? (summaryClicks / summaryImpressions) : 0;
+    const summaryCpc = summaryClicks > 0 ? (summarySpend / summaryClicks) : 0;
+    const summaryCpm = summaryImpressions > 0 ? (summarySpend / summaryImpressions) * 1000 : 0;
+    const summaryCpa = summaryPurchases > 0 ? (summarySpend / summaryPurchases) : 0;
+    const summaryRoas = summarySpend > 0 ? (summaryPurchaseValue / summarySpend) : 0;
+
+    const summary = {
+      totalSpend: Number(summarySpend.toFixed(4)),
+      totalImpressions: summaryImpressions,
+      totalClicks: summaryClicks,
+      totalPurchases: summaryPurchases,
+      totalPurchaseValue: Number(summaryPurchaseValue.toFixed(4)),
+      ctr: Number(summaryCtr.toFixed(6)),
+      cpc: Number(summaryCpc.toFixed(4)),
+      cpm: Number(summaryCpm.toFixed(4)),
+      cpa: Number(summaryCpa.toFixed(4)),
+      roas: Number(summaryRoas.toFixed(4))
+    };
+
+    // 10. Data Health & Warning/Missing Messages
+    const warnings: string[] = [];
+    const missing: string[] = [];
+
+    if (currentDimType === "region") {
+      warnings.push("Region 为高基数维度，默认仅展示 Top 20。");
+    }
+
+    if (campaignId || adsetId || adId) {
+      missing.push("当前受众 breakdown 仅同步账户层级，Campaign / AdSet / Ad 受众层级尚未同步。");
+    }
+
+    let healthStatus: "READY" | "PARTIAL" | "EMPTY" | "FAILED" = "READY";
+    if (paginatedRows.length === 0) {
+      healthStatus = "EMPTY";
+    } else if (missing.length > 0 || warnings.length > 0) {
+      healthStatus = "PARTIAL";
+    }
+
+    res.json({
+      rows: paginatedRows,
+      summary,
+      filters: {
+        startDate: startStr,
+        endDate: endStr,
+        storeId: storeId || "all",
+        accountId: accountId || "all",
+        campaignId: campaignId || "all",
+        adsetId: adsetId || "all",
+        adId: adId || "all",
+        dimensionType: currentDimType,
+        includeZeroSpend: includeZeroSpend === "true" || includeZeroSpend === true,
+        minSpend: minSpendNum
+      },
+      pagination: {
+        page: pageNum,
+        pageSize: pageSizeNum,
+        totalItems,
+        totalPages
+      },
+      dataHealth: {
+        status: healthStatus,
+        warnings,
+        missing,
+        source: "FactAudienceBreakdown"
+      },
+      dataSourceExplain: {
+        primarySource: "FactAudienceBreakdown",
+        legacyUsed: false
+      }
+    });
 
   } catch (error: any) {
     console.error("[Data Center API] Audience error:", error);
@@ -680,14 +933,14 @@ router.get("/stores", async (req, res) => {
       let hasMappedAccounts = uniqueMappedIds.length > 0;
 
       if (hasMappedAccounts) {
-        const insights = await prisma.adInsight.findMany({
+        const perfRows = await prisma.factMetaPerformance.findMany({
           where: {
-            accountId: { in: uniqueMappedIds },
+            account_id: { in: uniqueMappedIds },
             date: { gte: startStr, lte: endStr },
             level: "account"
           }
         });
-        adSpend = insights.reduce((sum, ad) => sum + (ad.spend || 0), 0);
+        adSpend = perfRows.reduce((sum, ad) => sum + (ad.spend || 0), 0);
       }
 
       const roas = adSpend > 0 ? totalSales / adSpend : 0;
@@ -750,14 +1003,14 @@ router.get("/stores", async (req, res) => {
     let unmappedSpend = 0;
 
     if (unmappedFbAccountIds.length > 0) {
-      const unmappedInsights = await prisma.adInsight.findMany({
+      const unmappedPerf = await prisma.factMetaPerformance.findMany({
         where: {
-          accountId: { in: unmappedFbAccountIds },
+          account_id: { in: unmappedFbAccountIds },
           date: { gte: startStr, lte: endStr },
           level: "account"
         }
       });
-      unmappedSpend = unmappedInsights.reduce((sum, item) => sum + (item.spend || 0), 0);
+      unmappedSpend = unmappedPerf.reduce((sum, item) => sum + (item.spend || 0), 0);
     }
 
     // data health card definition
@@ -775,7 +1028,7 @@ router.get("/stores", async (req, res) => {
         missingReason = "部分店铺尚未获得订单交易数据，或在当前所选日期筛选范围内暂无任何订单导入，导致 AOV 为 $0.00。请点击 “同步单个店铺” 确认连通性。";
       } else if (someMissingSpend) {
         dataStatus = "WARNING";
-        missingReason = "部分店铺关联的 Meta 广告账户在当期无花费支出，这导致无法计算其真实 ROAS（投流效果分析不受影响）。";
+        missingReason = "部分店铺关联 of Meta 广告账户在当期无花费支出，这导致无法计算其真实 ROAS（投流效果分析不受影响）。";
       }
     }
 
@@ -789,6 +1042,11 @@ router.get("/stores", async (req, res) => {
       dataHealth: {
         status: dataStatus,
         message: missingReason
+      },
+      dataSourceExplain: {
+        primarySource: "FactMetaPerformance",
+        legacySource: "AdInsight",
+        legacyUsed: false
       }
     });
 
@@ -911,7 +1169,7 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
  */
 router.get("/max-date", async (req, res) => {
   try {
-    const maxInsight = await prisma.adInsight.findFirst({
+    const maxInsight = await prisma.factMetaPerformance.findFirst({
       orderBy: { date: "desc" },
       select: { date: true }
     });
@@ -928,7 +1186,14 @@ router.get("/max-date", async (req, res) => {
       maxDateStr = maxOrder.store_local_date;
     }
 
-    res.json({ maxDate: maxDateStr });
+    res.json({
+      maxDate: maxDateStr,
+      dataSourceExplain: {
+        primarySource: "FactMetaPerformance",
+        legacySource: "AdInsight",
+        legacyUsed: false
+      }
+    });
   } catch (err) {
     res.json({ maxDate: "2026-06-11" });
   }
@@ -1124,7 +1389,12 @@ router.get("/accounts-performance", async (req, res) => {
         adAccounts,
         mappings: accountMappings
       },
-      accounts: results
+      accounts: results,
+      dataSourceExplain: {
+        primarySource: "FactMetaPerformance",
+        legacySource: "AdInsight",
+        legacyUsed: false
+      }
     });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to load accounts performance", details: error.message });
@@ -1686,28 +1956,59 @@ router.get("/audience-insights", async (req, res) => {
     const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
 
-    const accounts = await prisma.adAccount.findMany({ include: { store: true } });
+    const mappedDimType = breakdown === "gender_age" ? "gender" : String(breakdown || "country");
 
-    const insightsWhereClause: any = {
-      date: { gte: startStr, lte: endStr }
+    const whereClause: any = {
+      date: { gte: startStr, lte: endStr },
+      dimension_type: mappedDimType
     };
 
     if (accountId && accountId !== "all" && accountId !== "all_active" && accountId !== "undefined") {
-      insightsWhereClause.accountId = String(accountId);
+      whereClause.account_id = normalizeMetaAccountId(String(accountId));
     }
 
-    const rawInsights = await prisma.adInsight.findMany({
-      where: insightsWhereClause
+    const dbRows = await prisma.factAudienceBreakdown.findMany({
+      where: whereClause
     });
 
-    const totalSpend = rawInsights.reduce((sum, item) => sum + (item.spend || 0), 0);
-    const totalPurchases = rawInsights.reduce((sum, item) => sum + (item.purchases || 0), 0);
-    const totalImpressions = rawInsights.reduce((sum, item) => sum + (item.impressions || 0), 0);
-    const totalClicks = rawInsights.reduce((sum, item) => sum + (item.clicks || 0), 0);
-    const totalValue = rawInsights.reduce((sum, item) => sum + (item.purchaseValue || 0), 0);
+    const groups: Record<string, any> = {};
+    for (const r of dbRows) {
+      const val = r.dimension_value || "unknown";
+      if (!groups[val]) {
+        groups[val] = {
+          dimensionType: r.dimension_type,
+          dimensionValue: val,
+          spend: 0,
+          impressions: 0,
+          clicks: 0,
+          purchases: 0,
+          purchaseValue: 0
+        };
+      }
+      groups[val].spend += r.spend || 0;
+      groups[val].impressions += r.impressions || 0;
+      groups[val].clicks += r.clicks || 0;
+      groups[val].purchases += r.purchases || 0;
+      groups[val].purchaseValue += r.purchase_value || 0;
+    }
 
-    // Clear faked simulated percentage breakdown modeling for honest reporting
-    res.json([]);
+    const rows = Object.values(groups).map(g => {
+      const ctr = g.impressions > 0 ? (g.clicks / g.impressions) : 0;
+      const cpc = g.clicks > 0 ? (g.spend / g.clicks) : 0;
+      return {
+        ...g,
+        ctr,
+        cpc
+      };
+    });
+
+    res.json({
+      rows,
+      dataSourceExplain: {
+        primarySource: "FactAudienceBreakdown",
+        legacyUsed: false
+      }
+    });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to load audience insights", details: error.message });
   }
