@@ -29,7 +29,7 @@ router.get("/detail", async (req, res) => {
     // 1. Fetch available filters
     const [stores, adAccounts, accountMappings] = await Promise.all([
       prisma.store.findMany({ select: { id: true, name: true, platform: true } }),
-      prisma.adAccount.findMany({ select: { fb_account_id: true, fb_account_name: true } }),
+      prisma.adAccount.findMany({ select: { fb_account_id: true, fb_account_name: true, storeId: true } }),
       prisma.accountMapping.findMany()
     ]);
 
@@ -236,28 +236,29 @@ router.get("/structure", async (req, res) => {
       where: { adsetId: { in: adsetIds } }
     });
 
-    // 4. Fetch daily summaries for metric bindings
-    const compSummaries = await prisma.dailySummary.findMany({
+    // 4. Fetch daily performance rows for metric bindings
+    const compPerformance = await prisma.factMetaPerformance.findMany({
       where: {
-        scope: { in: ["campaign", "adset", "ad"] },
+        level: { in: ["campaign", "adset", "ad"] },
+        account_id: targetAccount,
         date: { gte: startStr, lte: endStr }
       }
     });
 
-    // Helper: Aggregate summaries
+    // Helper: Aggregate performance from single source of truth FactMetaPerformance
     const getAggregatedMetrics = (scope: string, scopeId: string) => {
-      const matched = compSummaries.filter(s => s.scope === scope && s.scopeId === scopeId);
+      const matched = compPerformance.filter(s => s.level === scope && s.entity_id === scopeId);
       const spend = matched.reduce((a, b) => a + (b.spend || 0), 0);
       const impressions = matched.reduce((a, b) => a + (b.impressions || 0), 0);
       const clicks = matched.reduce((a, b) => a + (b.clicks || 0), 0);
-      const orders = matched.reduce((a, b) => a + (b.orders || 0), 0);
-      const revenue = matched.reduce((a, b) => a + (b.revenue || 0), 0);
+      const purchases = matched.reduce((a, b) => a + (b.purchases || 0), 0);
+      const revenue = matched.reduce((a, b) => a + (b.purchase_value || 0), 0);
 
       const roas = spend > 0 ? revenue / spend : 0;
       const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
       const cpc = clicks > 0 ? spend / clicks : 0;
 
-      return { spend, impressions, clicks, orders, revenue, roas, ctr, cpc };
+      return { spend, impressions, clicks, orders: purchases, revenue, roas, ctr, cpc };
     };
 
     const campaignsList = rawCampaigns.map(c => ({
@@ -297,7 +298,7 @@ router.get("/structure", async (req, res) => {
       missingReason = "该 Meta 账号未包含任何广告结构数据，可能从未启动同步任务，或该账户名下本身即为空账户。";
     } else if (totalSpend === 0) {
       dataStatus = "WARNING";
-      missingReason = "虽然已拉取广告系列三级树状结构，但当前日期范围内暂未捕获到任何每日成效花费数据(DailySummary为空)。请在数据同步中心点击“获取Meta广告成效”或“统一重建”进行重新装载。";
+      missingReason = "虽然已拉取广告系列三级树状结构，但当前日期范围内暂未捕获到任何每日成效花费数据(FactMetaPerformance为空)。请在数据同步中心点击“获取Meta广告成效”或“统一重建”进行重新装载。";
     }
 
     const lastSyncLog = await prisma.syncLog.findFirst({
@@ -708,7 +709,7 @@ router.post("/creatives/:creativeId/analyze", async (req, res) => {
           entityType: "creative",
           entityId: creativeId,
           dateRange: `${startStr} 至 ${endStr}`,
-          conclusion: `[时段：${startStr} ~ ${endStr}] 核心建议：该素材表现良好。由于当前系统未绑定 GEMINI_API_KEY，诊断采用离线数据分析引擎。此素材的最终 ROAS 为 ${roas.toFixed(2)}。建议继续保持对其在 Feed 版位中的预算倾斜，该点击转化漏斗整体表现健康。`,
+          conclusion: `【AI 未启用 / 非正式诊断 - 离线规则评估模式】\n[时段：${startStr} ~ ${endStr}] 核心建议：该素材表现良好。由于当前系统未绑定 GEMINI_API_KEY，诊断采用离线数据分析引擎。此素材的最终 ROAS 为 ${roas.toFixed(2)}。建议继续保持对其在 Feed 版位中的预算倾斜，该点击转化漏斗整体表现健康。`,
           dataBasis: `Spend: $${spend.toFixed(2)}, CTR: ${ctr.toFixed(2)}%, Clicks: ${clicks}, Purchases: ${purchases}, ROAS: ${roas.toFixed(2)}`,
           riskPoints: ctr < 1 ? "⚠️ 点击率低于1.0%偏低，建议优化前3秒视觉钩子。" : "✅ 转化表现健康，暂无重大风险指标。",
           priority: roas < 1.0 ? 1 : (roas > 2.5 ? 4 : 3)

@@ -205,6 +205,8 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   const roasVal = summary?.roas ?? 0;
 
   // Unified data source for both charts and table (limited to Top 10 for country to prevent label skipping/overlap)
+  const tableRows = data;
+
   const chartRows = useMemo(() => {
     if (activeTab === "country") {
       return data.slice(0, 10);
@@ -541,10 +543,17 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         {/* Comparative Purchases vs Budget Column Chart */}
         <Card className="lg:col-span-2 border-slate-200 shadow-sm">
           <CardHeader className="p-5 border-b pb-4">
-            <CardTitle className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
-              <MonitorPlay className="w-4 h-4 text-indigo-500" />
-              受众花费与转化购买分布交叉比对图 (Purchases vs Ad Spend)
-            </CardTitle>
+            <div className="flex flex-col gap-1">
+              <CardTitle className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
+                <MonitorPlay className="w-4 h-4 text-indigo-500" />
+                受众花费与转化购买分布交叉比对图 (Purchases vs Ad Spend)
+              </CardTitle>
+              {activeTab === "country" && (
+                <p className="text-[10px] text-amber-600 font-semibold mt-1">
+                  * 提示：图表展示 Spend Top 10 细分，下方表格展示当前全部 {tableRows.length} 项受众细分数据。
+                </p>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="p-5">
             <div className="h-[280px] w-full">
@@ -592,7 +601,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
             </p>
           </div>
           <span className="text-[11px] text-slate-500 font-semibold bg-slate-100 px-3 py-1 rounded-full font-mono">
-            分析范围组: {chartRows.length} 项
+            分析范围组: {tableRows.length} 项
           </span>
         </CardHeader>
         <CardContent className="p-0">
@@ -601,7 +610,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
               <Loader2 className="w-6 h-6 animate-spin text-indigo-500 mb-2" />
               <p className="text-xs font-semibold">分析引擎智能计算中...</p>
             </div>
-          ) : chartRows.length === 0 ? (
+          ) : tableRows.length === 0 ? (
             <div className="p-16 text-center text-slate-500 bg-slate-50/20 rounded-xl my-4 flex flex-col items-center justify-center max-w-lg mx-auto">
               <AlertTriangle className="w-8 h-8 text-amber-500 mb-2 animate-pulse" />
               <p className="text-xs font-bold text-slate-700">当前筛选周期或店铺范围内暂无物理受众数据</p>
@@ -654,13 +663,14 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {chartRows.map((row, idx) => {
+                  {tableRows.map((row) => {
                     const rowSpendRatio = totalSpend > 0 ? (row.spend / totalSpend) * 100 : 0;
                     const rowPurchaseRatio = totalPurchases > 0 ? (row.purchases / totalPurchases) * 100 : 0;
                     const suggestion = getSuggestionAction(row);
+                    const rowKey = `${row.dimensionType || activeTab}-${row.dimensionValue || "unknown"}-${row.lastSyncedAt || ""}`;
                     
                     return (
-                      <TableRow key={idx} className="hover:bg-slate-50/80 border-b">
+                      <TableRow key={rowKey} className="hover:bg-slate-50/80 border-b">
                         <TableCell className="font-extrabold text-slate-800 whitespace-nowrap pr-4">
                           {row.dimensionValue || "unknown"}
                         </TableCell>
