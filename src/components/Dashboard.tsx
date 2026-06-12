@@ -14,6 +14,7 @@ import { CampaignStructureDashboard } from './CampaignStructureDashboard';
 import { AudienceAnalysisDashboard } from './AudienceAnalysisDashboard';
 import { MonitoringDashboard } from './MonitoringDashboard';
 import { SuggestionsDashboard } from './SuggestionsDashboard';
+import { ProductIntelligenceDashboard } from './ProductIntelligenceDashboard';
 
 export function StandardPageHeader({ 
   title, 
@@ -205,6 +206,8 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
         return <MonitoringDashboard />;
       case 'sugg-cards':
         return <SuggestionsDashboard />;
+      case 'ai-product':
+        return <ProductIntelligenceDashboard startDate={startDate} endDate={endDate} />;
       default:
         return (
           <div className="p-8 border border-slate-200 rounded-2xl bg-white/50 backdrop-blur-sm border-dashed min-h-[400px] flex flex-col items-center justify-center text-center">

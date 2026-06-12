@@ -2,78 +2,147 @@
 import prisma from '../../db/index.js';
 
 export async function getProductIntelligence(startDate: string, endDate: string) {
-  // Logic to fetch from ProductPerformanceDaily (aggregating across dates)
-  const data = await prisma.productPerformanceDaily.findMany({
+  // 1. Fetch Orders within date range
+  // We fetch a slightly wider buffer of orders in terms of database timestamps
+  // to ensure that store_local_date or UTC fallbacks are comprehensively included
+  const rawOrders = await prisma.order.findMany({
     where: {
-      date: {
-        gte: startDate,
-        lte: endDate
+      createdAt: {
+        gte: new Date(`${startDate}T00:00:00.000Z`),
+        lte: new Date(`${endDate}T23:59:59.999Z`)
       }
     }
   });
 
-  // Since we might have multiple days, we should group by product
-  const grouped = data.reduce((acc, curr) => {
-    const key = curr.productId;
-    if (!acc[key]) {
-      acc[key] = {
-        id: curr.productId,
-        storeId: curr.storeId,
-        productName: curr.productName,
-        sku: curr.sku,
-        category: curr.category,
-        revenue: 0,
-        orders: 0,
-        profit: 0,
-        adSpend: 0,
-        productRoas: 0,
-        profitRoas: 0,
-        ctr: 0,
-        cpc: 0,
-        cpm: 0,
-        frequency: 0,
-        refundRate: 0,
-        inventory: curr.inventory,
-        topRegion: curr.topRegion,
-        topCampaign: curr.topCampaign,
-        topCreative: curr.topCreative,
-        aiRiskStatus: curr.aiRiskStatus || "SAFE",
-        trendStatus: curr.trendStatus || "STABLE",
-        aiSuggestion: curr.aiSuggestion || "",
-        _count: 0
-      };
+  // 2. Filter orders by store_local_date fallback to createdAt
+  const filteredOrders = rawOrders.filter(order => {
+    let orderDateStr = order.store_local_date;
+    if (!orderDateStr && order.createdAt) {
+      try {
+        orderDateStr = new Date(order.createdAt).toISOString().split('T')[0];
+      } catch (e) {
+        orderDateStr = "";
+      }
     }
-    
-    acc[key].revenue += curr.revenue;
-    acc[key].orders += curr.orders;
-    acc[key].profit += curr.profit;
-    acc[key].adSpend += curr.adSpend;
-    
-    // Average metrics
-    acc[key].ctr += curr.ctr;
-    acc[key].cpc += curr.cpc;
-    acc[key].cpm += curr.cpm;
-    acc[key].frequency += curr.frequency;
-    acc[key].refundRate += curr.refundRate;
-    acc[key]._count += 1;
-    
-    return acc;
-  }, {} as Record<string, any>);
-  
-  const result = Object.values(grouped).map((item: any) => {
-    if (item._count > 0) {
-      item.ctr /= item._count;
-      item.cpc /= item._count;
-      item.cpm /= item._count;
-      item.frequency /= item._count;
-      item.refundRate /= item._count;
-    }
-    item.productRoas = item.adSpend > 0 ? item.revenue / item.adSpend : 0;
-    item.profitRoas = item.adSpend > 0 ? item.profit / item.adSpend : 0;
-    delete item._count;
-    return item;
+    return orderDateStr && orderDateStr >= startDate && orderDateStr <= endDate;
   });
 
-  // Sort by revenue descending and return top 20
-  return result.sort((a, b) => b.revenue - a.revenue).slice(0, 20);
+  // Group by productId
+  const grouped = filteredOrders.reduce((acc, curr) => {
+    const pid = curr.productId || "unknown";
+    if (!acc[pid]) {
+      acc[pid] = {
+        productId: pid,
+        storeId: curr.storeId,
+        allOrders: [],
+        validOrders: []
+      };
+    }
+    acc[pid].allOrders.push(curr);
+
+    // Apply exclusion patterns for valid sales orders:
+    // - paymentStatus in ["waiting", "unpaid", "pending", "failed", "cancelled", "canceled"]
+    // - fulfillmentStatus in ["cancelled", "canceled"]
+    // - refunded === true
+    const payStatus = (curr.paymentStatus || "").toLowerCase();
+    const fulStatus = (curr.fulfillmentStatus || "").toLowerCase();
+    
+    const isExcluded = 
+      ["waiting", "unpaid", "pending", "failed", "cancelled", "canceled"].includes(payStatus) ||
+      ["cancelled", "canceled"].includes(fulStatus) ||
+      curr.refunded === true;
+
+    if (!isExcluded) {
+      acc[pid].validOrders.push(curr);
+    }
+
+    return acc;
+  }, {} as Record<string, any>);
+
+  // Gather all unique productIds to fetch metadata from Product table
+  const uniqueProductIds = Object.keys(grouped).filter(id => id !== "unknown");
+  const dbProducts = await prisma.product.findMany({
+    where: { id: { in: uniqueProductIds } }
+  });
+  const productMap = new Map(dbProducts.map(p => [p.id, p]));
+
+  // Build intelligence records
+  const resultList = Object.values(grouped).map(group => {
+    const { productId, storeId, allOrders, validOrders } = group;
+
+    // Retrieve metadata
+    const productMeta = productMap.get(productId);
+    const hasProductMeta = !!productMeta;
+    
+    const productName = productMeta?.name || `Product ${productId}`;
+    const sku = productMeta?.sku || productId;
+    const category = productMeta?.category || "unknown";
+
+    // 1. orders: valid orders quantity
+    const ordersCount = validOrders.length;
+
+    // 2. revenue:优先使用 orderTotal, 为空时使用 revenue
+    const revenueSum = validOrders.reduce((sum, order) => {
+      const val = (order.orderTotal !== null && order.orderTotal !== undefined && order.orderTotal > 0)
+        ? order.orderTotal
+        : (order.revenue || 0);
+      return sum + val;
+    }, 0);
+
+    // 3. profit: 使用 Order.profit, 如果为空 or 0 不伪造
+    const profitSum = validOrders.reduce((sum, order) => sum + (order.profit || 0), 0);
+
+    // 4. averageOrderValue = revenue / orders
+    const averageOrderValue = ordersCount > 0 ? revenueSum / ordersCount : 0;
+
+    // 5. refundRate = refunded orders / total orders
+    const totalCount = allOrders.length;
+    const refundedCount = allOrders.filter(o => o.refunded).length;
+    const refundRate = totalCount > 0 ? refundedCount / totalCount : 0;
+
+    // 6. order timeline
+    let firstOrderAt = null;
+    let lastOrderAt = null;
+    if (allOrders.length > 0) {
+      const dates = allOrders.map(o => new Date(o.createdAt).getTime()).filter(t => !isNaN(t));
+      if (dates.length > 0) {
+        firstOrderAt = new Date(Math.min(...dates)).toISOString();
+        lastOrderAt = new Date(Math.max(...dates)).toISOString();
+      }
+    }
+
+    return {
+      id: productId,
+      productId,
+      storeId,
+      productName,
+      sku,
+      category,
+      revenue: revenueSum,
+      orders: ordersCount,
+      profit: profitSum,
+      averageOrderValue,
+      refundRate,
+      firstOrderAt,
+      lastOrderAt,
+      // Fixed specifications for adspend and roas (never fake or proportion-risk)
+      adSpend: null,
+      productRoas: null,
+      profitRoas: null,
+      source: "Order",
+      dataSourceExplain: {
+        primarySource: "Order",
+        productTableUsedForMetadataOnly: hasProductMeta,
+        productPerformanceDailyUsed: false,
+        revenueRule: "orderTotal first, fallback to revenue",
+        invalidOrderExcluded: true,
+        adSpendAvailable: false,
+        adSpendReason: "Product-level ad spend is not available until product-to-ad attribution is rebuilt."
+      }
+    };
+  });
+
+  // Sort by revenue descending
+  return resultList.sort((a, b) => b.revenue - a.revenue);
 }
+

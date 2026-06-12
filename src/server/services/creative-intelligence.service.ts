@@ -121,7 +121,7 @@ export async function getCreativeIntelligence(startDate: string, endDate: string
       roas: "基于原始 revenue 与 spend 真实计算出的投资回报率",
       reach: "衍生/推算指标 - 采用转化漏斗推估模型得出的近似值，非 Facebook 接口原始字段",
       addToCart: "衍生/推算指标 - 采用转化漏斗推估模型得出的近似值，非 Facebook 接口原始字段",
-      frequency: "衍生/推算指标 - 根据展示与转化比率建立的模型估算，非 Facebook 接口原始字段",
+      frequency: "衍生/推算指标 - 当前为前端展示兼容字段，基于 creativeId 的确定性估算，非 Facebook 接口原始字段，不作为投放决策依据",
       hookRate: "衍生/推算指标 - 根据点击行为推算的等效吸引率，非 Facebook 接口原始字段",
       productLink: "默认展示占位链接 - 基于素材 ID 动态生成的商品详情链接，可能非此时真实的落地广告目标落地页"
     };
