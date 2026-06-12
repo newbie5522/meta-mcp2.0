@@ -169,6 +169,93 @@ export async function syncMetaInsightsForActiveAccounts(days: number = 90) {
               cpc, ctr, atcRate, checkoutRate, cpp, roas
             }
           });
+
+          // Write to FactMetaPerformance synchronously
+          const sandboxAccounts = ["act_439281903", "act_583920194", "act_204928103"];
+          if (!sandboxAccounts.includes(actId)) {
+            try {
+              let entity_id = "";
+              if (currentLevel === "account") {
+                entity_id = actId;
+              } else if (currentLevel === "campaign") {
+                entity_id = campaignIdValue;
+              } else if (currentLevel === "adset") {
+                entity_id = adsetIdValue;
+              } else if (currentLevel === "ad") {
+                entity_id = adIdValue;
+              }
+
+              if (entity_id) {
+                let creative_id = "";
+                if (currentLevel === "ad" && adIdValue) {
+                  const adObj = await prisma.ad.findUnique({
+                    where: { id: adIdValue },
+                    select: { creativeId: true }
+                  });
+                  if (adObj?.creativeId) {
+                    creative_id = adObj.creativeId;
+                  }
+                }
+
+                const currency = acc.currency || "USD";
+                const cpmValue = impressions > 0 ? (spend / impressions) * 1000 : 0;
+
+                await prisma.factMetaPerformance.upsert({
+                  where: {
+                    date_level_account_id_entity_id: {
+                      date: dateStr,
+                      level: currentLevel,
+                      account_id: actId,
+                      entity_id: entity_id,
+                    }
+                  },
+                  update: {
+                    campaign_id: campaignIdValue,
+                    adset_id: adsetIdValue,
+                    ad_id: adIdValue,
+                    creative_id: creative_id,
+                    spend: spend,
+                    impressions: impressions,
+                    clicks: clicks,
+                    ctr: ctr,
+                    cpc: cpc,
+                    cpm: cpmValue,
+                    purchases: purchases,
+                    purchase_value: purchaseValue,
+                    roas: roas,
+                    currency: currency,
+                    synced_at: new Date(),
+                    raw_payload: JSON.stringify(row),
+                  },
+                  create: {
+                    date: dateStr,
+                    level: currentLevel,
+                    account_id: actId,
+                    campaign_id: campaignIdValue,
+                    adset_id: adsetIdValue,
+                    ad_id: adIdValue,
+                    creative_id: creative_id,
+                    entity_id: entity_id,
+                    spend: spend,
+                    impressions: impressions,
+                    clicks: clicks,
+                    ctr: ctr,
+                    cpc: cpc,
+                    cpm: cpmValue,
+                    purchases: purchases,
+                    purchase_value: purchaseValue,
+                    roas: roas,
+                    currency: currency,
+                    synced_at: new Date(),
+                    raw_payload: JSON.stringify(row),
+                  }
+                });
+              }
+            } catch (err: any) {
+              console.error(`[Fact Table Sync] Failed writing multi-level row for ${actId} at level ${currentLevel}:`, err.message);
+            }
+          }
+
           successCount++;
         }
         console.log(`[Meta Insights Sync] Saved ${successCount} row(s) for level "${currentLevel}" for ${actId}.`);

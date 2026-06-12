@@ -370,3 +370,30 @@ model AiActionSuggestion {
 
   report             AiAnalysisReport   @relation(fields: [reportId], references: [id], onDelete: Cascade)
 }
+
+model FactMetaPerformance {
+  id             Int      @id @default(autoincrement())
+  date           String
+  level          String   // "account" | "campaign" | "adset" | "ad"
+  account_id     String
+  campaign_id    String   @default("")
+  adset_id       String   @default("")
+  ad_id          String   @default("")
+  creative_id    String   @default("")
+  entity_id      String
+  spend          Float    @default(0)
+  impressions    Int      @default(0)
+  clicks         Int      @default(0)
+  ctr            Float    @default(0)
+  cpc            Float    @default(0)
+  cpm            Float    @default(0)
+  purchases      Int      @default(0)
+  purchase_value Float    @default(0)
+  roas           Float    @default(0)
+  currency       String   @default("USD")
+  synced_at      DateTime @default(now())
+  raw_payload    String?
+
+  @@unique([date, level, account_id, entity_id])
+}
+

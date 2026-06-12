@@ -392,6 +392,69 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
         roas,
       },
     });
+
+    // Write to FactMetaPerformance synchronously
+    const sandboxAccounts = ["act_439281903", "act_583920194", "act_204928103"];
+    if (!sandboxAccounts.includes(normAccountId)) {
+      try {
+        const dbAcc = await prisma.adAccount.findUnique({
+          where: { fb_account_id: normAccountId },
+        });
+        const currency = dbAcc?.currency || "USD";
+
+        await prisma.factMetaPerformance.upsert({
+          where: {
+            date_level_account_id_entity_id: {
+              date: dateKey,
+              level: "account",
+              account_id: normAccountId,
+              entity_id: normAccountId,
+            }
+          },
+          update: {
+            campaign_id: "",
+            adset_id: "",
+            ad_id: "",
+            creative_id: "",
+            spend: item.spend ?? 0,
+            impressions: item.impressions ?? 0,
+            clicks: item.clicks ?? 0,
+            ctr: ctr,
+            cpc: cpc,
+            cpm: item.impressions > 0 ? (item.spend / item.impressions) * 1000 : 0,
+            purchases: item.purchases ?? 0,
+            purchase_value: item.purchaseValue ?? 0,
+            roas: roas,
+            currency: currency,
+            synced_at: new Date(),
+          },
+          create: {
+            date: dateKey,
+            level: "account",
+            account_id: normAccountId,
+            campaign_id: "",
+            adset_id: "",
+            ad_id: "",
+            creative_id: "",
+            entity_id: normAccountId,
+            spend: item.spend ?? 0,
+            impressions: item.impressions ?? 0,
+            clicks: item.clicks ?? 0,
+            ctr: ctr,
+            cpc: cpc,
+            cpm: item.impressions > 0 ? (item.spend / item.impressions) * 1000 : 0,
+            purchases: item.purchases ?? 0,
+            purchase_value: item.purchaseValue ?? 0,
+            roas: roas,
+            currency: currency,
+            synced_at: new Date(),
+          }
+        });
+      } catch (err: any) {
+        console.error(`[Fact Table Sync] Failed writing ${normAccountId} for date ${dateKey}:`, err.message);
+      }
+    }
+
     syncedRecords++;
   }
 
