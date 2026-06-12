@@ -7,10 +7,11 @@ import { normalizeAccountId } from "../utils/format.js";
 import { buildFieldsParam } from "../utils/validation.js";
 import { ACCOUNT_FIELDS, toJsonContent } from "./field-policy.js";
 import { READ, READ_ONLY_DESCRIPTION } from "./_register.js";
+import { getNumericAccountId } from "../../server/utils.js";
 
 function normalizeAccount(account: MetaAdAccount): Record<string, unknown> {
   return {
-    account_id: account.account_id ?? account.id?.replace(/^act_/, ""),
+    account_id: getNumericAccountId(account.account_id ?? account.id),
     name: account.name,
     currency: account.currency,
     timezone: account.timezone_name,

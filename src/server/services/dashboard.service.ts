@@ -1,6 +1,7 @@
 // @ts-nocheck
 import prisma from "../../db/index.js";
 import dayjs from "dayjs";
+import { normalizeMetaAccountId } from "../utils.js";
 
 function toNumber(value: unknown): number {
   if (value === null || value === undefined) return 0;
@@ -134,7 +135,7 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
   let metaSpend = 0, metaPurchases = 0, metaPurchaseValue = 0, impressions = 0, clicks = 0;
 
   for (const row of insights) {
-    const cleanId = row.accountId.replace("act_", "").trim();
+    const normId = normalizeMetaAccountId(row.accountId);
 
     metaSpend += toNumber(row.spend);
     metaPurchases += toNumber(row.purchases);
@@ -142,11 +143,10 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
     impressions += toNumber(row.impressions);
     clicks += toNumber(row.clicks);
 
-    const matchKey = cleanId;
-    if (!accountStats.has(matchKey)) {
-      accountStats.set(matchKey, { spend: 0, imp: 0, clicks: 0, pur: 0, pVal: 0 });
+    if (!accountStats.has(normId)) {
+      accountStats.set(normId, { spend: 0, imp: 0, clicks: 0, pur: 0, pVal: 0 });
     }
-    const ast = accountStats.get(matchKey)!;
+    const ast = accountStats.get(normId)!;
     ast.spend += toNumber(row.spend);
     ast.imp += toNumber(row.impressions);
     ast.clicks += toNumber(row.clicks);
@@ -171,11 +171,11 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
 
   const accountsMap = new Map<string, any>();
   for (const a of adAccounts) {
-    const rawId = a.fb_account_id.replace('act_', '').trim();
-    accountsMap.set(rawId, {
+    const normId = normalizeMetaAccountId(a.fb_account_id);
+    accountsMap.set(normId, {
       id: String(a.id),
       metaAccountId: a.fb_account_id,
-      name: a.fb_account_name || `Account ${rawId}`,
+      name: a.fb_account_name || `Account ${normId}`,
       status: String(a.activityStatus || '1'),
       storeName: a.store?.name,
       spend: 0,
@@ -188,13 +188,13 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
   }
 
   accountStats.forEach((st, accId) => {
-    const rawId = accId.replace('act_', '').trim();
-    let accEntry = accountsMap.get(rawId);
+    const normId = normalizeMetaAccountId(accId);
+    let accEntry = accountsMap.get(normId);
     if (!accEntry) {
       accEntry = {
-        id: `synth_${rawId}`,
-        metaAccountId: `act_${rawId}`,
-        name: `Meta Account act_${rawId}`,
+        id: `synth_${normId}`,
+        metaAccountId: normId,
+        name: `Meta Account ${normId}`,
         status: "1",
         storeName: undefined,
         spend: 0,
@@ -204,7 +204,7 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
         purchaseValue: 0,
         roas: null
       };
-      accountsMap.set(rawId, accEntry);
+      accountsMap.set(normId, accEntry);
     }
     accEntry.spend = st.spend;
     accEntry.impressions = st.imp;

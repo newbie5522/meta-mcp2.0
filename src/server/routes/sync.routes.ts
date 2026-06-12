@@ -167,7 +167,7 @@ router.get("/sync/chains", async (req, res) => {
  * Manually starts a specific task trigger.
  */
 router.post("/sync/trigger", async (req, res) => {
-  const { taskType, storeId } = req.body;
+  const { taskType, storeId, accountId, startDate, endDate, days } = req.body;
   if (!taskType) {
     return res.status(400).json({ error: "taskType is required" });
   }
@@ -186,11 +186,15 @@ router.post("/sync/trigger", async (req, res) => {
       SyncCenter.syncMetaStructure(chainId, "manual_trigger").catch(e => console.error(e));
       message = "已启动 Meta 创意结构拆解任务 (Campaign / AdSet / Ads)。";
     } else if (taskType === "sync_meta_insights") {
-      SyncCenter.syncMetaInsights(chainId, "manual_trigger", null, 90)
-        .then(() => SyncCenter.rebuildMetaSummary(chainId, "manual_trigger", null, 90))
-        .then(() => SyncCenter.rebuildDashboardSummary(chainId, "manual_trigger", null, 90))
+      const daysVal = days ? parseInt(days, 10) : 3; // manual defaults to 3 days!
+      SyncCenter.syncMetaInsights(chainId, "manual_trigger", null, daysVal, accountId, startDate, endDate)
+        .then(() => SyncCenter.rebuildMetaSummary(chainId, "manual_trigger", null, daysVal))
+        .then(() => SyncCenter.rebuildDashboardSummary(chainId, "manual_trigger", null, daysVal))
         .catch(e => console.error(e));
-      message = "已开始同步 Meta 过去90天广告成效与展现/消耗报表。";
+      
+      message = accountId
+        ? `已开始对账户 ${accountId} 同步指定范围的 Meta 广告成效数据。`
+        : `已开始同步 Meta 过去 ${daysVal} 天的广告成效与展现/消耗报表。`;
     } else if (taskType === "sync_store_orders") {
       if (!storeId) return res.status(400).json({ error: "Store ID is required for sync_store_orders" });
       SyncCenter.syncStoreOrders(parseInt(storeId, 10), chainId, "manual_trigger")
@@ -269,13 +273,13 @@ router.post("/sync", async (req, res) => {
     console.log(`[Unified Sync API] Initiating real Meta insights pull for active accounts...`);
     
     // Call the real Meta Insights endpoint sync (this queries account, campaign, adset, ad levels from Meta Graph API)
-    await syncMetaInsightsForActiveAccounts(90);
+    await syncMetaInsightsForActiveAccounts(3);
 
     // Rebuild summaries inside SQLite to align with the synced real insights
-    await SyncCenter.rebuildStoreSummary(parentChainId, "manual_sync_btn", null, 90);
-    await SyncCenter.rebuildMetaSummary(parentChainId, "manual_sync_btn", null, 90);
-    await SyncCenter.rebuildRoasSummary(parentChainId, "manual_sync_btn", null, 90);
-    await SyncCenter.rebuildDashboardSummary(parentChainId, "manual_sync_btn", null, 90);
+    await SyncCenter.rebuildStoreSummary(parentChainId, "manual_sync_btn", null, 3);
+    await SyncCenter.rebuildMetaSummary(parentChainId, "manual_sync_btn", null, 3);
+    await SyncCenter.rebuildRoasSummary(parentChainId, "manual_sync_btn", null, 3);
+    await SyncCenter.rebuildDashboardSummary(parentChainId, "manual_sync_btn", null, 3);
 
     const finishedVal = new Date();
     await prisma.syncLog.create({

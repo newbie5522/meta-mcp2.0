@@ -1,4 +1,5 @@
 import prisma from "../db/index.js";
+import { normalizeMetaAccountId } from "./utils.js";
 import dayjs from "dayjs";
 
 async function main() {
@@ -24,10 +25,9 @@ async function main() {
     const matchedAccountIds: string[] = [];
 
     accountsWithStore.forEach((acc) => {
-      const accIdClean = acc.fb_account_id.replace(/^act_/, "").trim();
+      const normAccId = normalizeMetaAccountId(acc.fb_account_id);
       const matched = rawInsights.filter(ins => {
-        const insIdClean = ins.accountId.replace(/^act_/, "").trim();
-        return insIdClean === accIdClean;
+        return normalizeMetaAccountId(ins.accountId) === normAccId;
       });
 
       const spend = matched.reduce((sum, item) => sum + (item.spend || 0), 0);

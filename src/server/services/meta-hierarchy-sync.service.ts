@@ -1,6 +1,7 @@
 // @ts-nocheck
 import axios from "axios";
 import prisma from "../../db/index.js";
+import { normalizeMetaAccountId } from "../utils.js";
 
 export async function ensureAdAccounts(token: string) {
   try {
@@ -44,8 +45,7 @@ export async function ensureAdAccounts(token: string) {
     for (let i = 0; i < allAccounts.length; i += concurrentLimit) {
       const chunk = allAccounts.slice(i, i + concurrentLimit);
       const results = await Promise.all(chunk.map(async (apiAcc) => {
-        const cleanId = apiAcc.account_id || apiAcc.id?.replace("act_", "");
-        const metaAccountId = `act_${cleanId}`;
+        const metaAccountId = normalizeMetaAccountId(apiAcc.id || apiAcc.account_id);
         const status = apiAcc.account_status;
         const apiCurrency = apiAcc.currency;
         const apiTimezone = apiAcc.timezone_name;

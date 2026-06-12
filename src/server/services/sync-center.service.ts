@@ -2,7 +2,7 @@
 import prisma from "../../db/index.js";
 import axios from "axios";
 import dayjs from "dayjs";
-import { getMetaToken } from "../utils.js";
+import { getMetaToken, normalizeMetaAccountId } from "../utils.js";
 import { ensureAdAccounts } from "./meta-hierarchy-sync.service.js";
 import { syncMetaInsightsForActiveAccounts } from "./meta-insights.service.js";
 import { syncStoreData } from "./store-sync.service.js";
@@ -283,14 +283,13 @@ export class SyncCenter {
         let adsTotal = 0;
 
         for (const account of activeAccounts) {
-          const actId = account.fb_account_id;
-          const cleanAccountId = actId.replace("act_", "");
+          const actId = normalizeMetaAccountId(account.fb_account_id);
           
           try {
             console.log(`[Sync Center] Querying Meta structure for active account ${actId}`);
             
             // Fetch campaigns
-            const campRes = await axios.get(`https://graph.facebook.com/v19.0/act_${cleanAccountId}/campaigns`, {
+            const campRes = await axios.get(`https://graph.facebook.com/v19.0/${actId}/campaigns`, {
               params: { fields: "id,name,status", limit: 300, access_token: token }
             });
             const campaigns = campRes.data?.data || [];
@@ -454,7 +453,15 @@ export class SyncCenter {
   }
 
   // 6. sync_meta_insights
-  static async syncMetaInsights(taskChainId: string, triggeredBy: string, parentTaskId: string | null = null, days: number = 90): Promise<string> {
+  static async syncMetaInsights(
+    taskChainId: string,
+    triggeredBy: string,
+    parentTaskId: string | null = null,
+    days: number = 3,
+    accountId: string | null = null,
+    startDate: string | null = null,
+    endDate: string | null = null
+  ): Promise<string> {
     return this.runTask(
       "sync_meta_insights",
       "meta",
@@ -462,14 +469,32 @@ export class SyncCenter {
       taskChainId,
       parentTaskId,
       null,
-      null,
+      accountId,
       async () => {
-        await syncMetaInsightsForActiveAccounts(days);
-        const insightsCount = await prisma.adInsight.count();
+        const stats = await syncMetaInsightsForActiveAccounts({
+          days,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          accountId: accountId || undefined,
+          taskChainId,
+          parentTaskId,
+          triggeredBy
+        });
+        
         return {
-          recordsFetched: insightsCount,
-          recordsSaved: insightsCount,
-          metadata: { days, totalInsightsInDb: insightsCount }
+          recordsFetched: stats.recordsFetched,
+          recordsSaved: stats.recordsSaved,
+          metadata: {
+            days,
+            startDate,
+            endDate,
+            accountId,
+            targetTable: "fact_meta_performance",
+            recordsUpdated: stats.recordsUpdated,
+            recordsFailed: stats.recordsFailed,
+            levelCounts: stats.levelCounts,
+            completedAt: new Date().toISOString()
+          }
         };
       }
     );
@@ -561,7 +586,7 @@ export class SyncCenter {
         let upsertedCount = 0;
 
         for (const account of accounts) {
-          const cleanId = account.fb_account_id.replace("act_", "");
+          const cleanId = normalizeMetaAccountId(account.fb_account_id);
           for (let i = 0; i < days; i++) {
             const dateStr = dayjs().subtract(i, "day").format("YYYY-MM-DD");
 
@@ -642,7 +667,7 @@ export class SyncCenter {
             where: { storeId: store.id },
             select: { fbAccountId: true }
           });
-          const mappedFbIds = mappings.map(m => m.fbAccountId.replace("act_", ""));
+          const mappedFbIds = mappings.map(m => normalizeMetaAccountId(m.fbAccountId));
           
           const hasMappings = mappedFbIds.length > 0;
 

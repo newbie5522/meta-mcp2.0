@@ -134,8 +134,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   };
 
   const handleViewHierarchy = (accountId: string) => {
-    const cleanId = String(accountId).replace("act_", "").trim();
-    window.location.href = `/?tab=data-campaigns&accountId=${cleanId}`;
+    window.location.href = `/?tab=data-campaigns&accountId=${accountId}`;
   };
 
   // Compute status summary count

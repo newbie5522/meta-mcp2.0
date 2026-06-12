@@ -4,13 +4,14 @@ import type { MetaAdAccount, MetaApiResponse, MetaInsightsRow } from "../meta/ty
 import { prisma } from "../db/prisma.js";
 import { ACCOUNT_FIELDS } from "../tools/field-policy.js";
 import { buildFieldsParam } from "../utils/validation.js";
+import { normalizeMetaAccountId, getNumericAccountId } from "../../server/utils.js";
 
 function toMetaAccountId(account: MetaAdAccount): string {
-  const raw = account.account_id ?? account.id?.replace(/^act_/, "");
-  if (!raw) {
+  const accountId = account.account_id ?? account.id;
+  if (!accountId) {
     throw new Error("Meta account response did not include account_id");
   }
-  return raw.startsWith("act_") ? raw : `act_${raw}`;
+  return normalizeMetaAccountId(accountId);
 }
 
 function normalizeStatus(status: number | undefined): string | null {
@@ -18,7 +19,7 @@ function normalizeStatus(status: number | undefined): string | null {
 }
 
 export function plainMetaAccountId(metaAccountId: string): string {
-  return metaAccountId.replace(/^act_/, "");
+  return getNumericAccountId(metaAccountId);
 }
 
 export function accountStatusLabel(status: string | null | undefined): "活跃" | "停用" {

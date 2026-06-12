@@ -1,4 +1,5 @@
 import prisma from '../../db/index.js';
+import { normalizeMetaAccountId } from '../utils.js';
 
 export async function aggregateData(startDate: string, endDate: string, options: { syncProduct?: boolean; syncCreative?: boolean } = { syncProduct: false, syncCreative: false }, storeIdentifier?: string) {
   try {
@@ -121,7 +122,7 @@ export async function aggregateData(startDate: string, endDate: string, options:
           where: { storeId: store.id },
           select: { fbAccountId: true }
         });
-        const fbAccountIdsOnStore = mappings.map(m => m.fbAccountId.replace("act_", ""));
+        const fbAccountIdsOnStore = mappings.map(m => normalizeMetaAccountId(m.fbAccountId));
 
         const storeInsights = await prisma.adInsight.findMany({
           where: {

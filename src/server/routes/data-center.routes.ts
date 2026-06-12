@@ -6,6 +6,7 @@ import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import { getCreativeIntelligence } from "../services/creative-intelligence.service.js";
 import { syncStoreData } from "../services/store-sync.service.js";
+import { normalizeMetaAccountId } from "../utils.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -46,10 +47,7 @@ router.get("/detail", async (req, res) => {
       level: "account"
     };
     if (accountId && accountId !== "all" && accountId !== "undefined") {
-      const cleanAccId = String(accountId).replace(/^act_/, "");
-      insightsWhereClause.accountId = {
-        in: [cleanAccId, `act_${cleanAccId}`]
-      };
+      insightsWhereClause.accountId = normalizeMetaAccountId(accountId);
     }
     const rawInsights = await prisma.adInsight.findMany({
       where: insightsWhereClause,
@@ -92,10 +90,9 @@ router.get("/detail", async (req, res) => {
     });
 
     const detailedAccounts = accountsWithStore.map((acc) => {
-      const accIdClean = acc.fb_account_id.replace(/^act_/, "").trim();
+      const normAccId = normalizeMetaAccountId(acc.fb_account_id);
       const matchedInsights = rawInsights.filter(ins => {
-        const insIdClean = ins.accountId.replace(/^act_/, "").trim();
-        return insIdClean === accIdClean;
+        return normalizeMetaAccountId(ins.accountId) === normAccId;
       });
 
       const spend = matchedInsights.reduce((s, item) => s + (item.spend || 0), 0);
@@ -719,23 +716,17 @@ router.get("/stores", async (req, res) => {
     const allMappedFbAccountIds = new Set<string>();
     stores.forEach(s => {
       s.accounts.forEach(acc => {
-        allMappedFbAccountIds.add(acc.fb_account_id);
-        allMappedFbAccountIds.add(acc.fb_account_id.replace("act_", ""));
-        allMappedFbAccountIds.add(`act_${acc.fb_account_id}`);
+        allMappedFbAccountIds.add(normalizeMetaAccountId(acc.fb_account_id));
       });
       s.accountMappings.forEach(m => {
         if (m.fbAccountId) {
-          allMappedFbAccountIds.add(m.fbAccountId);
-          allMappedFbAccountIds.add(m.fbAccountId.replace("act_", ""));
-          allMappedFbAccountIds.add(`act_${m.fbAccountId}`);
+          allMappedFbAccountIds.add(normalizeMetaAccountId(m.fbAccountId));
         }
       });
     });
 
     const unmappedAccounts = allAdAccounts.filter(acc => {
-      const isMapped = allMappedFbAccountIds.has(acc.fb_account_id) || 
-                       allMappedFbAccountIds.has(`act_${acc.fb_account_id}`) || 
-                       allMappedFbAccountIds.has(acc.fb_account_id.replace("act_", ""));
+      const isMapped = allMappedFbAccountIds.has(normalizeMetaAccountId(acc.fb_account_id));
       return !isMapped;
     });
 
@@ -952,11 +943,11 @@ router.get("/accounts-performance", async (req, res) => {
 
     const accountStats = new Map<string, { spend: number; imp: number; clicks: number; pur: number; pVal: number }>();
     for (const row of insights) {
-      const cleanId = row.accountId.replace("act_", "").trim();
-      if (!accountStats.has(cleanId)) {
-        accountStats.set(cleanId, { spend: 0, imp: 0, clicks: 0, pur: 0, pVal: 0 });
+      const normId = normalizeMetaAccountId(row.accountId);
+      if (!accountStats.has(normId)) {
+        accountStats.set(normId, { spend: 0, imp: 0, clicks: 0, pur: 0, pVal: 0 });
       }
-      const ast = accountStats.get(cleanId)!;
+      const ast = accountStats.get(normId)!;
       ast.spend += Number(row.spend || 0);
       ast.imp += Number(row.impressions || 0);
       ast.clicks += Number(row.clicks || 0);
@@ -966,11 +957,11 @@ router.get("/accounts-performance", async (req, res) => {
 
     const accountsMap = new Map<string, any>();
     for (const a of adAccounts) {
-      const rawId = a.fb_account_id.replace('act_', '').trim();
-      accountsMap.set(rawId, {
+      const normId = normalizeMetaAccountId(a.fb_account_id);
+      accountsMap.set(normId, {
         id: String(a.id),
         fb_account_id: a.fb_account_id,
-        fb_account_name: a.fb_account_name || `Account ${rawId}`,
+        fb_account_name: a.fb_account_name || `Account ${normId}`,
         activityStatus: a.activityStatus || 1,
         storeId: a.storeId,
         storeName: a.store?.name || "未关联店铺",
@@ -987,12 +978,12 @@ router.get("/accounts-performance", async (req, res) => {
     }
 
     accountStats.forEach((st, accId) => {
-      const rawId = accId.replace('act_', '').trim();
-      let accEntry = accountsMap.get(rawId);
+      const normId = normalizeMetaAccountId(accId);
+      let accEntry = accountsMap.get(normId);
       if (!accEntry) {
         accEntry = {
-          id: `synth_${rawId}`,
-          fb_account_id: `act_${rawId}`,
+          id: `synth_${normId}`,
+          fb_account_id: normId,
           fb_account_name: `Meta Account act_${rawId}`,
           activityStatus: 1,
           storeId: null,
@@ -1044,8 +1035,7 @@ router.get("/ad-hierarchy", async (req, res) => {
     const dateStart = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
     const dateEnd = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
     
-    const cleanAccountId = selectedAccount ? String(selectedAccount).replace("act_", "").trim() : "";
-    const formattedActId = selectedAccount ? (selectedAccount.startsWith("act_") ? selectedAccount : `act_${selectedAccount}`) : "";
+    const normAccountId = selectedAccount ? normalizeMetaAccountId(String(selectedAccount)) : "";
 
     const targetLevel = (level === "campaigns" || level === "campaign") ? "campaign" : (level === "adsets" || level === "adset") ? "adset" : "ad";
 
@@ -1055,7 +1045,7 @@ router.get("/ad-hierarchy", async (req, res) => {
         level: targetLevel,
         date: { gte: dateStart, lte: dateEnd },
         ...(isAll ? {} : {
-          accountId: { in: [cleanAccountId, `act_${cleanAccountId}`, formattedActId] }
+          accountId: normAccountId
         })
       }
     });

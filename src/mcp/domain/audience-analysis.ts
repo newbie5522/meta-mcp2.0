@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { z } from "zod";
 import { prisma } from "../db/prisma.js";
+import { normalizeMetaAccountId, getNumericAccountId } from "../../server/utils.js";
 
 export const audienceAnalysisQuerySchema = z.object({
   adAccountId: z.string().min(1),
@@ -152,8 +153,7 @@ export async function getAudienceAnalysis(input: AudienceAnalysisQuery) {
     where: {
       OR: [
         { id: parsed.adAccountId },
-        { metaAccountId: parsed.adAccountId },
-        { metaAccountId: `act_${parsed.adAccountId.replace(/^act_/, "")}` },
+        { fb_account_id: normalizeMetaAccountId(parsed.adAccountId) },
       ],
     },
   });
@@ -255,7 +255,7 @@ export async function getAudienceAnalysis(input: AudienceAnalysisQuery) {
   return {
     account: {
       id: account.id,
-      metaAccountId: account.metaAccountId.replace(/^act_/, ""),
+      metaAccountId: getNumericAccountId(account.fb_account_id),
       name: account.name,
       status: account.status,
       currency: account.currency,

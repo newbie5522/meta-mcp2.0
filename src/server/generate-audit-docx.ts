@@ -22,7 +22,7 @@ const cellBorders = {
   right: borderStyle,
 };
 
-function createCell(text: string, options: { isHeader?: boolean; bg?: string; colSpan?: number; align?: AlignmentType } = {}) {
+function createCell(text: string, options: { isHeader?: boolean; bg?: string; colSpan?: number; align?: any } = {}) {
   return new TableCell({
     children: [
       new Paragraph({
@@ -48,13 +48,13 @@ function createCell(text: string, options: { isHeader?: boolean; bg?: string; co
   });
 }
 
-function createParagraph(text: string, options: { bold?: boolean; italic?: boolean; size?: number; color?: string; before?: number; after?: number; align?: AlignmentType; font?: string } = {}) {
+function createParagraph(text: string, options: { bold?: boolean; italics?: boolean; size?: number; color?: string; before?: number; after?: number; align?: any; font?: string; italic?: boolean } = {}) {
   return new Paragraph({
     children: [
       new TextRun({
         text,
         bold: options.bold,
-        italic: options.italic,
+        italics: options.italics || options.italic,
         size: options.size || 21,
         color: options.color || "333333",
         font: options.font || "Inter",
@@ -273,7 +273,7 @@ async function runAudit() {
             new TextRun({
               text: "MATRIX FLOW DATA PIPELINE & INTEGRITY SYSTEM AUDIT REPORT",
               bold: true,
-              italic: true,
+              italics: true,
               size: 14,
               color: "6B7280",
               font: "JetBrains Mono",

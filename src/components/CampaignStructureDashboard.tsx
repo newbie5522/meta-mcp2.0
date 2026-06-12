@@ -54,7 +54,12 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
           // Check if parent linked with preselected accountId parameter
           const params = new URLSearchParams(window.location.search);
           const urlAccId = params.get("accountId");
-          const match = urlAccId ? fullList.find(a => String(a.accountId).replace("act_", "") === String(urlAccId).replace("act_", "")) : null;
+          const cleanParamId = urlAccId ? (urlAccId.toLowerCase().startsWith("act_") ? urlAccId : `act_${urlAccId}`) : "";
+          const match = urlAccId ? fullList.find(a => {
+            const accId = String(a.accountId || a.id);
+            const standardId = accId.toLowerCase().startsWith("act_") ? accId : `act_${accId}`;
+            return standardId === cleanParamId;
+          }) : null;
           
           if (match) {
             setSelectedAccount(match.accountId);

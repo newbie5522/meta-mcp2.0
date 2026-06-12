@@ -247,126 +247,37 @@ const CACHE_TTL = 10 * 60 * 1000; // Increased to 10 minutes
 
 // ---后台静默同步逻辑 (Background Auto-Sync) ---
 async function runBackgroundSync() {
-  const syncId = format(new Date(), "HH:mm:ss");
-  console.log(`[后台同步 | ${syncId}] 🔄 开始后台静默同步: 过去 30 天数据...`);
-
+  const syncId = "auto-3d-" + Math.random().toString(36).substring(2, 8);
+  console.log(`[Interval Auto-Sync | ${syncId}] 🔄 Starting bi-hourly 3-day Meta Insights auto-sync...`);
   try {
     const token = await getMetaToken();
     if (!token) {
-      console.log(`[后台同步 | ${syncId}] ⚠️ 同步中止: Meta Token 未配置`);
+      console.log(`[Interval Auto-Sync | ${syncId}] ⚠️ Skip: Meta Token missing`);
       return;
     }
-
-    const startDate = format(subDays(new Date(), 30), "yyyy-MM-dd");
-    const endDate = format(new Date(), "yyyy-MM-dd");
-
-    // 1. 获取账户列表
-    let accountsRes;
-    try {
-      accountsRes = await axios.get(
-        `https://graph.facebook.com/v19.0/me/adaccounts`,
-        {
-          params: {
-            fields: "name,account_id,account_status",
-            limit: 1000,
-            access_token: token,
-          },
-        },
-      );
-    } catch (apiErr: any) {
-      const status = apiErr.response?.status;
-      if (status >= 500) {
-        console.warn(
-          `[后台同步 | ${syncId}] ⚠️ Meta API 服务端暂时不可用 (${status})，将在下次同步重试。`,
-        );
-        return;
-      }
-      throw apiErr;
-    }
-
-    // 获取系统的停用账户 ID 且常态过滤 dormant/限制账户
-    const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
-      where: { status: 2 },
-      select: { accountId: true }
-    });
-    const disabledAccountIds = disabledAccounts.map(a => a.accountId);
-    const DORMANT_ACCOUNT_IDS = ["26380439", "341040412"];
-
-    // 只排除 dormant 的广告账户
-    const accounts = (accountsRes.data.data || []).filter(
-      (a: any) => {
-        const rawId = (a.account_id || a.id || "").replace("act_", "");
-        const isDormant = DORMANT_ACCOUNT_IDS.includes(rawId);
-        return !isDormant;
-      }
-    );
-    const totalAccounts = accounts.length;
-    console.log(
-      `[后台同步 | ${syncId}] 📂 发现 ${totalAccounts} 个有效广告账户，开始分批抓取...`,
-    );
-
-    // 2. 分批处理 (5个一组)
-    const chunkSize = 5;
-    let syncedCount = 0;
-
-    for (let i = 0; i < accounts.length; i += chunkSize) {
-      const chunk = accounts.slice(i, i + chunkSize);
-
-      await Promise.all(
-        chunk.map(async (account: any) => {
-          const accountId = account.account_id || account.id;
-          try {
-            const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
-            if (activityStatus <= 4) {
-               await syncSingleAccountAdData(accountId, startDate, endDate, token);
-            } else {
-               console.log(`[后台同步 | ${syncId}] ⏭️ 跳过账户 ${accountId} (活跃度: ${activityStatus})`);
-            }
-            syncedCount++;
-            if (syncedCount % 10 === 0 || syncedCount === totalAccounts) {
-              console.log(
-                `[后台同步 | ${syncId}] 📈 进度: ${syncedCount}/${totalAccounts} 账户`,
-              );
-            }
-          } catch (err: any) {
-            const status = err.response?.status;
-            const metaError = err.response?.data?.error?.message || err.message;
-            if (status === 403) {
-              console.warn(
-                `[后台同步 | ${syncId}] ⚠️ 账户 ${accountId} 无权限或被限制访问 (403): ${metaError}`,
-              );
-            } else if (status >= 500) {
-              console.warn(
-                `[后台同步 | ${syncId}] ⚠️ Meta 账户 ${accountId} 服务端不可用 (${status}): ${metaError}`,
-              );
-            } else {
-              console.error(
-                `[后台同步 | ${syncId}] ❌ 账户 ${accountId} 同步失败:`,
-                metaError,
-              );
-            }
-          }
-        }),
-      );
-
-      // 强制延迟 2 秒防止限流
-      if (i + chunkSize < accounts.length) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-    }
-
-    console.log(
-      `[后台同步 | ${syncId}] ✅ 同步完成! 共处理 ${totalAccounts} 个账户`,
-    );
+    await SyncCenter.syncMetaInsights(syncId, "bihourly_scheduled_3d", null, 3);
+    console.log(`[Interval Auto-Sync | ${syncId}] ✅ Completed bi-hourly 3-day sync.`);
   } catch (error: any) {
-    const status = error.response?.status;
-    const metaError = error.response?.data?.error?.message || error.message;
-    console.error(
-      `[后台同步 | ${syncId}] 🚨 全局同步异常 (${status || "Unknown"}):`,
-      metaError,
-    );
+    console.error(`[Interval Auto-Sync | ${syncId}] ❌ Failed:`, error.message);
   }
 }
+
+// Run daily retroactive 30-day Meta Insights sync at 1:00 AM (attributions correction)
+cron.schedule("0 1 * * *", async () => {
+  const syncId = "daily-30d-" + Math.random().toString(36).substring(2, 8);
+  console.log(`[Retroactive Sync | ${syncId}] 🔄 Starting daily 30-day retroactive Meta Insights sync...`);
+  try {
+    const token = await getMetaToken();
+    if (!token) {
+      console.log(`[Retroactive Sync | ${syncId}] ⚠️ Skip: Meta Token missing`);
+      return;
+    }
+    await SyncCenter.syncMetaInsights(syncId, "daily_scheduled_30d", null, 30);
+    console.log(`[Retroactive Sync | ${syncId}] ✅ Completed retroactive 30-day sync.`);
+  } catch (error: any) {
+    console.error(`[Retroactive Sync | ${syncId}] ❌ Failed:`, error.message);
+  }
+});
 
 app.use("/api", (req, res) => {
   res

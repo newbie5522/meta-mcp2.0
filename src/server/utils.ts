@@ -3,10 +3,13 @@ import prisma from "../db/index.js";
 import axios from "axios";
 import { format, subDays } from "date-fns";
 
-export function normalizeMetaAccountId(id: string): string {
-  if (!id) return id;
+export function normalizeMetaAccountId(id: string | null | undefined): string {
+  if (!id) return "";
   const cleaned = String(id).trim();
-  if (cleaned.startsWith("act_")) return cleaned;
+  if (!cleaned) return "";
+  if (cleaned.toLowerCase().startsWith("act_")) {
+    return `act_${cleaned.substring(4)}`;
+  }
   return `act_${cleaned}`;
 }
 
@@ -69,12 +72,12 @@ export async function evaluateActivityStatus(accountId: string, fbAccountStatus:
   }
 
   try {
-    const cleanAccountId = accountId.replace("act_", "");
+    const normAccountId = normalizeMetaAccountId(accountId);
     const today = new Date();
     const startDate = format(subDays(today, 7), "yyyy-MM-dd");
     const endDate = format(today, "yyyy-MM-dd");
 
-    const res = await axios.get(`https://graph.facebook.com/v19.0/act_${cleanAccountId}/insights`, {
+    const res = await axios.get(`https://graph.facebook.com/v19.0/${normAccountId}/insights`, {
       params: {
         level: "account",
         time_range: JSON.stringify({ since: startDate, until: endDate }),

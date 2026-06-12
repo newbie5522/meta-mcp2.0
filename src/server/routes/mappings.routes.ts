@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { Router } from "express";
 import prisma from "../../db/index.js";
+import { normalizeMetaAccountId } from "../utils.js";
 
 const router = Router();
 
@@ -20,20 +21,20 @@ router.get("/", async (req, res) => {
 
     const nameMap = new Map();
     for (const d of monitoringData) {
-      if (d.accountName) nameMap.set(d.accountId, d.accountName);
+      if (d.accountName) nameMap.set(normalizeMetaAccountId(d.accountId), d.accountName);
     }
     for (const d of adAccountData) {
       if (d.fb_account_name) {
-        nameMap.set(String(d.fb_account_id).replace("act_", "").trim(), d.fb_account_name);
+        nameMap.set(normalizeMetaAccountId(d.fb_account_id), d.fb_account_name);
       }
     }
 
-    // Map them back to the old format so frontend is happy
+    // Map them back to standard act_xxx format
     const mapped = mappings.map(m => {
-      const cleanId = String(m.fbAccountId).replace("act_", "").trim();
+      const normId = normalizeMetaAccountId(m.fbAccountId);
       return {
-        accountId: m.fbAccountId,
-        accountName: nameMap.get(cleanId) || m.fbAccountId,
+        accountId: normId,
+        accountName: nameMap.get(normId) || normId,
         fbPageId: m.fbPageId,
         store: m.store ? m.store.name : "未分配",
         project: m.project || "未分配",
@@ -63,7 +64,7 @@ router.post("/batch", async (req, res) => {
 
     const results = await Promise.all(
       validMappings.map(async (mapping: any) => {
-        const cleanAccId = String(mapping.accountId).replace("act_", "").trim();
+        const cleanAccId = normalizeMetaAccountId(mapping.accountId);
 
         const storeName = mapping.store ? String(mapping.store).trim() : null;
         let targetStoreId: number | null = null;

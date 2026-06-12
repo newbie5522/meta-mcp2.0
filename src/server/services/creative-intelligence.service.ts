@@ -1,4 +1,5 @@
 import prisma from '../../db/index.js';
+import { normalizeMetaAccountId } from '../utils.js';
 
 export async function getCreativeIntelligence(startDate: string, endDate: string, storeIdOrName?: string) {
   let targetStoreIds: number[] = [];
@@ -64,7 +65,7 @@ export async function getCreativeIntelligence(startDate: string, endDate: string
         creativeName: c.name || `Creative ${c.creativeId}`, 
         type: c.type || 'IMAGE',
         imageUrl: c.imageUrl,
-        accountId: primaryAd?.accountId || c.fbAccountId?.replace('act_', '') || `2380439`,
+        accountId: normalizeMetaAccountId(primaryAd?.accountId || c.fbAccountId || `2380439`),
         adsetId: cleanId(primaryAd?.adsetId || `78${Math.abs(Number(c.creativeId) % 10000) || '923'}`),
         adId: cleanId(primaryAd?.id || `78${Math.abs(Number(c.creativeId) % 10000) || '923'}`),
         adName: primaryAd?.name || `Ad ${c.name || c.creativeId}`,

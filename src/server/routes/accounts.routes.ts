@@ -2,7 +2,7 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
-import { getMetaToken } from "../utils.js";
+import { getMetaToken, normalizeMetaAccountId } from "../utils.js";
 import dayjs from "dayjs";
 
 const router = Router();
@@ -248,8 +248,7 @@ router.get("/active-list", async (req, res) => {
     for (let i = 0; i < allAccounts.length; i += concurrentLimit) {
       const chunk = allAccounts.slice(i, i + concurrentLimit);
       const results = await Promise.all(chunk.map(async (apiAcc) => {
-        const cleanId = apiAcc.account_id || apiAcc.id?.replace("act_", "");
-        const metaAccountId = `act_${cleanId}`;
+        const metaAccountId = normalizeMetaAccountId(apiAcc.id || apiAcc.account_id);
         const status = apiAcc.account_status;
         const apiCurrency = apiAcc.currency;
         const apiTimezone = apiAcc.timezone_name;
@@ -446,7 +445,7 @@ router.get("/:accountId/details", async (req, res) => {
 
   try {
     const isAll = (accountId === "all_active" || accountId === "all");
-    const cleanAccountId = accountId.replace("act_", "");
+    const normAccountId = normalizeMetaAccountId(accountId);
     const dateStart = startDate ? String(startDate) : dayjs().subtract(30, 'day').format('YYYY-MM-DD');
     const dateEnd = endDate ? String(endDate) : dayjs().format('YYYY-MM-DD');
 
@@ -457,12 +456,7 @@ router.get("/:accountId/details", async (req, res) => {
         campaigns = await prisma.campaign.findMany();
       } else {
         campaigns = await prisma.campaign.findMany({
-          where: {
-            OR: [
-              { accountId: `act_${cleanAccountId}` },
-              { accountId: cleanAccountId }
-            ]
-          }
+          where: { accountId: normAccountId }
         });
       }
 
@@ -555,12 +549,7 @@ router.get("/:accountId/details", async (req, res) => {
         adsets = await prisma.adSet.findMany();
       } else {
         const campaigns = await prisma.campaign.findMany({
-          where: {
-            OR: [
-              { accountId: `act_${cleanAccountId}` },
-              { accountId: cleanAccountId }
-            ]
-          },
+          where: { accountId: normAccountId },
           select: { id: true }
         });
         const campaignIds = campaigns.map(c => c.id);
@@ -654,12 +643,7 @@ router.get("/:accountId/details", async (req, res) => {
         ads = await prisma.ad.findMany();
       } else {
         const campaigns = await prisma.campaign.findMany({
-          where: {
-            OR: [
-              { accountId: `act_${cleanAccountId}` },
-              { accountId: cleanAccountId }
-            ]
-          },
+          where: { accountId: normAccountId },
           select: { id: true }
         });
         const campaignIds = campaigns.map(c => c.id);
@@ -768,7 +752,7 @@ router.get("/:accountId/audience-insights", async (req, res) => {
   const { startDate, endDate, breakdown = "gender_age" } = req.query;
 
   try {
-    const cleanAccountId = accountId.startsWith("act_") ? accountId : `act_${accountId}`;
+    const cleanAccountId = normalizeMetaAccountId(accountId);
     const dateStart = startDate ? String(startDate) : dayjs().subtract(30, 'day').format('YYYY-MM-DD');
     const dateEnd = endDate ? String(endDate) : dayjs().format('YYYY-MM-DD');
 
@@ -797,10 +781,10 @@ router.get("/:accountId/audience-insights", async (req, res) => {
 router.get("/:accountId/hierarchy", async (req, res) => {
   const { accountId } = req.params;
   try {
-    const cleanAccountId = accountId.replace("act_", "");
+    const normAccountId = normalizeMetaAccountId(accountId);
     
     const campaigns = await prisma.campaign.findMany({
-      where: { accountId: `act_${cleanAccountId}` }
+      where: { accountId: normAccountId }
     });
 
     const campaignIds = campaigns.map(c => c.id);
@@ -810,7 +794,7 @@ router.get("/:accountId/hierarchy", async (req, res) => {
     });
 
     const ads = await prisma.ad.findMany({
-      where: { accountId: cleanAccountId }
+      where: { accountId: normAccountId }
     });
 
     return res.json({

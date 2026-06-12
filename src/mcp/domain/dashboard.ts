@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { prisma } from "../db/prisma.js";
+import { getNumericAccountId } from "../../server/utils.js";
 import { cacheDelete, cacheKey, defaultTtlSeconds, withCache } from "../../packages/cache/src/index.js";
 
 function toNumber(value: unknown): number {
@@ -394,7 +395,7 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
           };
           return {
             id: account.id,
-            metaAccountId: account.metaAccountId.replace(/^act_/, ""),
+            metaAccountId: getNumericAccountId(account.fb_account_id || account.metaAccountId),
             name: account.name,
             status: account.status,
             storeName: account.storeMap?.store?.name ?? null,
