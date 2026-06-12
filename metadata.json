@@ -1,0 +1,6 @@
+{
+  "name": "Meta Insights AI",
+  "description": "An AI-powered dashboard and data synchronization engine for Meta ad accounts and store conversion attribution metrics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
