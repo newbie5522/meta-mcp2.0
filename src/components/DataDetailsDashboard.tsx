@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo } from "react";
 import axios from "axios";
-import { format } from "date-fns";
+import { format, isValid } from "date-fns";
 import { 
   Table, 
   TableBody, 
@@ -17,7 +17,8 @@ import {
   Search, 
   TrendingUp, 
   Sparkles,
-  SlidersHorizontal 
+  AlertTriangle,
+  Info
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -32,9 +33,8 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const [data, setData] = useState<any>({
     metaInsights: [],
     accounts: [],
-    orders: [],
     filters: { stores: [], adAccounts: [], mappings: [] },
-    health: { status: "EMPTY", missingReason: "", lastSyncTime: null, lastSyncStatus: "none", isSyncActive: false }
+    health: { status: "EMPTY", missingReason: "", lastSyncTime: null, lastSyncTimeStr: "无记录", isSyncActive: false }
   });
 
   // Local filter states
@@ -54,7 +54,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       const startStr = format(startDate, "yyyy-MM-dd");
       const endStr = format(endDate, "yyyy-MM-dd");
 
-      const response = await axios.get("/api/data-center/detail", {
+      const response = await axios.get("/api/data-center/accounts-performance", {
         params: {
           startDate: startStr,
           endDate: endStr,
@@ -63,8 +63,8 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       });
       setData(response.data);
     } catch (error: any) {
-      console.error("Load Data Detail error:", error);
-      toast.error("加载账户数据明细失败，请检查数据库服务连接");
+      console.error("Load Accounts Performance error:", error);
+      toast.error("加载账户数据明细失败，请检查数据服务");
     } finally {
       setLoading(false);
     }
@@ -93,11 +93,11 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       // 有消耗账户: spend > 0
       list = list.filter(item => (item.spend || 0) > 0);
     } else if (statusFilter === "active") {
-      // 活跃账户: recentActivity90d equals true
-      list = list.filter(item => item.recentActivity90d === true || item.recentActivity90d === 1);
+      // 活跃账户: recentActivity90d equals true or 1
+      list = list.filter(item => item.recentActivity90d === true || item.recentActivity90d === 1 || item.activityStatus === 1);
     } else if (statusFilter === "unmapped") {
-      // 未绑定店铺账户: storeName empty or default warnings
-      list = list.filter(item => !item.storeName || item.storeName.includes("未绑定") || item.storeName.includes("未关联"));
+      // 未绑定店铺账户: isBound is false
+      list = list.filter(item => !item.isBound);
     }
     // "all" doesn't filter out anything
 
@@ -128,25 +128,33 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   };
 
   const handleAskAI = (row: any) => {
-    const prompt = `分析广告账户：${row.fb_account_name} (${row.fb_account_id})\n关联店铺：${row.storeName}\n花费 $${row.spend.toFixed(2)}，曝光 ${row.impressions}，点击数 ${row.clicks}，点击率 ${row.ctr.toFixed(2)}%，加购数 ${row.addToCart}，购买数 ${row.purchases}，CPC $${row.cpc.toFixed(2)}，CPA $${(row.cpa || 0).toFixed(2)}，Meta ROAS ${row.roas.toFixed(2)}。如何优化投放预算？`;
+    const prompt = `分析广告账户：${row.fb_account_name} (${row.fb_account_id})\n关联店铺：${row.storeName}\n花费 $${row.spend.toFixed(2)}，曝光 ${row.impressions}，点击数 ${row.clicks}，点击率 ${row.ctr.toFixed(2)}%，购买数 ${row.purchases}，CPC $${row.cpc.toFixed(2)}，CPA $${(row.cpa || 0).toFixed(2)}，Meta ROAS ${row.roas.toFixed(2)}。如何优化投放预算？`;
     navigator.clipboard.writeText(prompt);
     toast.success("💡 已自动复制账户多维诊断提示词！请点击右侧 AI Copilot 悬浮窗粘贴提问。");
   };
 
   const handleViewHierarchy = (accountId: string) => {
-    window.location.href = `/?tab=data-campaigns&accountId=${accountId}`;
+    const startStr = format(startDate, "yyyy-MM-dd");
+    const endStr = format(endDate, "yyyy-MM-dd");
+    window.location.href = `/data-center/ad-hierarchy?accountId=${accountId}&startDate=${startStr}&endDate=${endStr}`;
   };
 
-  // Compute status summary count
   const allAccountsCount = data.accounts?.length || 0;
   const withSpendCount = data.accounts?.filter(a => (a.spend || 0) > 0).length || 0;
 
-  // Render a compact small footprint status indicator
-  const sysStatus = data.health?.status || "EMPTY";
-  const sysStatusBadge = 
-    sysStatus === "EXCELLENT" || sysStatus === "READY" ? "bg-emerald-50 text-emerald-600 border-emerald-200" :
-    sysStatus === "WARNING" || sysStatus === "PARTIAL" ? "bg-amber-50 text-amber-600 border-amber-200" :
-    "bg-red-50 text-red-600 border-red-200";
+  // Formatting date safely
+  const formatTimeStr = (rawVal: any) => {
+    if (!rawVal) return "无记录";
+    try {
+      const d = new Date(rawVal);
+      if (isValid(d)) {
+        return format(d, "yyyy-MM-dd HH:mm:ss");
+      }
+    } catch (_) {}
+    return "无记录";
+  };
+
+  const lastSyncTimeVal = formatTimeStr(data.health?.lastSyncTime);
 
   return (
     <div className="flex flex-col gap-6" id="data-details-viewer">
@@ -156,30 +164,41 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
         <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
           <div className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></span>
-            <span>最近同步时间: <strong className="text-slate-800 font-mono">{data.health?.lastSyncTime ? format(new Date(data.health.lastSyncTime), "yyyy-MM-dd HH:mm:ss") : "无记录"}</strong></span>
-          </div>
-          <div>
-            <span>Insights 同步属性: <strong className={cn("px-2 py-0.5 border rounded-full text-[11px]", sysStatusBadge)}>{sysStatus}</strong></span>
+            <span>最近同步时间: <strong className="text-slate-800 font-mono">{lastSyncTimeVal}</strong></span>
           </div>
           <div>
             <span>总账户数: <strong className="text-slate-800 font-mono">{allAccountsCount}</strong></span>
             <span className="mx-2 text-slate-300">|</span>
-            <span>有消耗账户（本日历范围）: <strong className="text-blue-600 font-mono">{withSpendCount}</strong></span>
+            <span>有消耗账户数量: <strong className="text-blue-600 font-mono">{withSpendCount}</strong></span>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
-            className="h-7 text-[11px] px-2.5 font-medium border-slate-200 bg-white hover:bg-slate-50 transition"
+            className="h-7 text-[11px] px-2.5 font-medium border-slate-200 bg-white hover:bg-slate-50 transition shadow-sm"
             onClick={loadData}
             disabled={loading}
           >
             <RefreshCcw className={cn("w-3 h-3 text-slate-500", loading && "animate-spin")} />
-            刷新底表
+            刷新数据
           </Button>
         </div>
       </div>
+
+      {/* Warning banner of missing/empty metrics if no accounts have spend */}
+      {withSpendCount === 0 && !loading && (
+        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-850 text-xs shadow-sm">
+          <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+          <div>
+            <h5 className="font-bold text-amber-900 mb-0.5">当前日期范围内未同步或不存在账户级成效数据</h5>
+            <p className="text-amber-700 leading-relaxed">
+              系统在选定的日期范围内 (<strong>{format(startDate, "yyyy-MM-dd")}</strong> 至 <strong>{format(endDate, "yyyy-MM-dd")}</strong>) 
+              未发现具有广告花费的活跃账户。请前往“<strong>数据同步中心</strong>”手动对 Meta 资产成效数据执行一次强制提取与加载。
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Primary Filtering controls */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
@@ -189,8 +208,8 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
           <button
             onClick={() => setStatusFilter("spend")}
             className={cn(
-              "px-3 py-1.5 rounded-md font-semibold transition-all",
-              statusFilter === "spend" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"
+              "px-3 py-1.5 rounded-md font-semibold transition-all text-slate-600",
+              statusFilter === "spend" ? "bg-white text-slate-900 shadow-sm font-bold" : "hover:text-slate-900"
             )}
           >
             有消耗账户 ({withSpendCount})
@@ -198,17 +217,17 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
           <button
             onClick={() => setStatusFilter("active")}
             className={cn(
-              "px-3 py-1.5 rounded-md font-semibold transition-all",
-              statusFilter === "active" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"
+              "px-3 py-1.5 rounded-md font-semibold transition-all text-slate-600",
+              statusFilter === "active" ? "bg-white text-slate-900 shadow-sm font-bold" : "hover:text-slate-900"
             )}
           >
-            活跃账户 ({data.accounts?.filter(a => a.recentActivity90d === true || a.recentActivity90d === 1).length || 0})
+            活跃账户 ({data.accounts?.filter(a => a.recentActivity90d === true || a.recentActivity90d === 1 || a.activityStatus === 1).length || 0})
           </button>
           <button
             onClick={() => setStatusFilter("all")}
             className={cn(
-              "px-3 py-1.5 rounded-md font-semibold transition-all",
-              statusFilter === "all" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"
+              "px-3 py-1.5 rounded-md font-semibold transition-all text-slate-600",
+              statusFilter === "all" ? "bg-white text-slate-900 shadow-sm font-bold" : "hover:text-slate-900"
             )}
           >
             全部账户 ({allAccountsCount})
@@ -216,11 +235,11 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
           <button
             onClick={() => setStatusFilter("unmapped")}
             className={cn(
-              "px-3 py-1.5 rounded-md font-semibold transition-all",
-              statusFilter === "unmapped" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"
+              "px-3 py-1.5 rounded-md font-semibold transition-all text-slate-600",
+              statusFilter === "unmapped" ? "bg-white text-slate-900 shadow-sm font-bold" : "hover:text-slate-900"
             )}
           >
-            未绑定店铺
+            未绑定店铺 ({data.accounts?.filter(a => !a.isBound).length || 0})
           </button>
         </div>
 
@@ -231,7 +250,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
             <input
               type="text"
               placeholder="搜索账户名称或 ID..."
-              className="pl-8 h-8 w-full rounded-lg border border-slate-200 bg-white font-medium text-slate-800 outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              className="pl-8 h-8 w-full rounded-lg border border-slate-200 bg-white font-medium text-slate-850 outline-none placeholder:text-slate-400 focus:border-blue-550 focus:ring-1 focus:ring-blue-500"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -240,7 +259,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
           <select
             value={storeFilter}
             onChange={(e) => setStoreFilter(e.target.value)}
-            className="h-8 px-2 border border-slate-200 bg-white rounded-lg text-slate-600 font-semibold outline-none cursor-pointer hover:bg-slate-50"
+            className="h-8 px-2 border border-slate-200 bg-white rounded-lg text-slate-600 font-semibold outline-none cursor-pointer hover:bg-slate-50 transition shadow-sm"
           >
             <option value="all">选择店铺筛选</option>
             {data.filters?.stores?.map(s => (
@@ -251,7 +270,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       </div>
 
       {loading ? (
-        <div className="flex flex-col items-center justify-center p-20 text-slate-400 bg-white rounded-2xl border border-slate-300 min-h-[300px]">
+        <div className="flex flex-col items-center justify-center p-20 text-slate-400 bg-white rounded-2xl border border-slate-200 min-h-[300px] shadow-sm">
           <RefreshCcw className="w-8 h-8 animate-spin text-blue-500 mb-3" />
           <p className="text-xs font-semibold">正在调阅数据库核心账户指标表...</p>
         </div>
@@ -259,20 +278,36 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
         /* Real Account Table view */
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
           <div className="p-4 bg-slate-50 border-b flex items-center justify-between">
-            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1">
+            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
               <TrendingUp className="w-4 h-4 text-blue-600" />
-              Meta 广告多日指标明细 (Spend & Multi-day Self-Attributed Insights)
+              Meta 广告账户级周期表现 (Meta Ad Accounts Multi-day Performance Insights)
             </h4>
-            <span className="text-[11px] font-mono text-slate-500 font-semibold bg-slate-100 px-2 py-0.5 rounded">
+            <span className="text-[11px] font-mono text-slate-500 font-semibold bg-slate-100 px-3 py-0.5 rounded-full border">
               满足筛选: {filteredAccounts.length} / {allAccountsCount} 个
             </span>
           </div>
 
           <div className="overflow-x-auto">
-            <Table className="text-[12px]">
+            <Table className="text-[12px] table-fixed w-full min-w-[1250px]">
+              <colgroup>
+                <col className="w-[180px]" />
+                <col className="w-[110px]" />
+                <col className="w-[110px]" />
+                <col className="w-[70px]" />
+                <col className="w-[100px]" />
+                <col className="w-[100px]" />
+                <col className="w-[90px]" />
+                <col className="w-[75px]" />
+                <col className="w-[80px]" />
+                <col className="w-[80px]" />
+                <col className="w-[80px]" />
+                <col className="w-[90px]" />
+                <col className="w-[100px]" />
+                <col className="w-[130px]" />
+              </colgroup>
               <TableHeader className="bg-slate-50/50">
                 <TableRow>
-                  <TableHead className="font-semibold text-slate-700 py-3 h-10">账户 ID & 名称</TableHead>
+                  <TableHead className="font-semibold text-slate-700 h-10">账户 ID & 名称</TableHead>
                   <TableHead className="font-semibold text-slate-700">绑定店铺</TableHead>
                   <TableHead className="font-semibold text-slate-700">币种/时区</TableHead>
                   <TableHead className="font-semibold text-slate-700 text-center">状态</TableHead>
@@ -294,7 +329,6 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                   <TableHead className="font-semibold text-slate-700 cursor-pointer text-right" onClick={() => toggleSort("cpm")}>
                     CPM {sortField === "cpm" ? (sortOrder === "asc" ? "↑" : "↓") : "↕"}
                   </TableHead>
-                  <TableHead className="font-semibold text-slate-700 text-right">加购量</TableHead>
                   <TableHead className="font-semibold text-slate-700 cursor-pointer text-right" onClick={() => toggleSort("purchases")}>
                     购买数 {sortField === "purchases" ? (sortOrder === "asc" ? "↑" : "↓") : "↕"}
                   </TableHead>
@@ -310,20 +344,22 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
               <TableBody>
                 {filteredAccounts.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={15} className="text-center p-12 text-slate-400 font-medium">
+                    <TableCell colSpan={14} className="text-center p-12 text-slate-400 font-medium">
                       <Database className="w-8 h-8 mx-auto opacity-30 mb-2 text-slate-500" />
-                      当前筛选条件下暂无账户数据 (均无广告花费且无消耗)。
+                      当前筛选条件下暂无广告账户数据表。
                     </TableCell>
                   </TableRow>
                 ) : (
                   filteredAccounts.map((row, index) => {
+                    const hasSpend = (row.spend || 0) > 0;
                     return (
-                      <TableRow key={row.fb_account_id || index} className="hover:bg-slate-50 border-b group">
-                        <TableCell className="font-medium text-slate-900 whitespace-nowrap">
-                          <div className="flex flex-col">
+                      <TableRow key={row.fb_account_id || index} className="hover:bg-slate-50 border-b group transition-colors">
+                        <TableCell className="font-medium text-slate-900 overflow-hidden text-ellipsis">
+                          <div className="flex flex-col truncate">
                             <span 
-                              className="font-bold text-blue-600 hover:underline cursor-pointer flex items-center gap-1 text-[13px]"
+                              className="font-bold text-blue-600 hover:underline cursor-pointer flex items-center gap-1 text-[13px] truncate"
                               onClick={() => handleViewHierarchy(row.fb_account_id)}
+                              title={row.fb_account_name}
                             >
                               {row.fb_account_name || "未命名 Meta 账号"}
                             </span>
@@ -332,52 +368,57 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                         </TableCell>
                         <TableCell className="text-slate-600">
                           <span className={cn(
-                            "px-2 py-0.5 rounded text-[11px] font-semibold",
-                            row.storeName && !row.storeName.includes("未绑定") && !row.storeName.includes("未关联") 
+                            "px-2 py-0.5 rounded text-[11px] font-semibold block text-center truncate",
+                            row.isBound 
                               ? "bg-blue-50 text-blue-700 border border-blue-100" 
                               : "bg-slate-100 text-slate-400"
                           )}>
-                            {row.storeName && !row.storeName.includes("未绑定") && !row.storeName.includes("未关联") ? row.storeName : "未映射店铺"}
+                            {row.isBound ? row.storeName : "未绑定店铺"}
                           </span>
                         </TableCell>
-                        <TableCell className="text-slate-500 font-mono text-[11px]">
+                        <TableCell className="text-slate-500 font-mono text-[11px] whitespace-nowrap">
                           <div>{row.currency || "USD"}</div>
-                          <div className="text-[10px] text-slate-400">{row.timezone || "America/Los_Angeles"}</div>
+                          <div className="text-[10px] text-slate-400 truncate" title={row.timezone}>{row.timezone || "America/Los_Angeles"}</div>
                         </TableCell>
                         <TableCell className="text-center">
-                          {row.recentActivity90d ? (
+                          {row.recentActivity90d || row.activityStatus === 1 ? (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] font-semibold border border-emerald-100">
-                              活跃 (Active)
+                              活跃
                             </span>
                           ) : (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 text-[10px] font-medium">
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-55 text-slate-400 text-[10px] font-medium border border-slate-100">
                               静默
                             </span>
                           )}
                         </TableCell>
-                        <TableCell className="text-right font-bold text-slate-900 font-mono">${(row.spend || 0).toFixed(2)}</TableCell>
+                        <TableCell className={cn("text-right font-bold font-mono", hasSpend ? "text-slate-900" : "text-slate-400")}>
+                          ${(row.spend || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </TableCell>
                         <TableCell className="text-right text-slate-500 font-mono">{(row.impressions || 0).toLocaleString()}</TableCell>
                         <TableCell className="text-right text-slate-500 font-mono">{(row.clicks || 0).toLocaleString()}</TableCell>
-                        <TableCell className="text-right text-slate-600 font-mono">{(row.ctr || 0).toFixed(2)}%</TableCell>
-                        <TableCell className="text-right text-slate-600 font-mono">${(row.cpc || 0).toFixed(2)}</TableCell>
-                        <TableCell className="text-right text-slate-600 font-mono">${(row.cpm || 0).toFixed(2)}</TableCell>
-                        <TableCell className="text-right text-slate-500 font-mono">{(row.addToCart || 0).toLocaleString()}</TableCell>
-                        <TableCell className="text-right font-bold text-slate-950 font-mono">{(row.purchases || 0).toLocaleString()}</TableCell>
-                        <TableCell className="text-right text-slate-600 font-mono">${(row.cpa || 0).toFixed(2)}</TableCell>
-                        <TableCell className="text-right font-black text-rose-600 font-mono">{(row.roas || 0).toFixed(2)}</TableCell>
-                        <TableCell className="text-center space-x-1 whitespace-nowrap">
-                          <button
-                            onClick={() => handleViewHierarchy(row.fb_account_id)}
-                            className="px-2 py-1 text-slate-600 bg-slate-100 rounded hover:bg-blue-600 hover:text-white transition-all text-[11px] font-medium"
-                          >
-                            广告层级
-                          </button>
-                          <button
-                            onClick={() => handleAskAI(row)}
-                            className="px-2 py-1 text-white bg-blue-600 rounded hover:bg-blue-700 transition-all text-[11px] font-semibold"
-                          >
-                            问 AI
-                          </button>
+                        <TableCell className="text-right text-slate-650 font-mono">{(row.ctr || 0).toFixed(2)}%</TableCell>
+                        <TableCell className="text-right text-slate-650 font-mono">${(row.cpc || 0).toFixed(2)}</TableCell>
+                        <TableCell className="text-right text-slate-650 font-mono">${(row.cpm || 0).toFixed(2)}</TableCell>
+                        <TableCell className="text-right text-slate-950 font-mono font-bold">{(row.purchases || 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-right text-slate-650 font-mono">${(row.cpa || 0).toFixed(2)}</TableCell>
+                        <TableCell className={cn("text-right font-mono font-bold", (row.roas || 0) > 0 ? "text-rose-600" : "text-slate-400")}>
+                          {(row.roas || 0).toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-center whitespace-nowrap">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => handleViewHierarchy(row.fb_account_id)}
+                              className="px-2 py-1 text-slate-600 bg-slate-105 rounded hover:bg-blue-600 hover:text-white transition-all text-[11px] font-medium border border-slate-200"
+                            >
+                              广告层级
+                            </button>
+                            <button
+                              onClick={() => handleAskAI(row)}
+                              className="px-2 py-1 text-white bg-blue-650 bg-blue-600 rounded hover:bg-blue-700 transition-all text-[11px] font-semibold shadow-sm"
+                            >
+                              问 AI
+                            </button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );

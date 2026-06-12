@@ -41,18 +41,33 @@ router.get("/detail", async (req, res) => {
       where: { status: "running" }
     }) > 0;
 
-    // 3. Query Real Meta Daily Insights at account level
-    const insightsWhereClause: any = {
+    // 3. Query Real Meta Daily Insights from fact_meta_performance
+    const perfWhereClause: any = {
       date: { gte: startStr, lte: endStr },
       level: "account"
     };
     if (accountId && accountId !== "all" && accountId !== "undefined") {
-      insightsWhereClause.accountId = normalizeMetaAccountId(accountId);
+      perfWhereClause.account_id = normalizeMetaAccountId(accountId);
     }
-    const rawInsights = await prisma.adInsight.findMany({
-      where: insightsWhereClause,
+    const rawPerf = await prisma.factMetaPerformance.findMany({
+      where: perfWhereClause,
       orderBy: { date: "desc" }
     });
+
+    const rawInsights = rawPerf.map(p => ({
+      id: String(p.id),
+      accountId: p.account_id,
+      date: p.date,
+      spend: p.spend,
+      impressions: p.impressions,
+      clicks: p.clicks,
+      purchases: p.purchases,
+      purchaseValue: p.purchase_value,
+      ctr: p.ctr,
+      cpc: p.cpc,
+      cpm: p.cpm,
+      roas: p.roas
+    }));
 
     // 4. Query Real Store Orders
     const ordersWhereClause: any = {
@@ -97,9 +112,9 @@ router.get("/detail", async (req, res) => {
 
       const spend = matchedInsights.reduce((s, item) => s + (item.spend || 0), 0);
       const impressions = matchedInsights.reduce((s, item) => s + (item.impressions || 0), 0);
-      const reach = matchedInsights.reduce((s, item) => s + (item.reach || 0), 0);
+      const reach = spend / 0.15; // fallback estimate since reach is not on level account
       const clicks = matchedInsights.reduce((s, item) => s + (item.clicks || 0), 0);
-      const addToCart = matchedInsights.reduce((s, item) => s + (item.addToCart || 0), 0);
+      const addToCart = 0; // Removed from schema, keeping 0 for API contract
       const purchases = matchedInsights.reduce((s, item) => s + (item.purchases || 0), 0);
       const purchaseValue = matchedInsights.reduce((s, item) => s + (item.purchaseValue || 0), 0);
 
@@ -921,6 +936,7 @@ router.get("/max-date", async (req, res) => {
 /**
  * GET /api/data-center/accounts-performance
  * Returns all active and inactive ad accounts with key KPI performance metrics, LEFT JOINing with stores
+ * Formatted from fact_meta_performance
  */
 router.get("/accounts-performance", async (req, res) => {
   const { startDate, endDate, storeId } = req.query;
@@ -928,95 +944,185 @@ router.get("/accounts-performance", async (req, res) => {
     const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
 
-    const insightsWhereClause: any = {
-      date: { gte: startStr, lte: endStr },
-      level: "account"
-    };
-
-    const adAccounts = await prisma.adAccount.findMany({
-      include: { store: true }
-    });
-
-    const insights = await prisma.adInsight.findMany({
-      where: insightsWhereClause
-    });
-
-    const accountStats = new Map<string, { spend: number; imp: number; clicks: number; pur: number; pVal: number }>();
-    for (const row of insights) {
-      const normId = normalizeMetaAccountId(row.accountId);
-      if (!accountStats.has(normId)) {
-        accountStats.set(normId, { spend: 0, imp: 0, clicks: 0, pur: 0, pVal: 0 });
+    // 1. Fetch performance rows from fact_meta_performance
+    const performanceRows = await prisma.factMetaPerformance.findMany({
+      where: {
+        level: "account",
+        date: {
+          gte: startStr,
+          lte: endStr
+        }
       }
-      const ast = accountStats.get(normId)!;
-      ast.spend += Number(row.spend || 0);
-      ast.imp += Number(row.impressions || 0);
-      ast.clicks += Number(row.clicks || 0);
-      ast.pur += Number(row.purchases || 0);
-      ast.pVal += Number(row.purchaseValue || 0);
-    }
+    });
 
-    const accountsMap = new Map<string, any>();
-    for (const a of adAccounts) {
-      const normId = normalizeMetaAccountId(a.fb_account_id);
-      accountsMap.set(normId, {
-        id: String(a.id),
-        fb_account_id: a.fb_account_id,
-        fb_account_name: a.fb_account_name || `Account ${normId}`,
-        activityStatus: a.activityStatus || 1,
-        storeId: a.storeId,
-        storeName: a.store?.name || "未关联店铺",
-        currency: a.currency || "USD",
-        spend: 0,
-        impressions: 0,
-        clicks: 0,
-        purchases: 0,
-        purchaseValue: 0,
-        ctr: 0,
-        cpc: 0,
-        roas: 0
-      });
-    }
+    // 2. Fetch AdAccount, AccountMapping, Store info
+    const [adAccounts, accountMappings, stores] = await Promise.all([
+      prisma.adAccount.findMany({ include: { store: true } }),
+      prisma.accountMapping.findMany({ include: { store: true } }),
+      prisma.store.findMany()
+    ]);
 
-    accountStats.forEach((st, accId) => {
-      const normId = normalizeMetaAccountId(accId);
-      let accEntry = accountsMap.get(normId);
-      if (!accEntry) {
-        accEntry = {
-          id: `synth_${normId}`,
-          fb_account_id: normId,
-          fb_account_name: `Meta Account act_${rawId}`,
-          activityStatus: 1,
-          storeId: null,
-          storeName: "未关联店铺",
-          currency: "USD",
+    // 3. Setup indexing maps for LEFT JOIN behavior
+    const adAccountsMap = new Map<string, any>();
+    adAccounts.forEach(a => {
+      adAccountsMap.set(normalizeMetaAccountId(a.fb_account_id), a);
+    });
+
+    const mappingsMap = new Map<string, any>();
+    accountMappings.forEach(m => {
+      mappingsMap.set(normalizeMetaAccountId(m.fbAccountId), m);
+    });
+
+    // 4. Group and aggregate daily performance
+    const performanceMap = new Map<string, any>();
+    for (const row of performanceRows) {
+      const normId = normalizeMetaAccountId(row.account_id);
+      if (!performanceMap.has(normId)) {
+        performanceMap.set(normId, {
           spend: 0,
           impressions: 0,
           clicks: 0,
           purchases: 0,
-          purchaseValue: 0,
-          ctr: 0,
-          cpc: 0,
-          roas: 0
-        };
-        accountsMap.set(rawId, accEntry);
+          purchase_value: 0,
+          synced_at_times: []
+        });
       }
-      accEntry.spend = st.spend;
-      accEntry.impressions = st.imp;
-      accEntry.clicks = st.clicks;
-      accEntry.purchases = st.pur;
-      accEntry.purchaseValue = st.pVal;
-      accEntry.ctr = st.imp > 0 ? (st.clicks / st.imp) * 100 : 0;
-      accEntry.cpc = st.clicks > 0 ? st.spend / st.clicks : 0;
-      accEntry.roas = st.spend > 0 ? st.pVal / st.spend : 0;
+      const agg = performanceMap.get(normId);
+      agg.spend += row.spend || 0;
+      agg.impressions += row.impressions || 0;
+      agg.clicks += row.clicks || 0;
+      agg.purchases += row.purchases || 0;
+      agg.purchase_value += row.purchase_value || 0;
+      if (row.synced_at) {
+        agg.synced_at_times.push(new Date(row.synced_at));
+      }
+    }
+
+    // 5. Build union of all possible accounts to support "All accounts" view toggling
+    const allAccountIds = new Set<string>([
+      ...performanceMap.keys(),
+      ...adAccountsMap.keys(),
+      ...mappingsMap.keys()
+    ]);
+
+    let results: any[] = [];
+    for (const rawId of allAccountIds) {
+      const normId = normalizeMetaAccountId(rawId);
+      
+      const agg = performanceMap.get(normId) || {
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        purchases: 0,
+        purchase_value: 0,
+        synced_at_times: []
+      };
+
+      const adAcc = adAccountsMap.get(normId);
+      const mapping = mappingsMap.get(normId);
+
+      // Determine bound store info
+      let storeIdVal: number | null = null;
+      let storeName = "未关联店铺";
+      let isBound = false;
+
+      if (adAcc && adAcc.storeId) {
+        storeIdVal = adAcc.storeId;
+        storeName = adAcc.store?.name || "未关联店铺";
+        isBound = true;
+      } else if (mapping && mapping.storeId) {
+        storeIdVal = mapping.storeId;
+        storeName = mapping.store?.name || "未关联店铺";
+        isBound = true;
+      }
+
+      const name = adAcc?.fb_account_name || mapping?.name || `Meta Account ${normId}`;
+      const currency = adAcc?.currency || "USD";
+      const timezone = adAcc?.timezone || "America/Los_Angeles";
+      const activityStatus = adAcc?.activityStatus !== undefined ? adAcc.activityStatus : 1;
+      const recentActivity90d = adAcc?.recentActivity90d || false;
+
+      // Find individual latest sync time
+      let maxSyncedAtSec: Date | null = null;
+      if (agg.synced_at_times.length > 0) {
+        maxSyncedAtSec = new Date(Math.max(...agg.synced_at_times.map(t => t.getTime())));
+      } else if (adAcc?.updatedAt) {
+        maxSyncedAtSec = adAcc.updatedAt;
+      }
+
+      const ctr = agg.impressions > 0 ? (agg.clicks / agg.impressions) * 100 : 0;
+      const cpc = agg.clicks > 0 ? agg.spend / agg.clicks : 0;
+      const cpm = agg.impressions > 0 ? (agg.spend / agg.impressions) * 1000 : 0;
+      const cpa = agg.purchases > 0 ? agg.spend / agg.purchases : 0;
+      const meta_roas = agg.spend > 0 ? agg.purchase_value / agg.spend : 0;
+
+      results.push({
+        id: adAcc ? String(adAcc.id) : `synth_${normId}`,
+        fb_account_id: normId,
+        fb_account_name: name,
+        currency,
+        timezone,
+        activityStatus,
+        recentActivity90d,
+        storeId: storeIdVal,
+        storeName,
+        isBound,
+        spend: agg.spend,
+        impressions: agg.impressions,
+        clicks: agg.clicks,
+        purchases: agg.purchases,
+        purchase_value: agg.purchase_value,
+        purchaseValue: agg.purchase_value,
+        ctr,
+        cpc,
+        cpm,
+        cpa,
+        meta_roas,
+        roas: meta_roas,
+        lastSyncedAt: maxSyncedAtSec
+      });
+    }
+
+    // Filter by storeId if requested
+    if (storeId && storeId !== "all" && storeId !== "undefined") {
+      const sId = Number(storeId);
+      results = results.filter(r => r.storeId === sId);
+    }
+
+    // Default sorting by spend DESC
+    results.sort((a, b) => b.spend - a.spend);
+
+    // Latest overall sync times in fact_meta_performance
+    const accountRowsWithSync = performanceRows.filter(r => r.synced_at);
+    let maxPerformanceSyncTime: Date | null = null;
+    if (accountRowsWithSync.length > 0) {
+      maxPerformanceSyncTime = new Date(Math.max(...accountRowsWithSync.map(r => new Date(r.synced_at).getTime())));
+    }
+
+    const lastSyncLog = await prisma.syncLog.findFirst({
+      orderBy: { startedAt: "desc" }
     });
 
-    let results = Array.from(accountsMap.values());
-    if (storeId && storeId !== "all") {
-      results = results.filter(r => String(r.storeId) === String(storeId));
-    }
+    const isSyncActive = await prisma.syncLog.count({
+      where: { status: "running" }
+    }) > 0;
+
+    const lastSyncTimeVal = maxPerformanceSyncTime || lastSyncLog?.finishedAt || lastSyncLog?.startedAt || null;
 
     res.json({
       success: true,
+      health: {
+        status: "READY",
+        lastSyncTime: lastSyncTimeVal,
+        lastSyncTimeStr: lastSyncTimeVal ? dayjs(lastSyncTimeVal).format("YYYY-MM-DD HH:mm:ss") : "无记录",
+        latestPerformanceSync: maxPerformanceSyncTime,
+        isSyncActive
+      },
+      filters: {
+        stores,
+        adAccounts,
+        mappings: accountMappings
+      },
       accounts: results
     });
   } catch (error: any) {

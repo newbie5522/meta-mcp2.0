@@ -76,6 +76,23 @@ function LoginScreen({ onLogin }: { onLogin: (u: string, p: string) => void }) {
   );
 }
 
+function AdHierarchyBridge() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const accountId = params.get("accountId") || "";
+    const startDate = params.get("startDate") || "";
+    const endDate = params.get("endDate") || "";
+    navigate(`/?tab=data-campaigns&accountId=${accountId}&startDate=${startDate}&endDate=${endDate}`, { replace: true });
+  }, [location, navigate]);
+  return (
+    <div className="flex items-center justify-center h-full p-12">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+    </div>
+  );
+}
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState('data-details');
@@ -149,6 +166,7 @@ export default function App() {
                <DashboardContainer title={currentTabTitle} tabId={activeTab} />
             )
           } />
+          <Route path="/data-center/ad-hierarchy" element={<AdHierarchyBridge />} />
           <Route path="/store/new" element={<StoreDetailsPage isNew={true} />} />
           <Route path="/store/:storeId" element={<StoreDetailsPage />} />
           <Route path="/account/:accountId" element={<AccountDetailsPage onLogout={() => setIsAuthenticated(false)} />} />
