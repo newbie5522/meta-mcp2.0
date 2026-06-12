@@ -1,4 +1,5 @@
 import prisma from "../../db/index.js";
+import { normalizeMetaAccountId } from "../utils.js";
 
 export interface CountryAnalyticsResult {
   rows: MergedCountryRow[];
@@ -114,19 +115,19 @@ export async function getCountryAnalytics(
   const adAccountStoreMap = new Map<string, number>();
   for (const m of accountMappings) {
     if (m.fbAccountId && m.storeId) {
-      adAccountStoreMap.set(m.fbAccountId.trim(), m.storeId);
+      adAccountStoreMap.set(normalizeMetaAccountId(m.fbAccountId), m.storeId);
     }
   }
   for (const a of adAccounts) {
     if (a.fb_account_id && a.storeId) {
-      adAccountStoreMap.set(a.fb_account_id.trim(), a.storeId);
+      adAccountStoreMap.set(normalizeMetaAccountId(a.fb_account_id), a.storeId);
     }
   }
 
   // Determine unmapped accounts in the database for health reporting
   const allAccountIdsInMappings = new Set([
-    ...accountMappings.map(m => m.fbAccountId?.trim()),
-    ...adAccounts.map(a => a.fb_account_id?.trim())
+    ...accountMappings.map(m => m.fbAccountId ? normalizeMetaAccountId(m.fbAccountId) : ""),
+    ...adAccounts.map(a => a.fb_account_id ? normalizeMetaAccountId(a.fb_account_id) : "")
   ].filter(Boolean) as string[]);
 
   // 2. Fetch Audience Country breakdown data
@@ -159,8 +160,8 @@ export async function getCountryAnalytics(
   const uniqueUnmappedAccountIds = new Set<string>();
 
   for (const item of rawBreakdowns) {
-    const aid = item.account_id?.trim();
-    const mappedStoreId = adAccountStoreMap.get(aid);
+    const aid = item.account_id ? normalizeMetaAccountId(item.account_id) : "";
+    const mappedStoreId = aid ? adAccountStoreMap.get(aid) : undefined;
 
     // If storeId filter is active, check if it matches
     if (filterStoreId) {

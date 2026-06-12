@@ -972,8 +972,8 @@ router.get("/stores", async (req, res) => {
       const uniqueProductIds = new Set(ordersInDateRange.map(o => o.productId).filter(Boolean));
       const productCount = uniqueProductIds.size;
 
-      // Determine country count (robust mock mapping based on order IDs)
-      const countryCount = ordersCount > 0 ? (ordersCount % 3 === 0 ? 3 : (ordersCount % 2 === 0 ? 2 : 1)) : 0;
+      // Order country fields are unavailable; countryCount is not derived from orders.
+      const countryCount = null;
 
       // 2. Fetch spend from mapped accounts
       const mappedFbAccountIds = new Set<string>();
