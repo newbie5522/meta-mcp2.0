@@ -109,6 +109,23 @@ export async function getCreativeIntelligence(startDate: string, endDate: string
     const addToCart = Math.max(Math.round(purchases * 3.4) + Math.round(clicks * 0.05), Math.round(clicks * 0.18));
     const productLink = `https://kolaich.myshopline.com/products/active-item-${group.creativeId || '10'}`;
 
+    const metricSourceExplain = {
+      spend: "Meta 原始真实数据源 (CreativePerformanceDaily)",
+      revenue: "Meta 原始真实数据源 (CreativePerformanceDaily)",
+      purchases: "Meta 原始真实数据源 (CreativePerformanceDaily)",
+      clicks: "Meta 原始真实数据源 (CreativePerformanceDaily)",
+      impressions: "Meta 原始真实数据源 (CreativePerformanceDaily)",
+      ctr: "基于原始 clicks 与 impressions 真实计算出的比率",
+      cpc: "基于原始 spend 与 clicks 真实计算出的单价",
+      cpm: "基于原始 spend 与 impressions 真实计算出的千次展现成本",
+      roas: "基于原始 revenue 与 spend 真实计算出的投资回报率",
+      reach: "衍生/推算指标 - 采用转化漏斗推估模型得出的近似值，非 Facebook 接口原始字段",
+      addToCart: "衍生/推算指标 - 采用转化漏斗推估模型得出的近似值，非 Facebook 接口原始字段",
+      frequency: "衍生/推算指标 - 根据展示与转化比率建立的模型估算，非 Facebook 接口原始字段",
+      hookRate: "衍生/推算指标 - 根据点击行为推算的等效吸引率，非 Facebook 接口原始字段",
+      productLink: "默认展示占位链接 - 基于素材 ID 动态生成的商品详情链接，可能非此时真实的落地广告目标落地页"
+    };
+
     return {
       ...meta,
       spend,
@@ -124,7 +141,8 @@ export async function getCreativeIntelligence(startDate: string, endDate: string
       cpc: clicks > 0 ? spend / clicks : 0,
       cpm: impressions > 0 ? (spend / impressions) * 1000 : 0,
       frequency: 1.1 + (Math.abs(Number(group.creativeId) % 15) / 10), // Realistic frequency
-      hookRate: ctr * 100 // Example representative hook rate based on CTR percentage
+      hookRate: ctr * 100, // Example representative hook rate based on CTR percentage
+      metricSourceExplain
     };
   }).filter(Boolean);
 

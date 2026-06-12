@@ -667,11 +667,31 @@ router.post("/creatives/:creativeId/analyze", async (req, res) => {
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
 
     // 1. Check if a report already exists for this entity and daterange
+    // Exclude old non-compliant fallback reports that lack model or metadata context
     const existing = await prisma.aiAnalysisReport.findFirst({
       where: {
         entityId: creativeId,
         entityType: "creative",
-        dateRange: `${startStr} 至 ${endStr}`
+        dateRange: `${startStr} 至 ${endStr}`,
+        NOT: {
+          OR: [
+            {
+              conclusion: { contains: "AI 未启用" },
+              model: null
+            },
+            {
+              conclusion: { contains: "离线" },
+              model: null
+            },
+            {
+              conclusion: { contains: "GEMINI_API_KEY" },
+              model: null
+            },
+            {
+              metadata: null
+            }
+          ]
+        }
       },
       orderBy: { createdAt: "desc" }
     });
@@ -702,17 +722,36 @@ router.post("/creatives/:creativeId/analyze", async (req, res) => {
     // 3. Instantiate Google GenAI with safety check
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      // Return a graceful database mock report if AI key is missing to keep the dashboard working smoothly
+      // Return a structured, compliant fallback report with explicit offline tags and analytics context
       const fallbackReport = await prisma.aiAnalysisReport.create({
         data: {
           type: "creative",
           entityType: "creative",
           entityId: creativeId,
           dateRange: `${startStr} 至 ${endStr}`,
-          conclusion: `【AI 未启用 / 非正式诊断 - 离线规则评估模式】\n[时段：${startStr} ~ ${endStr}] 核心建议：该素材表现良好。由于当前系统未绑定 GEMINI_API_KEY，诊断采用离线数据分析引擎。此素材的最终 ROAS 为 ${roas.toFixed(2)}。建议继续保持对其在 Feed 版位中的预算倾斜，该点击转化漏斗整体表现健康。`,
-          dataBasis: `Spend: $${spend.toFixed(2)}, CTR: ${ctr.toFixed(2)}%, Clicks: ${clicks}, Purchases: ${purchases}, ROAS: ${roas.toFixed(2)}`,
-          riskPoints: ctr < 1 ? "⚠️ 点击率低于1.0%偏低，建议优化前3秒视觉钩子。" : "✅ 转化表现健康，暂无重大风险指标。",
-          priority: roas < 1.0 ? 1 : (roas > 2.5 ? 4 : 3)
+          conclusion: `【AI 未启用 / 非正式诊断 - 离线规则评估模式】\n[时段：${startStr} ~ ${endStr}] 核心建议：该素材表现良好。由于当前系统未绑定 GEMINI_API_KEY，诊断采用离线数据分析引擎。此素材的最终 ROAS 为 ${roas.toFixed(2)}。建议继续保持对其在 Feed 版位中的预算倾向，该点击转化漏斗整体表现健康。`,
+          dataBasis: `source=CreativePerformanceDaily;mode=offline_rule_engine;isFallback=true;Spend: $${spend.toFixed(2)}, CTR: ${ctr.toFixed(2)}%, Clicks: ${clicks}, Purchases: ${purchases}, ROAS: ${roas.toFixed(2)}`,
+          riskPoints: `[离线规则评估 - 非 AI 生成] ${ctr < 1 ? "⚠️ 点击率低于1.0%偏低，建议优化前3秒视觉钩子。" : "✅ 转化表现健康，暂无重大风险指标。"}`,
+          priority: roas < 1.0 ? 1 : (roas > 2.5 ? 4 : 3),
+          model: "offline-rule-engine",
+          metadata: JSON.stringify({
+            isFallback: true,
+            mode: "offline_rule_engine",
+            aiProvider: "none",
+            primarySource: "CreativePerformanceDaily",
+            geminiEnabled: false,
+            metrics: {
+              spend,
+              impressions,
+              clicks,
+              purchases,
+              revenue,
+              ctr,
+              cpc,
+              cpm,
+              roas
+            }
+          })
         }
       });
       return res.json(fallbackReport);
@@ -729,7 +768,7 @@ router.post("/creatives/:creativeId/analyze", async (req, res) => {
     });
 
     const promptText = `
-    你是一名顶级出海电商投放专家和资深创意策略总监(Media Buyer)。
+    你是一名顶级出海电商投放专家和资神创意策略总监(Media Buyer)。
     请针对如下 Meta 广告素材的最新多维成效数据，进行精细、客观的底层策略性诊断。
     
     素材 ID: ${creativeId}
@@ -770,7 +809,7 @@ router.post("/creatives/:creativeId/analyze", async (req, res) => {
       ? "⚠️ 发现 ROAS 极低危机！点击成本明显倒挂，漏斗下层购买阻力极其严峻，建议暂行关停。" 
       : (ctr < 1.2 ? "⚠️ 发现点击漏洞：点击率低于安全线 1.2%，导致漏斗上层失血，应立即更新首屏勾子。" : "✅ 转化表现健康，暂无重大风险指标。");
 
-    // 4. Save to DB cached table
+    // 4. Save to DB cached table with proper metadata tracking
     const storedReport = await prisma.aiAnalysisReport.create({
       data: {
         type: "creative",
@@ -780,7 +819,26 @@ router.post("/creatives/:creativeId/analyze", async (req, res) => {
         conclusion: rawOutput,
         dataBasis: `Spend: $${spend.toFixed(2)}, CTR: ${ctr.toFixed(2)}%, Purchases: ${purchases}, ROAS: ${roas.toFixed(2)}`,
         riskPoints: finalRiskPoints,
-        priority: roas < 1.0 ? 1 : (roas > 2.5 ? 4 : 3)
+        priority: roas < 1.0 ? 1 : (roas > 2.5 ? 4 : 3),
+        model: "gemini-3.5-flash",
+        metadata: JSON.stringify({
+          isFallback: false,
+          mode: "gemini-3.5-flash",
+          aiProvider: "@google/genai",
+          primarySource: "CreativePerformanceDaily",
+          geminiEnabled: true,
+          metrics: {
+            spend,
+            impressions,
+            clicks,
+            purchases,
+            revenue,
+            ctr,
+            cpc,
+            cpm,
+            roas
+          }
+        })
       }
     });
 
