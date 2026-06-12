@@ -8,6 +8,7 @@ import { getCreativeIntelligence } from "../services/creative-intelligence.servi
 import { getAggregatedCreativeInsights } from "../services/creative-insights.service.js";
 import { syncStoreData } from "../services/store-sync.service.js";
 import { normalizeMetaAccountId } from "../utils.js";
+import { getCountryAnalytics } from "../services/country-analytics.service.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -2156,6 +2157,36 @@ router.get("/store-orders", async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to load store orders", details: error.message });
+  }
+});
+
+/**
+ * GET /api/data-center/countries
+ * Reconstructed country analytics page endpoint
+ */
+router.get("/countries", async (req, res) => {
+  const { startDate, endDate, storeId, minSpend, minOrders, includeUnmappedSpend } = req.query;
+  try {
+    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
+    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    
+    const minS = minSpend ? parseFloat(String(minSpend)) : 0;
+    const minO = minOrders ? parseInt(String(minOrders), 10) : 0;
+    const incUnmapped = includeUnmappedSpend !== "false";
+
+    const result = await getCountryAnalytics(
+      startStr,
+      endStr,
+      storeId ? String(storeId) : undefined,
+      minS,
+      minO,
+      incUnmapped
+    );
+
+    res.json(result);
+  } catch (error: any) {
+    console.error("[Data Center API] Countries error:", error);
+    res.status(500).json({ error: "Failed to load country analytics", details: error.message });
   }
 });
 
