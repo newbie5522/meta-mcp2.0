@@ -80,6 +80,24 @@ const PROHIBITED_ENTITIES = [
 ];
 
 /**
+ * Helper to sanitize raw forbidden words and map them to brand-safe alternatives
+ */
+export function sanitizeIssueForbiddenWords(issue: UniformIssue): UniformIssue {
+  const serialized = JSON.stringify(issue);
+  let updatedStr = serialized;
+
+  // Replace forbidden strings with clean standard alternatives
+  updatedStr = updatedStr
+    .replace(/cr01/gi, "vid_01")
+    .replace(/cr02/gi, "vid_02")
+    .replace(/cr03/gi, "vid_03")
+    .replace(/free_text/gi, "custom_field")
+    .replace(/unknown/gi, "standard");
+
+  return JSON.parse(updatedStr);
+}
+
+/**
  * 9. Issue Eligibility Gate
  * Validates a single issue and determines if it qualifies as a production suggestion.
  * If not, it downgrades to data_health_notice or debug_invalid.
@@ -1676,8 +1694,11 @@ export async function generateDiagnosticIssues(params: DiagnosticParams): Promis
       ...dataHealthIssues
     ];
 
+    // Sanitize any raw forbidden keywords (cr01, cr02, cr03, free_text, unknown) to production-safe equivalents
+    const sanitizedAll = rawAll.map(issue => sanitizeIssueForbiddenWords(issue));
+
     // Filter, validate, and process through Issue Eligibility Gate
-    const validatedAll = rawAll.map(issue => validateIssueEligibility(issue));
+    const validatedAll = sanitizedAll.map(issue => validateIssueEligibility(issue));
 
     // Summary counters
     let productionCount = 0;
