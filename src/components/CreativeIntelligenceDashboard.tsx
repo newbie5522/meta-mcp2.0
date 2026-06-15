@@ -1823,14 +1823,29 @@ export function CreativeIntelligenceDashboard({
                     </div>
 
                     {/* Risk points */}
-                    <div className="space-y-1.5 bg-red-50/50 p-3 rounded-lg border border-red-100/50 leading-relaxed text-slate-700">
+                    <div className="space-y-1.5 bg-red-50/50 p-3 rounded-lg border border-red-100/50 leading-relaxed text-slate-700" id="ai-report-risk-points-container">
                       <p className="text-[10px] font-bold text-red-600 uppercase tracking-wider flex items-center gap-1">
                         <AlertTriangle className="w-3.5 h-3.5" />
                         风险点与改进红线 RETAIL RISKS
                       </p>
-                      <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-600">
-                        {aiReport.riskPoints.map((pt, pIdx) => (
-                          <li key={pIdx} className="font-medium">{pt}</li>
+                      <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-600" id="ai-report-risk-points-list">
+                        {(() => {
+                          const rp = aiReport.riskPoints;
+                          if (!rp) return [];
+                          if (Array.isArray(rp)) return rp;
+                          if (typeof rp === "string") {
+                            const trimmed = rp.trim();
+                            if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                              try {
+                                const parsed = JSON.parse(trimmed);
+                                if (Array.isArray(parsed)) return parsed;
+                              } catch (e) {}
+                            }
+                            return trimmed.split("\n").map(s => s.trim()).filter(Boolean);
+                          }
+                          return [];
+                        })().map((pt, pIdx) => (
+                          <li key={pIdx} className="font-medium" id={`risk-point-${pIdx}`}>{pt}</li>
                         ))}
                       </ul>
                     </div>

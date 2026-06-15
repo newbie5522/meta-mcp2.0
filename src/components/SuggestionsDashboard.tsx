@@ -228,18 +228,42 @@ export function SuggestionsDashboard() {
 
                 {/* Analysis basis & risks */}
                 {card.report && (
-                  <div className="p-3 bg-red-50/30 rounded-lg border border-red-100/40 text-xs space-y-1.5 text-slate-600">
+                  <div className="p-3 bg-red-50/30 rounded-lg border border-red-100/40 text-xs space-y-1.5 text-slate-600" id={`card-report-container-${card.id}`}>
                     <div className="font-bold text-rose-800 flex items-center gap-1">
                       <Flame className="w-3.5 h-3.5" />
                       触发体检异常：{card.report.conclusion}
                     </div>
-                    {card.report.riskPoints && card.report.riskPoints.length > 0 && (
-                      <ul className="list-disc list-inside text-[11px] text-slate-500 space-y-0.5">
-                        {card.report.riskPoints.map((pt, i) => (
-                          <li key={i}>{pt}</li>
-                        ))}
-                      </ul>
-                    )}
+                    {(() => {
+                      const rp = card.report?.riskPoints as any;
+                      let parsedPoints: string[] = [];
+                      if (rp) {
+                        if (Array.isArray(rp)) {
+                          parsedPoints = rp;
+                        } else if (typeof rp === "string") {
+                          const trimmed = rp.trim();
+                          if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                            try {
+                              const parsed = JSON.parse(trimmed);
+                              if (Array.isArray(parsed)) {
+                                parsedPoints = parsed;
+                              }
+                            } catch (e) {
+                              parsedPoints = [trimmed];
+                            }
+                          } else {
+                            parsedPoints = trimmed.split("\n").map(s => s.trim()).filter(Boolean);
+                          }
+                        }
+                      }
+                      if (parsedPoints.length === 0) return null;
+                      return (
+                        <ul className="list-disc list-inside text-[11px] text-slate-500 space-y-0.5" id={`list-riskpoints-${card.id}`}>
+                          {parsedPoints.map((pt, i) => (
+                            <li key={i} id={`pt-${card.id}-${i}`}>{pt}</li>
+                          ))}
+                        </ul>
+                      );
+                    })()}
                     <div className="text-[10px] text-slate-400">
                       历史观察窗口: {card.report.observationWindow} | 实体类别: {card.report.entityType} ({card.report.entityId})
                     </div>
