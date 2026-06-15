@@ -67,7 +67,11 @@ async function verify() {
   const activeAdsCount = activeAdsGroup.length;
 
   // 10. Check if any mock/sandbox/fallback accounts are in the table
-  const sandboxAccounts = ["act_439281903", "act_583920194", "act_204928103"];
+  const sandboxAccountsFromDb = await prisma.adAccount.findMany({
+    where: { store: { mode: "sandbox" } },
+    select: { fb_account_id: true }
+  });
+  const sandboxAccounts = sandboxAccountsFromDb.map(a => a.fb_account_id);
   const sandboxRecordsCount = await prisma.factMetaPerformance.count({
     where: {
       account_id: { in: sandboxAccounts }

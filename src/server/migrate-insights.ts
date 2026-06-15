@@ -3,12 +3,18 @@ import prisma from "../db/index.js";
 async function runMigration() {
   console.log("🚀 Starting migration of AdInsight real data to fact_meta_performance...");
 
-  // Load all AdAccounts to map currencies
-  const adAccounts = await prisma.adAccount.findMany();
+  // Load all AdAccounts to map currencies and sandbox flags
+  const adAccounts = await prisma.adAccount.findMany({
+    include: { store: true }
+  });
   const currencyMap = new Map<string, string>();
+  const sandboxAccountSet = new Set<string>();
   for (const acc of adAccounts) {
     if (acc.fb_account_id) {
       currencyMap.set(acc.fb_account_id, acc.currency || "USD");
+      if (acc.store?.mode === "sandbox") {
+        sandboxAccountSet.add(acc.fb_account_id);
+      }
     }
   }
 
@@ -27,7 +33,6 @@ async function runMigration() {
 
   let migratedCount = 0;
   let skippedCount = 0;
-  const sandboxAccounts = ["act_439281903", "act_583920194", "act_204928103"];
 
   const batchSize = 100;
   for (let i = 0; i < rawInsights.length; i += batchSize) {
@@ -54,7 +59,7 @@ async function runMigration() {
         }
 
         // Check if it's a sandbox/mock/fallback account
-        if (sandboxAccounts.includes(row.accountId)) {
+        if (sandboxAccountSet.has(row.accountId)) {
           skippedCount++;
           return;
         }

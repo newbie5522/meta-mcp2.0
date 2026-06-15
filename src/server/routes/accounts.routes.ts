@@ -319,12 +319,14 @@ router.get("/active-list", async (req, res) => {
       const results = dbAccounts.map((acc: any) => ({
         id: acc.fb_account_id,
         name: acc.fb_account_name || "",
-        status: acc.status ? parseInt(acc.status, 10) : 1,
+        status: acc.recentActivity90d ? 'active' : 'inactive',
         currency: acc.currency || "USD",
         timezone: acc.timezone || "America/New_York",
         isActive: acc.recentActivity90d || false,
         isFallbackDbCopy: true,
-        fallbackWarning: `无法从 Meta 实时接口同步最新列表 (由于权限或暂时的网络问题: ${formattedError.message})。已加载本地缓冲数据。`
+        fallbackWarning: `无法从 Meta 实时接口同步最新列表 (由于权限或暂时的网络问题: ${formattedError.message})。已加载本地缓存数据。`,
+        apiAccessStatus: formattedError.code === 80004 ? "rate_limited" : "blocked",
+        apiError: formattedError
       }));
       return res.json(results);
     }

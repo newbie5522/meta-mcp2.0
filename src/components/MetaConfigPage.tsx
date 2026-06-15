@@ -89,16 +89,30 @@ export function MetaConfigPage() {
         return null;
       });
 
-      // Step 2: Grab the accounts list in parallel
+      if (diagnostics && diagnostics.apiAccessStatus !== "usable") {
+        setLastSyncError("Token 身份验证成功，但广告账户 API 当前受限，暂不可同步账户数据。");
+        toast.error("Token 身份验证成功，但广告账户 API 当前受限，暂不可同步账户数据。当前展示的是本地缓存账户，不是本次 Meta API 同步结果。");
+        await fetchAccountsFromDb(); // 只加载本地缓存用于查看
+        return;
+      }
+
+      // Step 2: Grab the accounts list
       const res = await axios.get('/api/accounts/active-list');
       const accountsList = Array.isArray(res.data) ? res.data : [];
       setAccounts(accountsList);
 
-      if (diagnostics) {
-        if (accountsList.length === 0) {
-          toast.warning("Token 验证成功，但在该 Meta 商务资产下未能拉取到可访问的广告账户，可能是权限限制或账户分配不足！");
-        } else {
-          toast.success(`成功拉取并注册了 ${accountsList.length} 个广告账户基础结构！`);
+      const isFallback = accountsList.some((acc: any) => acc.isFallbackDbCopy);
+
+      if (isFallback) {
+        setLastSyncError("当前展示的是本地缓存账户，不是本次 Meta API 同步结果。");
+        toast.warning("当前展示的是本地缓存账户，不是本次 Meta API 同步结果。");
+      } else {
+        if (diagnostics) {
+          if (accountsList.length === 0) {
+            toast.warning("Token 验证成功，但在该 Meta 商务资产下未能拉取到可访问的广告账户，可能是权限限制或账户分配不足！");
+          } else {
+            toast.success(`成功拉取并注册了 ${accountsList.length} 个广告账户基础结构！`);
+          }
         }
       }
     } catch (err: any) {
@@ -343,14 +357,21 @@ export function MetaConfigPage() {
           </div>
           <Button 
             onClick={handleManualFetch} 
-            disabled={loadingAccounts || isEditingToken || testResult?.apiAccessStatus === 'rate_limited' || testResult?.apiAccessStatus === 'blocked'}
+            disabled={loadingAccounts || isEditingToken || (testResult && testResult.apiAccessStatus !== 'usable')}
             variant="outline"
             className="h-9 px-3 text-xs disabled:pointer-events-none disabled:opacity-50"
           >
             <RefreshCcw className={`w-3.5 h-3.5 mr-1 ${loadingAccounts ? 'animate-spin' : ''}`} />
-            {(testResult?.apiAccessStatus === 'rate_limited' || testResult?.apiAccessStatus === 'blocked') ? "Retry Later" : "拉取和更新"}
+            {(testResult && testResult.apiAccessStatus !== 'usable') ? "Retry Later" : "拉取和更新"}
           </Button>
         </CardHeader>
+
+        {((testResult && testResult.apiAccessStatus !== 'usable') || accounts.some((a: any) => a.isFallbackDbCopy)) && (
+          <div className="mx-6 mt-4 p-3.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span className="font-medium">当前展示的是本地缓存账户，不是本次 Meta API 同步结果。</span>
+          </div>
+        )}
         
         {accounts.length > 0 && (
           <div className="px-6 py-3 bg-slate-50 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">

@@ -147,7 +147,6 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
   console.log(`[Meta Insights Sync] Mapped ${validAccounts.length} accounts for multi-level metrics retrieval.`);
 
   const levels = ["account", "campaign", "adset", "ad"];
-  const sandboxAccounts = ["act_439281903", "act_583920194", "act_204928103"];
 
   let totalFetched = 0;
   let totalSaved = 0;
@@ -165,7 +164,7 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
     const actId = normalizeMetaAccountId(acc.fb_account_id);
     const numericAccountId = getNumericAccountId(acc.fb_account_id);
 
-    if (sandboxAccounts.includes(actId)) {
+    if (acc.store?.mode === "sandbox") {
       console.log(`[Meta Insights Sync] Skipping live Facebook API logic for manually seeded sandbox account: ${actId}`);
       continue;
     }
@@ -281,7 +280,7 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
           const currency = acc.currency || "USD";
 
           // ONLY write to fact_meta_performance if NOT a sandbox account
-          if (!sandboxAccounts.includes(actId)) {
+          if (acc.store?.mode !== "sandbox") {
             const dataObj = {
               date: dateStr,
               level: currentLevel,
@@ -445,7 +444,7 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
 
   // Handle User Requirement: "如果 recordsFetched > 0 但 recordsSaved = 0，必须标记 PARTIAL 或 FAILED，并说明原因。"
   if (totalFetched > 0 && totalSaved === 0) {
-    const errorText = `[Meta Sync Warning] Fetched ${totalFetched} insights rows from Graph API, but 0 rows were written to the fact table. This might occur due to sandbox exclusions (e.g. processes act_439281903, act_583920194, act_204928103) or missing mapping linkages.`;
+    const errorText = `[Meta Sync Warning] Fetched ${totalFetched} insights rows from Graph API, but 0 rows were written to the fact table. This might occur due to sandbox exclusions or missing mapping linkages.`;
     console.error(errorText);
     throw new Error(errorText);
   }

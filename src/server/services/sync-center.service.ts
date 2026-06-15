@@ -332,7 +332,8 @@ export class SyncCenter {
               { recentActivity90d: true },
               { storeId: { not: null } }
             ]
-          }
+          },
+          include: { store: true }
         });
 
         console.log(`[Sync Center] Syncing structures for ${activeAccounts.length} Meta Accounts...`);
@@ -341,7 +342,6 @@ export class SyncCenter {
         let adsetsTotal = 0;
         let adsTotal = 0;
 
-        const sandboxAccounts = ["act_439281903", "act_583920194", "act_204928103"];
         for (const account of activeAccounts) {
           const actId = normalizeMetaAccountId(account.fb_account_id);
           const cleanAccountId = actId.replace("act_", "");
@@ -349,7 +349,7 @@ export class SyncCenter {
           try {
             console.log(`[Sync Center] Querying Meta structure for active account ${actId}`);
             
-            if (sandboxAccounts.includes(actId)) {
+            if (account.store?.mode === "sandbox") {
               throw new Error("Sandbox Account Mode");
             }
             

@@ -128,7 +128,6 @@ export async function syncAudienceBreakdownsForActiveAccounts(options: AudienceS
   console.log(`[Meta Audience Sync] Resolved ${validAccounts.length} accounts for demographic & placement breakdowns.`);
 
   const breakdownTypes = ["country", "region", "age", "gender", "publisher_platform", "impression_device"];
-  const sandboxAccounts = ["act_439281903", "act_583920194", "act_204928103"];
 
   let totalFetched = 0;
   let totalSaved = 0;
@@ -139,7 +138,7 @@ export async function syncAudienceBreakdownsForActiveAccounts(options: AudienceS
     const actId = normalizeMetaAccountId(acc.fb_account_id);
     const numericAccountId = getNumericAccountId(acc.fb_account_id);
 
-    if (sandboxAccounts.includes(actId)) {
+    if (acc.store?.mode === "sandbox") {
       console.log(`[Meta Audience Sync] Account ${actId} is a duplicate sandbox account. Skipping.`);
       continue;
     }

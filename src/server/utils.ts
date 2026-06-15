@@ -403,12 +403,13 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
     });
 
     // Write to FactMetaPerformance synchronously
-    const sandboxAccounts = ["act_439281903", "act_583920194", "act_204928103"];
-    if (!sandboxAccounts.includes(normAccountId)) {
-      try {
-        const dbAcc = await prisma.adAccount.findUnique({
-          where: { fb_account_id: normAccountId },
-        });
+    try {
+      const dbAcc = await prisma.adAccount.findUnique({
+        where: { fb_account_id: normAccountId },
+        include: { store: true }
+      });
+      
+      if (!dbAcc || dbAcc.store?.mode !== "sandbox") {
         const currency = dbAcc?.currency || "USD";
 
         await prisma.factMetaPerformance.upsert({
@@ -459,9 +460,9 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
             synced_at: new Date(),
           }
         });
-      } catch (err: any) {
-        console.error(`[Fact Table Sync] Failed writing ${normAccountId} for date ${dateKey}:`, err.message);
       }
+    } catch (err: any) {
+      console.error(`[Fact Table Sync] Failed writing ${normAccountId} for date ${dateKey}:`, err.message);
     }
 
     syncedRecords++;
