@@ -636,6 +636,51 @@ router.get("/audience", async (req, res) => {
 });
 
 /**
+ * GET /api/data-center/countries
+ * Reconstructed country analytics page endpoint.
+ * Meta country metrics come from FactAudienceBreakdown.
+ * Order country metrics are unavailable when Order schema lacks country fields.
+ */
+router.get("/countries", async (req, res) => {
+  const { startDate, endDate, storeId, minSpend, minOrders, includeUnmappedSpend } = req.query;
+
+  try {
+    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
+    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+
+    const minSRaw = minSpend ? parseFloat(String(minSpend)) : 0;
+    const minORaw = minOrders ? parseInt(String(minOrders), 10) : 0;
+
+    const minS = Number.isFinite(minSRaw) ? minSRaw : 0;
+    const minO = Number.isFinite(minORaw) ? minORaw : 0;
+
+    const normalizedStoreId =
+      storeId && storeId !== "all" && storeId !== "undefined"
+        ? String(storeId)
+        : undefined;
+
+    const incUnmapped = includeUnmappedSpend !== "false";
+
+    const result = await getCountryAnalytics(
+      startStr,
+      endStr,
+      normalizedStoreId,
+      minS,
+      minO,
+      incUnmapped
+    );
+
+    res.json(result);
+  } catch (error: any) {
+    console.error("[Data Center API] Countries error:", error);
+    res.status(500).json({
+      error: "Failed to load country analytics",
+      details: error.message
+    });
+  }
+});
+
+/**
  * GET /api/data-center/creatives
  * Returns creative performance summaries
  */
@@ -2157,36 +2202,6 @@ router.get("/store-orders", async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to load store orders", details: error.message });
-  }
-});
-
-/**
- * GET /api/data-center/countries
- * Reconstructed country analytics page endpoint
- */
-router.get("/countries", async (req, res) => {
-  const { startDate, endDate, storeId, minSpend, minOrders, includeUnmappedSpend } = req.query;
-  try {
-    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
-    
-    const minS = minSpend ? parseFloat(String(minSpend)) : 0;
-    const minO = minOrders ? parseInt(String(minOrders), 10) : 0;
-    const incUnmapped = includeUnmappedSpend !== "false";
-
-    const result = await getCountryAnalytics(
-      startStr,
-      endStr,
-      storeId ? String(storeId) : undefined,
-      minS,
-      minO,
-      incUnmapped
-    );
-
-    res.json(result);
-  } catch (error: any) {
-    console.error("[Data Center API] Countries error:", error);
-    res.status(500).json({ error: "Failed to load country analytics", details: error.message });
   }
 });
 

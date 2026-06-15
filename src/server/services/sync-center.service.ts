@@ -283,11 +283,17 @@ export class SyncCenter {
         let adsetsTotal = 0;
         let adsTotal = 0;
 
+        const sandboxAccounts = ["act_439281903", "act_583920194", "act_204928103"];
         for (const account of activeAccounts) {
           const actId = normalizeMetaAccountId(account.fb_account_id);
+          const cleanAccountId = actId.replace("act_", "");
           
           try {
             console.log(`[Sync Center] Querying Meta structure for active account ${actId}`);
+            
+            if (sandboxAccounts.includes(actId)) {
+              throw new Error("Sandbox Account Mode");
+            }
             
             // Fetch campaigns
             const campRes = await axios.get(`https://graph.facebook.com/v19.0/${actId}/campaigns`, {

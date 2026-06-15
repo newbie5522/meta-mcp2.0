@@ -165,6 +165,11 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
     const actId = normalizeMetaAccountId(acc.fb_account_id);
     const numericAccountId = getNumericAccountId(acc.fb_account_id);
 
+    if (sandboxAccounts.includes(actId)) {
+      console.log(`[Meta Insights Sync] Skipping live Facebook API logic for manually seeded sandbox account: ${actId}`);
+      continue;
+    }
+
     console.log(`[Meta Insights Sync] Processing Account [${actId}] "${acc.fb_account_name || "Unknown Name"}"...`);
 
     for (const currentLevel of levels) {
