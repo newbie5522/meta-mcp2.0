@@ -29,6 +29,9 @@ export interface UniformIssue {
   generationMode: "offline_rule_engine";
   humanConfirmationRequired: boolean;
   status: "pending";
+  manualSelected?: boolean;
+  activeInLast30Days?: boolean;
+  urgent?: boolean;
 }
 
 // Approved list of legal action verbs
@@ -67,7 +70,13 @@ const PROHIBITED_ENTITIES = [
   "free_text",
   "cr01",
   "cr02",
-  "cr03"
+  "cr03",
+  "cyber_recon",
+  "mock",
+  "demo",
+  "test",
+  "sample",
+  "sandbox"
 ];
 
 /**
@@ -89,7 +98,12 @@ export function validateIssueEligibility(issue: UniformIssue): UniformIssue {
   // Spend check - either in current range or cumulative 30 days
   const spend = Number(issue.evidence?.metrics?.spend || 0);
   const adSpend = Number(issue.evidence?.metrics?.boundAccountSpend || 0);
-  const hasSpend = (spend > 0) || (adSpend > 0);
+  const spend3d = Number(issue.evidence?.metrics?.trend3d?.spend || 0);
+  const spend30d = Number(issue.evidence?.metrics?.trend30d?.spend || 0);
+  const boundSpend3d = Number(issue.evidence?.metrics?.trend3d?.boundAccountSpend || 0);
+  const boundSpend30d = Number(issue.evidence?.metrics?.trend30d?.boundAccountSpend || 0);
+
+  const hasSpend = (spend > 0) || (adSpend > 0) || (spend3d > 0) || (spend30d > 0) || (boundSpend3d > 0) || (boundSpend30d > 0);
 
   const passesAllProductionCriteria = 
     issue.entityId && 
@@ -98,7 +112,7 @@ export function validateIssueEligibility(issue: UniformIssue): UniformIssue {
     hasEntityRefs && 
     isRouteValid && 
     isActionVerbLegal && 
-    hasSpend && 
+    (hasSpend || issue.manualSelected === true) && 
     issue.humanConfirmationRequired === true;
 
   if (issue.category === "production_suggestion") {
@@ -448,6 +462,30 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
         humanConfirmationRequired: true,
         status: "pending"
       });
+    }
+  }
+
+  const isGlobalManual = !!params.accountId;
+  for (const issue of issues) {
+    if (issue.entityType === "account") {
+      const spend = Number(issue.evidence?.metrics?.spend || 0);
+      const spend30d = Number(issue.evidence?.metrics?.trend30d?.spend || 0);
+      const isActiveIn30 = (spend > 0) || (spend30d > 0);
+
+      if (isGlobalManual) {
+        issue.manualSelected = true;
+        if (!isActiveIn30) {
+          issue.activeInLast30Days = false;
+          issue.urgent = false;
+          if (issue.severity === "critical") {
+            issue.severity = "warning";
+          }
+        } else {
+          issue.activeInLast30Days = true;
+        }
+      } else {
+        issue.activeInLast30Days = isActiveIn30;
+      }
     }
   }
 
