@@ -40,8 +40,9 @@ router.get("/detail", async (req, res) => {
         !["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"].includes(store.name) &&
         !["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"].includes(store.domain)
       );
+      const productionStoreIds = new Set(stores.map(s => s.id));
       adAccounts = adAccounts.filter(acc => 
-        !["act_439281903", "act_583920194", "act_204928103"].includes(acc.fb_account_id)
+        !acc.storeId || productionStoreIds.has(acc.storeId)
       );
     }
 
@@ -1353,15 +1354,14 @@ router.get("/accounts-performance", async (req, res) => {
     ]);
 
     if (!isDemoDataEnabled()) {
-      const sandboxAccountIds = ["act_439281903", "act_583920194", "act_204928103"];
-      performanceRows = performanceRows.filter(r => r.account_id && !sandboxAccountIds.includes(normalizeMetaAccountId(r.account_id)));
-      adAccounts = adAccounts.filter(acc => acc.fb_account_id && !sandboxAccountIds.includes(normalizeMetaAccountId(acc.fb_account_id)));
-      accountMappings = accountMappings.filter(m => m.fbAccountId && !sandboxAccountIds.includes(normalizeMetaAccountId(m.fbAccountId)));
       stores = stores.filter(store => 
         store.mode !== "sandbox" &&
         !["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"].includes(store.name) &&
         !["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"].includes(store.domain)
       );
+      const productionStoreIds = new Set(stores.map(s => s.id));
+      adAccounts = adAccounts.filter(acc => !acc.storeId || productionStoreIds.has(acc.storeId));
+      accountMappings = accountMappings.filter(m => !m.storeId || productionStoreIds.has(m.storeId));
     }
 
     // 3. Setup indexing maps for LEFT JOIN behavior
@@ -1374,6 +1374,14 @@ router.get("/accounts-performance", async (req, res) => {
     accountMappings.forEach(m => {
       mappingsMap.set(normalizeMetaAccountId(m.fbAccountId), m);
     });
+
+    if (!isDemoDataEnabled()) {
+      performanceRows = performanceRows.filter(r => {
+        if (!r.account_id) return false;
+        const normId = normalizeMetaAccountId(r.account_id);
+        return adAccountsMap.has(normId) || mappingsMap.has(normId);
+      });
+    }
 
     // 4. Group and aggregate daily performance
     const performanceMap = new Map<string, any>();
@@ -1494,7 +1502,7 @@ router.get("/accounts-performance", async (req, res) => {
     // Filter by storeId if requested
     if (storeId && storeId !== "all" && storeId !== "undefined") {
       const sId = Number(storeId);
-      results = results.filter(r => r.storeId === sId);
+      results = results.filter(r => r.storeId === sId || !r.isBound);
     }
 
     // Default sorting by spend DESC

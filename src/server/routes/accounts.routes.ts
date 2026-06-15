@@ -36,7 +36,9 @@ router.get("/test-token", async (req, res) => {
   if (!token) {
     return res.status(400).json({ 
       success: false, 
-      error: "Meta Token 未配置。" 
+      error: "Meta Token 未配置。",
+      identityStatus: "unknown",
+      apiAccessStatus: "unknown"
     });
   }
 
@@ -44,6 +46,8 @@ router.get("/test-token", async (req, res) => {
     return res.status(400).json({
       success: false,
       error: "Token 包含省略号掩码",
+      identityStatus: "invalid",
+      apiAccessStatus: "unknown",
       details: {
         message: "当前检测到的 Token 包含 '...' 省略号，表示它是脱敏掩码而非完整有效的令牌。请使用'修改'并粘贴完整的 Access Token 后重试。"
       }
@@ -55,12 +59,17 @@ router.get("/test-token", async (req, res) => {
     startedAt: new Date()
   };
 
+  let identityStatus: 'valid' | 'invalid' | 'unknown' = 'unknown';
+  let apiAccessStatus: 'usable' | 'rate_limited' | 'permission_missing' | 'blocked' | 'unknown' = 'unknown';
+  let apiError: any = null;
+
   try {
     // 1. Verify User Info via /me
     const meRes = await axios.get("https://graph.facebook.com/v19.0/me", {
       params: { fields: "id,name", access_token: token }
     });
     const info = meRes.data;
+    identityStatus = "valid";
 
     // 2. Fetch Granted Permissions
     let permissions: string[] = [];
@@ -75,12 +84,20 @@ router.get("/test-token", async (req, res) => {
       }
     } catch (permErr: any) {
       console.warn("Failed to fetch permissions during token test:", permErr.message);
+      const fbError = permErr.response?.data?.error || {};
+      apiError = {
+        code: fbError.code || permErr.code || 500,
+        type: fbError.type || "UnknownError",
+        message: fbError.message || permErr.message,
+        error_subcode: fbError.error_subcode,
+        fbtrace_id: fbError.fbtrace_id
+      };
     }
 
     const hasAdsRead = permissions.includes("ads_read");
     const hasBusinessManagement = permissions.includes("business_management");
 
-    // 3. Count available accounts
+    // 3. Count available accounts / API access validation
     let accountsCount = 0;
     try {
       const adAccsRes = await axios.get("https://graph.facebook.com/v19.0/me/adaccounts", {
@@ -89,33 +106,64 @@ router.get("/test-token", async (req, res) => {
       if (adAccsRes.data && Array.isArray(adAccsRes.data.data)) {
         accountsCount = adAccsRes.data.data.length;
       }
+      apiAccessStatus = "usable";
     } catch (adErr: any) {
-      console.warn("Failed to fetch ad accounts count during token test:", adErr.message);
+      console.warn("Failed to fetch ad accounts count during ad-account API test:", adErr.message);
+      const fbError = adErr.response?.data?.error || {};
+      apiError = {
+        code: fbError.code || adErr.code || 500,
+        type: fbError.type || "UnknownError",
+        message: fbError.message || adErr.message,
+        error_subcode: fbError.error_subcode,
+        fbtrace_id: fbError.fbtrace_id
+      };
+
+      const errorMessage = apiError.message || "";
+      const code = apiError.code;
+      const subcode = apiError.error_subcode;
+
+      if (subcode === 2446079 || code === 80004 || errorMessage.toLowerCase().includes("too many calls") || errorMessage.toLowerCase().includes("rate limit")) {
+        apiAccessStatus = "rate_limited";
+      } else if (errorMessage.toLowerCase().includes("permission") || errorMessage.toLowerCase().includes("access token") || code === 200) {
+        apiAccessStatus = "permission_missing";
+      } else {
+        apiAccessStatus = "blocked";
+      }
     }
 
     await prisma.syncLog.create({
       data: {
         type: logsData.type,
-        status: "SUCCESS",
+        status: apiAccessStatus === "usable" ? "SUCCESS" : "WARNING",
         metadata: JSON.stringify({
           name: info.name,
           id: info.id,
           permissions,
-          accountsCount
+          accountsCount,
+          identityStatus,
+          apiAccessStatus,
+          apiError
         })
       }
     }).catch(() => {});
 
     return res.json({
       success: true,
+      identityStatus,
+      apiAccessStatus,
       name: info.name,
       id: info.id,
       permissions,
       hasAdsRead,
       hasBusinessManagement,
-      accountsCount
+      accountsCount,
+      apiError
     });
+
   } catch (err: any) {
+    identityStatus = "invalid";
+    apiAccessStatus = "blocked";
+
     const fbError = err.response?.data?.error || {};
     const formattedError = {
       code: fbError.code || err.code || 500,
@@ -124,6 +172,11 @@ router.get("/test-token", async (req, res) => {
       error_subcode: fbError.error_subcode,
       fbtrace_id: fbError.fbtrace_id
     };
+
+    const errorMessage = fbError.message || "";
+    if (formattedError.error_subcode === 2446079 || formattedError.code === 80004 || errorMessage.toLowerCase().includes("too many calls")) {
+      apiAccessStatus = "rate_limited";
+    }
 
     await prisma.syncLog.create({
       data: {
@@ -136,6 +189,8 @@ router.get("/test-token", async (req, res) => {
 
     return res.status(400).json({
       success: false,
+      identityStatus,
+      apiAccessStatus,
       error: formattedError.message,
       details: {
         error: formattedError
@@ -154,9 +209,17 @@ router.get("/db-list", async (req, res) => {
     });
 
     if (!isDemoDataEnabled()) {
-      accounts = accounts.filter(acc => 
-        !["act_439281903", "act_583920194", "act_204928103"].includes(acc.fb_account_id)
-      );
+      const activeStores = await prisma.store.findMany({
+        where: {
+          NOT: [
+            { mode: "sandbox" },
+            { name: { in: ["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"] } },
+            { domain: { in: ["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"] } }
+          ]
+        }
+      });
+      const activeStoreIds = new Set(activeStores.map(s => s.id));
+      accounts = accounts.filter(acc => !acc.storeId || activeStoreIds.has(acc.storeId));
     }
 
     const results = accounts.map((acc: any) => ({
@@ -233,12 +296,37 @@ router.get("/active-list", async (req, res) => {
         }
       }).catch(() => {});
 
-      return res.status(400).json({
-        error: formattedError.message,
-        details: {
-          error: formattedError
-        }
+      console.warn(`[Meta Accounts Sync Option] Direct live fetch failed: ${formattedError.message}. Loading accounts from local database cache fallbacks store list.`);
+
+      // Extremely Friendly Resilient Fallback: If FB API fails due to rate limits or permission locks (subcode 2446079),
+      // we load all existing ad accounts already in the database and present them as-is.
+      let dbAccounts = await prisma.adAccount.findMany({
+        orderBy: { fb_account_name: 'asc' }
       });
+      if (!isDemoDataEnabled()) {
+        const activeStores = await prisma.store.findMany({
+          where: {
+            NOT: [
+              { mode: "sandbox" },
+              { name: { in: ["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"] } },
+              { domain: { in: ["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"] } }
+            ]
+          }
+        });
+        const activeStoreIds = new Set(activeStores.map(s => s.id));
+        dbAccounts = dbAccounts.filter(acc => !acc.storeId || activeStoreIds.has(acc.storeId));
+      }
+      const results = dbAccounts.map((acc: any) => ({
+        id: acc.fb_account_id,
+        name: acc.fb_account_name || "",
+        status: acc.status ? parseInt(acc.status, 10) : 1,
+        currency: acc.currency || "USD",
+        timezone: acc.timezone || "America/New_York",
+        isActive: acc.recentActivity90d || false,
+        isFallbackDbCopy: true,
+        fallbackWarning: `无法从 Meta 实时接口同步最新列表 (由于权限或暂时的网络问题: ${formattedError.message})。已加载本地缓冲数据。`
+      }));
+      return res.json(results);
     }
 
     if (allAccounts.length > syncLimit) {
@@ -250,6 +338,7 @@ router.get("/active-list", async (req, res) => {
     // Concurrency limiter to avoid Facebook API limits
     const activeAccountsSync: any[] = [];
     const concurrentLimit = 5;
+    let isRateLimited = false;
     
     for (let i = 0; i < allAccounts.length; i += concurrentLimit) {
       const chunk = allAccounts.slice(i, i + concurrentLimit);
@@ -260,7 +349,7 @@ router.get("/active-list", async (req, res) => {
         const apiTimezone = apiAcc.timezone_name;
         
         let isRecent90d = false;
-        if (status === 1) {
+        if (status === 1 && !isRateLimited) {
           try {
             const insightsRes = await axios.get(
               `https://graph.facebook.com/v19.0/${metaAccountId}/insights`,
@@ -298,6 +387,14 @@ router.get("/active-list", async (req, res) => {
             }
           } catch (err: any) {
             console.warn(`Warning checking recent delivery for ${metaAccountId}:`, err.response?.data?.error?.message || err.message);
+            const errMsg = String(err.response?.data?.error?.message || err.message).toLowerCase();
+            const errCode = err.response?.data?.error?.code;
+            const errSubcode = err.response?.data?.error?.error_subcode;
+            if (errCode === 17 || errCode === 32 || errCode === 613 || errSubcode === 2446079 || 
+                errMsg.includes("rate limit") || errMsg.includes("too many calls")) {
+              isRateLimited = true;
+              console.warn(`[Meta Rate Limit Detected] Rate limit is exceeded. Enabling fallback for active status checks of remaining accounts.`);
+            }
           }
         }
   
@@ -307,7 +404,8 @@ router.get("/active-list", async (req, res) => {
           currency: apiCurrency,
           timezone: apiTimezone,
           status: status,
-          isActive: isRecent90d
+          isActive: isRecent90d,
+          rateLimitSkipped: isRateLimited
         };
       }));
       activeAccountsSync.push(...results);
@@ -331,12 +429,14 @@ router.get("/active-list", async (req, res) => {
       const statusStr = acc.status != null ? String(acc.status) : null;
       
       let targetStoreId: number | null = null;
+      let lastRecentActivity = false;
       const existingAcc = await prisma.adAccount.findUnique({
         where: { fb_account_id: acc.id },
-        select: { storeId: true }
+        select: { storeId: true, recentActivity90d: true }
       });
       if (existingAcc) {
         targetStoreId = existingAcc.storeId;
+        lastRecentActivity = existingAcc.recentActivity90d;
       } else {
         const mapping = await prisma.accountMapping.findFirst({
           where: { fbAccountId: acc.id }
@@ -348,6 +448,8 @@ router.get("/active-list", async (req, res) => {
         }
       }
 
+      const finalIsActive = acc.rateLimitSkipped ? lastRecentActivity : acc.isActive;
+
       await prisma.adAccount.upsert({
         where: { fb_account_id: acc.id },
         update: { 
@@ -356,7 +458,7 @@ router.get("/active-list", async (req, res) => {
           timezone: acc.timezone,
           status: statusStr,
           activityStatus: acc.status === 1 ? 1 : 2, 
-          recentActivity90d: acc.isActive,
+          recentActivity90d: finalIsActive,
           lastActivityCheckedAt: checkedAt,
           storeId: targetStoreId
         },
@@ -367,7 +469,7 @@ router.get("/active-list", async (req, res) => {
           timezone: acc.timezone,
           status: statusStr,
           activityStatus: acc.status === 1 ? 1 : 2, 
-          recentActivity90d: acc.isActive,
+          recentActivity90d: finalIsActive,
           lastActivityCheckedAt: checkedAt,
           storeId: targetStoreId
         }
@@ -430,9 +532,17 @@ router.get("", async (req, res) => {
     let accounts = await prisma.adAccount.findMany();
 
     if (!isDemoDataEnabled()) {
-      accounts = accounts.filter(acc => 
-        !["act_439281903", "act_583920194", "act_204928103"].includes(acc.fb_account_id)
-      );
+      const activeStores = await prisma.store.findMany({
+        where: {
+          NOT: [
+            { mode: "sandbox" },
+            { name: { in: ["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"] } },
+            { domain: { in: ["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"] } }
+          ]
+        }
+      });
+      const activeStoreIds = new Set(activeStores.map(s => s.id));
+      accounts = accounts.filter(acc => !acc.storeId || activeStoreIds.has(acc.storeId));
     }
 
     const parsedResults = accounts.map((acc: any) => ({

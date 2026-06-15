@@ -225,7 +225,7 @@ export function MetaConfigPage() {
               <div className="p-4 bg-emerald-50/40 border border-emerald-100 rounded-lg text-sm text-slate-700 text-left space-y-2">
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-1.5 text-emerald-800 font-bold">
-                    <span className="w-2, h-2 rounded-full bg-emerald-500 inline-block w-2.5 h-2.5" />
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
                     Meta Access Token 验证成功 (身份确立)
                   </div>
                   <span className="text-xs text-slate-400 font-mono">UID: {testResult.id}</span>
@@ -254,8 +254,25 @@ export function MetaConfigPage() {
                     )}
                   </div>
                 </div>
+
+                {testResult.apiAccessStatus !== 'usable' && testResult.apiError && (
+                  <div className="p-4 bg-rose-50 border border-rose-100 rounded-lg text-sm text-rose-800 text-left space-y-2 mt-3">
+                    <div className="flex items-center gap-1.5 font-bold text-rose-900 leading-snug">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                      Token identity validation successful, but ad account API is currently restricted and cannot sync account data.
+                    </div>
+                    <div className="mt-3 bg-white p-2.5 rounded border border-rose-100 font-mono text-[11px] text-rose-800 space-y-1 block">
+                      <div className="font-bold border-b border-rose-50 pb-1 mb-1 text-rose-900">Original Meta API Error Details：</div>
+                      <div><span className="text-slate-400 font-sans">错误代码 (Code):</span> {testResult.apiError.code}</div>
+                      {testResult.apiError.error_subcode && <div><span className="text-slate-400 font-sans">错误子码 (Subcode):</span> {testResult.apiError.error_subcode}</div>}
+                      {testResult.apiError.type && <div><span className="text-slate-400 font-sans">错误类型 (Type):</span> {testResult.apiError.type}</div>}
+                      <div><span className="text-slate-400 font-sans">错误原因 (Message):</span> {testResult.apiError.message}</div>
+                      {testResult.apiError.fbtrace_id && <div><span className="text-slate-400 font-sans">追踪 ID (fbtrace_id):</span> {testResult.apiError.fbtrace_id}</div>}
+                    </div>
+                  </div>
+                )}
                 
-                {(!testResult.hasAdsRead || !testResult.hasBusinessManagement) && (
+                {testResult.apiAccessStatus === 'usable' && (!testResult.hasAdsRead || !testResult.hasBusinessManagement) && (
                   <div className="p-3 bg-amber-50 rounded border border-amber-200 text-[11px] text-amber-800 mt-2 space-y-1.5 leading-relaxed">
                     <p className="font-bold flex items-center gap-1 text-amber-900">
                       <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
@@ -326,12 +343,12 @@ export function MetaConfigPage() {
           </div>
           <Button 
             onClick={handleManualFetch} 
-            disabled={loadingAccounts || isEditingToken}
+            disabled={loadingAccounts || isEditingToken || testResult?.apiAccessStatus === 'rate_limited' || testResult?.apiAccessStatus === 'blocked'}
             variant="outline"
-            className="h-9 px-3 text-xs"
+            className="h-9 px-3 text-xs disabled:pointer-events-none disabled:opacity-50"
           >
             <RefreshCcw className={`w-3.5 h-3.5 mr-1 ${loadingAccounts ? 'animate-spin' : ''}`} />
-            拉取和更新
+            {(testResult?.apiAccessStatus === 'rate_limited' || testResult?.apiAccessStatus === 'blocked') ? "Retry Later" : "拉取和更新"}
           </Button>
         </CardHeader>
         

@@ -41,6 +41,7 @@ export async function ensureAdAccounts(token: string) {
 
     const activeAccountsSync: any[] = [];
     const concurrentLimit = 5;
+    let isRateLimited = false;
     
     for (let i = 0; i < allAccounts.length; i += concurrentLimit) {
       const chunk = allAccounts.slice(i, i + concurrentLimit);
@@ -51,7 +52,7 @@ export async function ensureAdAccounts(token: string) {
         const apiTimezone = apiAcc.timezone_name;
         
         let isRecent90d = false;
-        if (status === 1) {
+        if (status === 1 && !isRateLimited) {
           try {
             const insightsRes = await axios.get(
               `https://graph.facebook.com/v19.0/${metaAccountId}/insights`,
@@ -90,6 +91,14 @@ export async function ensureAdAccounts(token: string) {
             }
           } catch (err: any) {
             console.warn(`[Ensure AdAccounts] Warning checking delivery for ${metaAccountId}:`, err.response?.data?.error?.message || err.message);
+            const errMsg = String(err.response?.data?.error?.message || err.message).toLowerCase();
+            const errCode = err.response?.data?.error?.code;
+            const errSubcode = err.response?.data?.error?.error_subcode;
+            if (errCode === 17 || errCode === 32 || errCode === 613 || errSubcode === 2446079 || 
+                errMsg.includes("rate limit") || errMsg.includes("too many calls")) {
+              isRateLimited = true;
+              console.warn(`[Ensure AdAccounts Rate Limit Detected] Rate limit is exceeded. Enabling fallback for active status checks of remaining accounts.`);
+            }
           }
         }
   
@@ -99,7 +108,8 @@ export async function ensureAdAccounts(token: string) {
           currency: apiCurrency,
           timezone: apiTimezone,
           status: status,
-          isActive: isRecent90d
+          isActive: isRecent90d,
+          rateLimitSkipped: isRateLimited
         };
       }));
       activeAccountsSync.push(...results);
@@ -112,10 +122,15 @@ export async function ensureAdAccounts(token: string) {
     for (const acc of activeAccountsSync) {
       const statusStr = acc.status != null ? String(acc.status) : null;
       let targetStoreId: number | null = null;
+      let lastRecentActivity = false;
       
       const existingAdAccount = await prisma.adAccount.findUnique({
         where: { fb_account_id: acc.id }
       });
+      if (existingAdAccount) {
+        lastRecentActivity = existingAdAccount.recentActivity90d;
+      }
+
       const mapping = await prisma.accountMapping.findFirst({
         where: { fbAccountId: acc.id }
       });
@@ -128,6 +143,8 @@ export async function ensureAdAccounts(token: string) {
         targetStoreId = null; // explicitly unmapped
       }
 
+      const finalIsActive = acc.rateLimitSkipped ? lastRecentActivity : acc.isActive;
+
       await prisma.adAccount.upsert({
         where: { fb_account_id: acc.id },
         update: { 
@@ -137,7 +154,7 @@ export async function ensureAdAccounts(token: string) {
           timezone: acc.timezone,
           status: statusStr,
           activityStatus: acc.status === 1 ? 1 : 2, 
-          recentActivity90d: acc.isActive,
+          recentActivity90d: finalIsActive,
           lastActivityCheckedAt: checkedAt,
           storeId: targetStoreId
         },
@@ -149,7 +166,7 @@ export async function ensureAdAccounts(token: string) {
           timezone: acc.timezone,
           status: statusStr,
           activityStatus: acc.status === 1 ? 1 : 2, 
-          recentActivity90d: acc.isActive,
+          recentActivity90d: finalIsActive,
           lastActivityCheckedAt: checkedAt,
           storeId: targetStoreId
         }

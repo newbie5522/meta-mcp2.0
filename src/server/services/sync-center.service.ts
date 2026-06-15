@@ -14,6 +14,64 @@ function generateUUID(): string {
   return "sc-" + Math.random().toString(36).substring(2, 15) + "-" + Math.random().toString(36).substring(2, 15);
 }
 
+// Pre-check and ensure parent records exist in database before child insertions to prevent foreign key errors (P2003)
+async function safeEnsureAdAccount(fb_account_id: string): Promise<void> {
+  try {
+    const existing = await prisma.adAccount.findUnique({ where: { fb_account_id } });
+    if (!existing) {
+      await prisma.adAccount.create({
+        data: {
+          fb_account_id,
+          fb_account_name: `Meta Account ${fb_account_id}`,
+          status: "1",
+          activityStatus: 1,
+          recentActivity90d: true
+        }
+      });
+    }
+  } catch (err: any) {
+    console.warn(`[Sync Center] Error ensuring AdAccount placeholder for ${fb_account_id}:`, err.message);
+  }
+}
+
+async function safeEnsureCampaign(id: string, accountId: string): Promise<void> {
+  try {
+    await safeEnsureAdAccount(accountId);
+    const existing = await prisma.campaign.findUnique({ where: { id } });
+    if (!existing) {
+      await prisma.campaign.create({
+        data: {
+          id,
+          accountId,
+          name: `Campaign ${id}`,
+          status: "ACTIVE"
+        }
+      });
+    }
+  } catch (err: any) {
+    console.warn(`[Sync Center] Error ensuring Campaign placeholder for ${id}:`, err.message);
+  }
+}
+
+async function safeEnsureAdSet(id: string, campaignId: string, accountId: string): Promise<void> {
+  try {
+    await safeEnsureCampaign(campaignId, accountId);
+    const existing = await prisma.adSet.findUnique({ where: { id } });
+    if (!existing) {
+      await prisma.adSet.create({
+        data: {
+          id,
+          campaignId,
+          accountId,
+          name: `Ad Set ${id}`
+        }
+      });
+    }
+  } catch (err: any) {
+    console.warn(`[Sync Center] Error ensuring AdSet placeholder for ${id}:`, err.message);
+  }
+}
+
 // Interfaces
 export interface TaskResult {
   recordsFetched: number;
@@ -302,6 +360,7 @@ export class SyncCenter {
             const campaigns = campRes.data?.data || [];
             campaignsTotal += campaigns.length;
             for (const camp of campaigns) {
+              await safeEnsureAdAccount(actId);
               await prisma.campaign.upsert({
                 where: { id: camp.id },
                 update: { accountId: actId, name: camp.name || "Unnamed Campaign", status: camp.status || "ACTIVE" },
@@ -316,6 +375,9 @@ export class SyncCenter {
             const adsets = adsetsRes.data?.data || [];
             adsetsTotal += adsets.length;
             for (const adset of adsets) {
+              if (adset.campaign_id) {
+                await safeEnsureCampaign(String(adset.campaign_id), actId);
+              }
               await prisma.adSet.upsert({
                 where: { id: adset.id },
                 update: { campaignId: adset.campaign_id, accountId: actId, name: adset.name || "Unnamed Ad Set" },
@@ -330,6 +392,9 @@ export class SyncCenter {
             const ads = adsRes.data?.data || [];
             adsTotal += ads.length;
             for (const ad of ads) {
+              if (ad.adset_id && ad.campaign_id) {
+                await safeEnsureAdSet(String(ad.adset_id), String(ad.campaign_id), actId);
+              }
               const creativeId = ad.creative?.id;
               if (creativeId) {
                 const creativeExists = await prisma.adCreative.findUnique({ where: { creativeId } });
