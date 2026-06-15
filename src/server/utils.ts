@@ -469,3 +469,7 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
 
   return syncedRecords;
 }
+
+export function isDemoDataEnabled(): boolean {
+  return process.env.NODE_ENV === "development" && process.env.ENABLE_DEMO_DATA === "true";
+}

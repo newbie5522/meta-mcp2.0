@@ -141,6 +141,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
 
   const allAccountsCount = data.accounts?.length || 0;
   const withSpendCount = data.accounts?.filter(a => (a.spend || 0) > 0).length || 0;
+  const unboundWithSpendCount = data.accounts?.filter(a => !a.isBound && (a.spend || 0) > 0).length || 0;
 
   // Formatting date safely
   const formatTimeStr = (rawVal: any) => {
@@ -185,6 +186,27 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
           </Button>
         </div>
       </div>
+
+      {/* Constant required prompt of mapping and ROAS constraint */}
+      <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-slate-800 text-xs shadow-sm">
+        <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+        <div className="text-left">
+          <span>⚠️ <strong>未绑定店铺但有消耗的广告账户不会计入任何店铺 ROAS，请优先完成映射。</strong></span>
+        </div>
+      </div>
+
+      {/* Dynamic Critical warning panel of mSpend unmapped accounts */}
+      {unboundWithSpendCount > 0 && (
+        <div className="flex items-start gap-3 p-4 bg-rose-50 border border-rose-200 rounded-xl text-slate-800 text-xs shadow-sm">
+          <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+          <div className="space-y-1 text-left">
+            <h5 className="font-bold text-rose-900">映射预警：检测到有未绑定店铺且有消耗的广告账户</h5>
+            <p className="text-rose-700 leading-relaxed">
+              当前有 <strong className="font-mono text-red-700">{unboundWithSpendCount}</strong> 个未映射的有花费账户，请立即完成该等账户与对应系统店铺的关联，避免该部分花费偏移不计入店铺合并 ROAS 面板。
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Warning banner of missing/empty metrics if no accounts have spend */}
       {withSpendCount === 0 && !loading && (
@@ -352,8 +374,15 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                 ) : (
                   filteredAccounts.map((row, index) => {
                     const hasSpend = (row.spend || 0) > 0;
+                    const isUnboundWithSpend = !row.isBound && hasSpend;
                     return (
-                      <TableRow key={row.fb_account_id || index} className="hover:bg-slate-50 border-b group transition-colors">
+                      <TableRow 
+                        key={row.fb_account_id || index} 
+                        className={cn(
+                          "hover:bg-slate-50 border-b group transition-colors",
+                          isUnboundWithSpend && "bg-rose-50/50 hover:bg-rose-100/60 border-l-2 border-l-rose-500"
+                        )}
+                      >
                         <TableCell className="font-medium text-slate-900 overflow-hidden text-ellipsis">
                           <div className="flex flex-col truncate">
                             <span 

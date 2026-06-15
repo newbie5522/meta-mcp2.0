@@ -2,7 +2,7 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
-import { getMetaToken, normalizeMetaAccountId } from "../utils.js";
+import { getMetaToken, normalizeMetaAccountId, isDemoDataEnabled } from "../utils.js";
 import dayjs from "dayjs";
 
 const router = Router();
@@ -147,11 +147,17 @@ router.get("/test-token", async (req, res) => {
 // Endpoint dedicated to retrieving already synced accounts directly from database
 router.get("/db-list", async (req, res) => {
   try {
-    const accounts = await prisma.adAccount.findMany({
+    let accounts = await prisma.adAccount.findMany({
       orderBy: {
         fb_account_name: 'asc'
       }
     });
+
+    if (!isDemoDataEnabled()) {
+      accounts = accounts.filter(acc => 
+        !["act_439281903", "act_583920194", "act_204928103"].includes(acc.fb_account_id)
+      );
+    }
 
     const results = accounts.map((acc: any) => ({
       id: acc.fb_account_id,
@@ -421,7 +427,13 @@ router.get("/active-list", async (req, res) => {
 // Original GET / to return all accounts from DB for standard UI dropdown operations
 router.get("", async (req, res) => {
   try {
-    const accounts = await prisma.adAccount.findMany();
+    let accounts = await prisma.adAccount.findMany();
+
+    if (!isDemoDataEnabled()) {
+      accounts = accounts.filter(acc => 
+        !["act_439281903", "act_583920194", "act_204928103"].includes(acc.fb_account_id)
+      );
+    }
 
     const parsedResults = accounts.map((acc: any) => ({
       id: acc.fb_account_id,

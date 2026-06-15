@@ -388,6 +388,13 @@ export function MetaConfigPage() {
                     正在同步 Meta 广告云端资产，请耐心等候...
                   </TableCell>
                 </TableRow>
+              ) : accounts.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center py-12 text-slate-500">
+                    <Activity className="w-8 h-8 mx-auto mb-2.5 text-slate-300" />
+                    暂无已连接 Meta 广告账户。请完成 Meta Business 授权或手动绑定广告账户。
+                  </TableCell>
+                </TableRow>
               ) : filteredAccounts.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={4} className="text-center py-12 text-slate-400">

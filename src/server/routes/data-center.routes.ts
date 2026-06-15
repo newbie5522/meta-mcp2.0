@@ -7,7 +7,7 @@ import timezone from "dayjs/plugin/timezone.js";
 import { getCreativeIntelligence } from "../services/creative-intelligence.service.js";
 import { getAggregatedCreativeInsights } from "../services/creative-insights.service.js";
 import { syncStoreData } from "../services/store-sync.service.js";
-import { normalizeMetaAccountId } from "../utils.js";
+import { normalizeMetaAccountId, isDemoDataEnabled } from "../utils.js";
 import { getCountryAnalytics } from "../services/country-analytics.service.js";
 
 dayjs.extend(utc);
@@ -28,11 +28,22 @@ router.get("/detail", async (req, res) => {
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
 
     // 1. Fetch available filters
-    const [stores, adAccounts, accountMappings] = await Promise.all([
-      prisma.store.findMany({ select: { id: true, name: true, platform: true } }),
+    let [stores, adAccounts, accountMappings] = await Promise.all([
+      prisma.store.findMany({ select: { id: true, name: true, platform: true, mode: true, domain: true } }),
       prisma.adAccount.findMany({ select: { fb_account_id: true, fb_account_name: true, storeId: true } }),
       prisma.accountMapping.findMany()
     ]);
+
+    if (!isDemoDataEnabled()) {
+      stores = stores.filter(store => 
+        store.mode !== "sandbox" &&
+        !["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"].includes(store.name) &&
+        !["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"].includes(store.domain)
+      );
+      adAccounts = adAccounts.filter(acc => 
+        !["act_439281903", "act_583920194", "act_204928103"].includes(acc.fb_account_id)
+      );
+    }
 
     // 2. Fetch Sync Status / Health Indicators
     const lastSyncLog = await prisma.syncLog.findFirst({
@@ -907,9 +918,17 @@ router.get("/stores", async (req, res) => {
     const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
 
-    const stores = await prisma.store.findMany({
+    let stores = await prisma.store.findMany({
       include: { accounts: true, accountMappings: true }
     });
+
+    if (!isDemoDataEnabled()) {
+      stores = stores.filter(store => 
+        store.mode !== "sandbox" &&
+        !["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"].includes(store.name) &&
+        !["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"].includes(store.domain)
+      );
+    }
 
     const getStoreLocalDateHelper = (order: any, timezoneStr: string | null | undefined): string => {
       if (order.store_local_date) return order.store_local_date;
@@ -1316,7 +1335,7 @@ router.get("/accounts-performance", async (req, res) => {
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
 
     // 1. Fetch performance rows from fact_meta_performance
-    const performanceRows = await prisma.factMetaPerformance.findMany({
+    let performanceRows = await prisma.factMetaPerformance.findMany({
       where: {
         level: "account",
         date: {
@@ -1327,11 +1346,23 @@ router.get("/accounts-performance", async (req, res) => {
     });
 
     // 2. Fetch AdAccount, AccountMapping, Store info
-    const [adAccounts, accountMappings, stores] = await Promise.all([
+    let [adAccounts, accountMappings, stores] = await Promise.all([
       prisma.adAccount.findMany({ include: { store: true } }),
       prisma.accountMapping.findMany({ include: { store: true } }),
       prisma.store.findMany()
     ]);
+
+    if (!isDemoDataEnabled()) {
+      const sandboxAccountIds = ["act_439281903", "act_583920194", "act_204928103"];
+      performanceRows = performanceRows.filter(r => r.account_id && !sandboxAccountIds.includes(normalizeMetaAccountId(r.account_id)));
+      adAccounts = adAccounts.filter(acc => acc.fb_account_id && !sandboxAccountIds.includes(normalizeMetaAccountId(acc.fb_account_id)));
+      accountMappings = accountMappings.filter(m => m.fbAccountId && !sandboxAccountIds.includes(normalizeMetaAccountId(m.fbAccountId)));
+      stores = stores.filter(store => 
+        store.mode !== "sandbox" &&
+        !["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"].includes(store.name) &&
+        !["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"].includes(store.domain)
+      );
+    }
 
     // 3. Setup indexing maps for LEFT JOIN behavior
     const adAccountsMap = new Map<string, any>();
@@ -1450,7 +1481,13 @@ router.get("/accounts-performance", async (req, res) => {
         cpa,
         meta_roas,
         roas: meta_roas,
-        lastSyncedAt: maxSyncedAtSec
+        lastSyncedAt: maxSyncedAtSec,
+        // Requested properties for STEP 12.4 + STEP 12.5
+        accountId: normId,
+        accountName: name,
+        hasSpend: agg.spend > 0,
+        mappingStatus: isBound ? "BOUND" : "UNBOUND",
+        dataSourceExplain: "FactMetaPerformance Joined with AdAccount, AccountMapping, and Store. No AdInsight or DailySummary."
       });
     }
 
@@ -1480,6 +1517,18 @@ router.get("/accounts-performance", async (req, res) => {
 
     const lastSyncTimeVal = maxPerformanceSyncTime || lastSyncLog?.finishedAt || lastSyncLog?.startedAt || null;
 
+    // Calculate requested summary indicators
+    const totalAccounts = results.length;
+    const activeAccounts = results.filter(r => r.recentActivity90d === true || r.activityStatus === 1).length;
+    const spendAccounts = results.filter(r => r.spend > 0).length;
+    const zeroSpendAccounts = results.filter(r => r.spend === 0).length;
+    const boundAccounts = results.filter(r => r.isBound).length;
+    const unboundAccounts = results.filter(r => !r.isBound).length;
+    const unboundSpendAccounts = results.filter(r => !r.isBound && r.spend > 0).length;
+    const totalSpend = results.reduce((acc, r) => acc + r.spend, 0);
+    const unboundSpend = results.filter(r => !r.isBound).reduce((acc, r) => acc + r.spend, 0);
+    const unboundSpendRate = totalSpend > 0 ? unboundSpend / totalSpend : 0;
+
     res.json({
       success: true,
       health: {
@@ -1493,6 +1542,18 @@ router.get("/accounts-performance", async (req, res) => {
         stores,
         adAccounts,
         mappings: accountMappings
+      },
+      summary: {
+        totalAccounts,
+        activeAccounts,
+        spendAccounts,
+        zeroSpendAccounts,
+        boundAccounts,
+        unboundAccounts,
+        unboundSpendAccounts,
+        totalSpend,
+        unboundSpend,
+        unboundSpendRate
       },
       accounts: results,
       dataSourceExplain: {

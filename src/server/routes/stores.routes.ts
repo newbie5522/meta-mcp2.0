@@ -2,16 +2,25 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
-import { getTimezoneOffsetStr } from "../utils.js";
+import { getTimezoneOffsetStr, isDemoDataEnabled } from "../utils.js";
 
 const router = Router();
 const shoplineCache = new Map<string, { data: any; expiry: number }>();
 
 router.get("/", async (req, res) => {
   try {
-    const stores = await prisma.store.findMany({
+    let stores = await prisma.store.findMany({
       include: { accounts: true },
     });
+
+    if (!isDemoDataEnabled()) {
+      stores = stores.filter(store => 
+        store.mode !== "sandbox" &&
+        !["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"].includes(store.name) &&
+        !["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"].includes(store.domain)
+      );
+    }
+
     res.json(stores);
   } catch (error: any) {
     res
@@ -949,6 +958,17 @@ router.get("/:id", async (req, res) => {
     if (!store) {
       return res.status(404).json({ error: "Store not found" });
     }
+
+    if (!isDemoDataEnabled()) {
+      const isSandboxStore = 
+        store.mode === "sandbox" ||
+        ["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"].includes(store.name) ||
+        ["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"].includes(store.domain);
+      if (isSandboxStore) {
+        return res.status(404).json({ error: "Store not found" });
+      }
+    }
+
     res.json(store);
   } catch (error: any) {
     res.status(500).json({ error: "Failed to fetch store" });

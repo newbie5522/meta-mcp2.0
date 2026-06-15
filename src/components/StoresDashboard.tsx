@@ -186,9 +186,9 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-24 text-center">
             <Store className="h-12 w-12 text-gray-300 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-1">暂无店铺</h3>
+            <h3 className="text-lg font-medium text-gray-900 mb-1">暂无已连接店铺</h3>
             <p className="text-sm text-gray-500 mb-4">
-              请添加一个新的店铺以关联广告账户
+              暂无已连接店铺。请添加真实 Shopline / Shoplazza / Shopify API 授权后开始同步。
             </p>
             <Button onClick={() => navigate("/store/new")}>
               <Plus className="h-4 w-4 mr-2" />
