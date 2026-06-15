@@ -46,6 +46,17 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
   const [loadingMsg, setLoadingMsg] = useState<string>("");
   const [report, setReport] = useState<any | null>(null);
 
+  const [showDebugIssues, setShowDebugIssues] = useState<boolean>(false);
+  const [appliedIssues, setAppliedIssues] = useState<Record<string, boolean>>({});
+
+  const toggleIssueApplied = (issueId: string) => {
+    setAppliedIssues(prev => ({
+      ...prev,
+      [issueId]: !prev[issueId]
+    }));
+    toast.success("已更新作业项实施状态");
+  };
+
   // Synchronize menu type selection when prop changes
   useEffect(() => {
     setSelectedType(defaultType);
@@ -88,7 +99,8 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
     { type: "country_analysis", label: "受众国家转化差异", desc: "探照全球投放单价严重出超区", icon: Globe, severity: "warning" },
     { type: "unmapped_spend_risk", label: "漏油失控花费审计", desc: "自检未绑定账号的静默消耗", icon: ShieldAlert, severity: "critical" },
     { type: "token_api_health", label: "Meta API 信道侦测", desc: "探照授权凭证及同步时限", icon: Settings, severity: "healthy" },
-    { type: "data_health_summary", label: "数据底层健康勾稽", desc: "汇总订单对账、像素抓单行一致性", icon: Database, severity: "healthy" }
+    { type: "data_health_summary", label: "数据底层健康勾稽", desc: "汇总订单对账、像素抓单行一致性", icon: Database, severity: "healthy" },
+    { type: "system_rule_diagnostics", label: "规则诊断引擎大盘", desc: "不依赖 AI，一键物理逻辑审计生成 issues", icon: ShieldAlert, severity: "critical" }
   ];
 
   const handleRunDiagnostic = async () => {
@@ -117,16 +129,50 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
         ? selectedAccount 
         : (selectedType === "store_analysis" ? selectedStore : "global");
 
-      const response = await axios.post("/api/ai-analysis/generate", {
-        type: selectedType,
-        entityType: selectedType === "account_analysis" ? "account" : (selectedType === "store_analysis" ? "store" : "system"),
-        entityId,
-        startDate: format(startDate, "yyyy-MM-dd"),
-        endDate: format(endDate, "yyyy-MM-dd")
-      });
+      let response;
+      if (selectedType === "system_rule_diagnostics") {
+        response = await axios.post("/api/diagnostics/issues", {
+          startDate: format(startDate, "yyyy-MM-dd"),
+          endDate: format(endDate, "yyyy-MM-dd"),
+          accountId: selectedAccount !== "all" ? selectedAccount : undefined,
+          storeId: selectedStore ? Number(selectedStore) : undefined,
+          includeDebug: true
+        });
 
-      setReport(response.data.report || response.data);
-      toast.success("🎯 AI 诊断完成！报告已实时渲染并落库归档。");
+        const data = response.data;
+        if (data.success) {
+          setReport({
+            isDiagnosticIssuesReport: true,
+            title: "全链条规则诊断引擎离线质检报告",
+            severity: data.summary.productionCount > 0 ? "critical" : (data.summary.noticeCount > 0 ? "warning" : "healthy"),
+            summary: `【离线规则诊断引擎分析成果 - Offline Rule Engine】\n\n系统已全速解算分析周期为 ${format(startDate, "yyyy-MM-dd")} 至 ${format(endDate, "yyyy-MM-dd")} 的在账财务数据。\n\n检测到当前活跃投放广告账户数：${data.summary.activeAccountCount} 个。\n一键全链物理勾稽审计发现：符合生产安全卡片的主体建议共 ${data.summary.productionCount} 条；底层数据合规性通知与信道健康警告共 ${data.summary.noticeCount} 条；另外过滤拦截了 ${data.summary.debugInvalidCount} 条缺少物理证据或格式不合规的调试日志。`,
+            metrics: {
+              activeAccounts: data.summary.activeAccountCount,
+              productionIssues: data.summary.productionCount,
+              dataHealthNotices: data.summary.noticeCount,
+              debugInvalidItems: data.summary.debugInvalidCount
+            },
+            issues: data.issues,
+            summaryStats: data.summary,
+            dataSourceExplain: "Offline Database Engine (Real Orders & Meta Performances Check)",
+            generatedAt: new Date().toISOString()
+          });
+          toast.success("🎯 离线物理规则诊断引擎：一键质检完成！");
+        } else {
+          toast.error("离线规则诊断失败: " + (data.error || "未知故障"));
+        }
+      } else {
+        response = await axios.post("/api/ai-analysis/generate", {
+          type: selectedType,
+          entityType: selectedType === "account_analysis" ? "account" : (selectedType === "store_analysis" ? "store" : "system"),
+          entityId,
+          startDate: format(startDate, "yyyy-MM-dd"),
+          endDate: format(endDate, "yyyy-MM-dd")
+        });
+
+        setReport(response.data.report || response.data);
+        toast.success("🎯 AI 诊断完成！报告已实时渲染并落库归档。");
+      }
     } catch (err: any) {
       console.error(err);
       toast.error(`诊断失败: ${err.response?.data?.error || err.message}`);
@@ -445,7 +491,147 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
               </div>
 
               {/* Actionable recommendations card board */}
-              {report.recommendations && report.recommendations.length > 0 && (() => {
+              {report.isDiagnosticIssuesReport ? (
+                <div className="space-y-6">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-100 border border-slate-200 rounded-2xl p-4 gap-4">
+                    <div className="flex flex-wrap gap-2">
+                      <span className="text-xs bg-indigo-150 text-indigo-700 font-black px-2.5 py-1 rounded-lg border border-indigo-200">
+                        生产型主力建议 (Production): {report.summaryStats.productionCount} 条
+                      </span>
+                      <span className="text-xs bg-amber-100 text-amber-700 font-black px-2.5 py-1 rounded-lg border border-amber-200">
+                        合规性对账通知 (Notice): {report.summaryStats.noticeCount} 条
+                      </span>
+                      <span className="text-xs bg-slate-200 text-slate-700 font-black px-2.5 py-1 rounded-lg border border-slate-300">
+                        调试与安全拦截 (Debug): {report.summaryStats.debugInvalidCount} 条
+                      </span>
+                    </div>
+                    <div>
+                      <button 
+                        onClick={() => setShowDebugIssues(prev => !prev)}
+                        className="text-xs text-blue-600 hover:text-blue-750 underline font-black shrink-0 font-sans cursor-pointer"
+                      >
+                        {showDebugIssues ? "隐藏" : "展开"} Debug 级别安全拦截层
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {report.issues
+                      .filter((is: any) => showDebugIssues ? true : is.category !== "debug_invalid")
+                      .map((issue: any) => {
+                        const isDone = !!appliedIssues[issue.issueId];
+                        return (
+                          <div 
+                            key={issue.issueId} 
+                            className={`p-5 border bg-white rounded-xl flex flex-col justify-between space-y-4 shadow-sm hover:shadow-md transition-all relative overflow-hidden ${
+                              issue.category === "production_suggestion" 
+                                ? "border-l-[6px] border-l-indigo-600 border-slate-200" 
+                                : (issue.category === "data_health_notice" ? "border-l-[6px] border-l-amber-500 border-slate-200" : "border-l-[6px] border-l-slate-300 border-slate-200")
+                            } ${isDone ? "opacity-60 bg-slate-50/50" : ""}`}
+                          >
+                            {isDone && (
+                              <div className="absolute top-0 right-0 bg-emerald-500 text-white px-2 py-0.5 text-[8px] font-black uppercase font-mono tracking-wider">
+                                已标记实施 / Completed
+                              </div>
+                            )}
+                            <div className="space-y-3">
+                              <div className="flex justify-between items-start gap-2">
+                                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded font-mono ${
+                                  issue.category === "production_suggestion" 
+                                    ? "bg-indigo-50 text-indigo-600 border border-indigo-100" 
+                                    : (issue.category === "data_health_notice" ? "bg-amber-50 text-amber-600 border border-amber-100" : "bg-slate-105 text-slate-500 border border-slate-200")
+                                }`}>
+                                  {issue.category === "production_suggestion" ? "生产型建议 / Production-Sugg" : (issue.category === "data_health_notice" ? "对账健康通知 / Data-Notice" : "拦截审计调试 / Debug-Invalid")}
+                                </span>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100 font-mono">
+                                  {issue.actionVerb} @ {issue.actionTarget}
+                                </span>
+                              </div>
+
+                              <h4 className="text-sm font-black text-slate-900 leading-snug">
+                                {issue.title}
+                              </h4>
+                              <p className="text-xs text-slate-650 font-medium leading-relaxed bg-slate-50/70 p-3 rounded-lg border border-slate-100 font-sans">
+                                {issue.oneLineReason}
+                              </p>
+
+                              {/* Metrics details */}
+                              {issue.evidence?.metrics && (
+                                <div className="bg-indigo-50/20 border border-indigo-100/50 rounded-lg p-2.5 space-y-1.5 text-xs text-slate-600 font-mono">
+                                  <div className="text-[10px] text-slate-450 font-black uppercase tracking-wide">
+                                    物理事实依据 Snapshots:
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-1.5">
+                                    {Object.entries(issue.evidence.metrics)
+                                      .filter(([_, v]) => typeof v === "number" || typeof v === "string")
+                                      .slice(0, 6)
+                                      .map(([k, v]) => {
+                                        let strVal = String(v);
+                                        if (k.toLowerCase().includes("spend") || k.toLowerCase().includes("value") || k.toLowerCase().includes("revenue")) {
+                                          strVal = `$${Number(v).toFixed(0)}`;
+                                        } else if (k.toLowerCase().includes("roas")) {
+                                          strVal = `${Number(v).toFixed(1)}x`;
+                                        } else if (k.toLowerCase().includes("ctr")) {
+                                          strVal = `${Number(v).toFixed(1)}%`;
+                                        } else if (k.toLowerCase().includes("rate")) {
+                                          strVal = `${Number(v).toFixed(0)}%`;
+                                        }
+                                        return (
+                                          <div key={k} className="bg-white/85 p-1.5 rounded border border-indigo-100/10 text-center text-[10px]">
+                                            <p className="text-slate-400 font-semibold truncate leading-tight uppercase text-[9px]">{k}</p>
+                                            <p className="text-slate-800 font-black truncate text-[10px]">{strVal}</p>
+                                          </div>
+                                        );
+                                      })
+                                    }
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Limitations check */}
+                              {issue.limitations && issue.limitations.length > 0 && (
+                                <div className="text-[10px] bg-amber-50 text-amber-700 rounded p-1.5 leading-relaxed flex items-start gap-1 font-sans border border-amber-100">
+                                  <span className="font-bold shrink-0">⚠️ 局限限制:</span>
+                                  <span>{issue.limitations.join(" ")}</span>
+                                </div>
+                              )}
+
+                              {/* Entity references jump lock */}
+                              {issue.entityRefs && issue.entityRefs.length > 0 && (
+                                <div className="flex flex-wrap gap-1 pt-0.5">
+                                  {issue.entityRefs.map((ent: any, i: number) => (
+                                    <div key={i} className="group/btn relative inline-block">
+                                      <button disabled className="px-2 py-1 bg-slate-50 hover:bg-slate-100 text-slate-400 text-[9px] font-bold rounded border border-slate-200 cursor-not-allowed flex items-center gap-1 shrink-0">
+                                        <Lock className="w-3 h-3 text-slate-350" />
+                                        <span>定位 {ent.entityName || ent.entityId} ({ent.entityType})</span>
+                                      </button>
+                                      <span className="absolute bottom-full left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[9px] px-2 py-1 rounded shadow-lg opacity-0 group-hover/btn:opacity-100 transition-opacity duration-150 pointer-events-none whitespace-normal w-36 z-10 text-center mb-1 leading-normal font-sans">
+                                        未开通前端跳转链路，禁止投流泄油。
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex gap-2 pt-2 border-t border-slate-100 select-none font-sans">
+                              <button 
+                                onClick={() => toggleIssueApplied(issue.issueId)}
+                                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                                  isDone 
+                                    ? "bg-slate-200 text-slate-700 hover:bg-slate-250" 
+                                    : "bg-indigo-50 text-indigo-750 hover:bg-indigo-600 hover:text-white"
+                                }`}
+                              >
+                                {isDone ? "恢复为未操作" : "确认人工操作并标记实施"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              ) : report.recommendations && report.recommendations.length > 0 ? (() => {
                 const safeRecs: any[] = [];
                 const filteredDebugRecs: any[] = [];
 
@@ -638,7 +824,7 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
                     )}
                   </div>
                 );
-              })()}
+              })() : null}
             </div>
           )}
         </div>

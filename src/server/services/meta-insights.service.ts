@@ -11,15 +11,18 @@ async function fetchEdges(path: string, params: Record<string, any>, token: stri
   const rows = [];
   let after: string | undefined;
 
+  // Clone the params block to allow dynamic limit pruning locally in pagination loop
+  const activeParams = { ...params };
+
   for (let page = 0; page < maxPages; page++) {
-    let retries = 3;
+    let retries = 5; // Increased retry threshold to support adaptive parameters adjustment safely
     let success = false;
     let lastErr: any = null;
 
     while (retries > 0 && !success) {
       try {
         const res = await axios.get(url, {
-          params: { ...params, access_token: token, after }
+          params: { ...activeParams, access_token: token, after }
         });
         const data = res.data?.data || [];
         rows.push(...data);
@@ -34,9 +37,43 @@ async function fetchEdges(path: string, params: Record<string, any>, token: stri
         const subcode = fbError?.error_subcode;
 
         console.warn(`[Meta API Fetch Warn] Attempt failed for path ${path} (Retries left: ${retries - 1}). Error: [Code ${code}, Subcode ${subcode}] ${msg}`);
+
+        // Mitigation 1: "Please reduce the amount of data you're asking for, then retry your request"
+        const isReduceDataError =
+          code === 1 ||
+          msg.toLowerCase().includes("reduce the amount of data") ||
+          msg.toLowerCase().includes("please reduce") ||
+          msg.toLowerCase().includes("too much data") ||
+          msg.toLowerCase().includes("reduce amount");
+
+        if (isReduceDataError) {
+          const oldLimit = activeParams.limit || 1000;
+          const newLimit = Math.max(100, Math.floor(oldLimit / 4)); // Drop page size to 1/4th (usually 1000 -> 250)
+          console.warn(`[Meta API Fetch] Data aggregation size limit hit. Custom self-healing protocol: reducing pagination limit from ${oldLimit} to ${newLimit} and repeating...`);
+          activeParams.limit = newLimit;
+          await delay(2000);
+          continue; // immediately retry with the newly restricted limit
+        }
+
+        // Mitigation 2: Rate Limiting ("Application request limit reached")
+        const isRateLimitError =
+          code === 4 ||
+          code === 17 ||
+          code === 341 ||
+          subcode === 1504022 ||
+          msg.toLowerCase().includes("request limit reached") ||
+          msg.toLowerCase().includes("rate limit") ||
+          msg.toLowerCase().includes("too many requests");
+
+        if (isRateLimitError) {
+          console.warn(`[Meta API Fetch] Rate limit throttling threshold triggered (Code ${code}, Subcode ${subcode}). Warming up 20 seconds cool-off delay...`);
+          await delay(20000); // polite rate compliance backoff
+          retries--;
+          continue;
+        }
         
         // Wait longer on each retry
-        const waitMs = (4 - retries) * 1500;
+        const waitMs = (6 - retries) * 1500;
         await delay(waitMs);
         retries--;
       }

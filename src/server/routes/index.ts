@@ -11,6 +11,7 @@ import settingsRoutes from "./settings.routes.js";
 import mappingsRoutes from "./mappings.routes.js";
 import monitoringRoutes from "./monitoring.routes.js";
 import aiAnalysisRoutes from "./ai-analysis.routes.js";
+import diagnosticsRoutes from "./diagnostics.routes.js";
 
 import dashboardRoutes from "./dashboard.routes.js";
 import dataCenterRoutes from "./data-center.routes.js";
@@ -24,6 +25,7 @@ routes.use("/users", usersRoutes);
 routes.use("/stores", storesRoutes);
 routes.use("/intelligence", intelligenceRoutes);
 routes.use("/ai-analysis", aiAnalysisRoutes);
+routes.use("/diagnostics", diagnosticsRoutes);
 routes.use("/accounts", accountsRoutes);
 routes.use("/", syncRoutes);
 routes.use("/insights", insightsRoutes);
