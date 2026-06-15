@@ -445,87 +445,200 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
               </div>
 
               {/* Actionable recommendations card board */}
-              {report.recommendations && report.recommendations.length > 0 && (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2">
-                    <Brain className="w-5 h-5 text-blue-600" />
-                    <h3 className="text-sm font-bold text-slate-800">人工确认建议行动方案 / Recommended Actions (Requiring Human Action)</h3>
-                  </div>
+              {report.recommendations && report.recommendations.length > 0 && (() => {
+                const safeRecs: any[] = [];
+                const filteredDebugRecs: any[] = [];
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {report.recommendations.map((rec: any, idx: number) => {
-                      const isExecuted = rec.status === "applied";
-                      const isIgnored = rec.status === "ignored";
+                report.recommendations.forEach((rec: any) => {
+                  let parsedMeta: any = null;
+                  if (rec.metadata) {
+                    try {
+                      parsedMeta = typeof rec.metadata === "string" ? JSON.parse(rec.metadata) : rec.metadata;
+                    } catch (e) {
+                      console.warn("Failed parsing recommendation metadata", e);
+                    }
+                  }
 
-                      return (
-                        <div 
-                          key={idx} 
-                          className={`p-5 border rounded-xl flex flex-col justify-between space-y-4 transition-all bg-white relative overflow-hidden ${
-                            isExecuted ? "border-emerald-200 opacity-80" : isIgnored ? "border-slate-200 opacity-60" : "border-slate-200 hover:border-slate-300"
-                          }`}
-                        >
-                          {/* Banner background status tags */}
-                          {isExecuted && (
-                            <div className="absolute top-0 right-0 bg-emerald-500 text-white px-2 py-0.5 text-[8px] font-black uppercase tracking-wider font-mono">
-                              已标记实施 / Completed
+                  const meta = parsedMeta;
+                  const isTraceable = !!(
+                    meta &&
+                    meta.entityRefs && Array.isArray(meta.entityRefs) && meta.entityRefs.length > 0 &&
+                    meta.evidence &&
+                    meta.sourceTables && Array.isArray(meta.sourceTables) && meta.sourceTables.length > 0 &&
+                    meta.route &&
+                    meta.actionVerb &&
+                    meta.actionTarget &&
+                    meta.generationMode
+                  );
+
+                  // Guard forbidden codes and keywords
+                  const textForScan = `${rec.action} ${rec.rationale} ${meta?.title || ""} ${meta ? JSON.stringify(meta.entityRefs) : ""}`.toLowerCase();
+                  const hasMock = /cr0[1-5]/.test(textForScan);
+                  const hasForbidden = /artificial|manual_intervention|manual_review|manual_adjustment|人工介入|人工审阅|人工调配/.test(textForScan);
+
+                  if (isTraceable && !hasMock && !hasForbidden) {
+                    safeRecs.push({ ...rec, parsedMeta });
+                  } else {
+                    filteredDebugRecs.push({ ...rec, parsedMeta });
+                  }
+                });
+
+                return (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Brain className="w-5 h-5 text-blue-600" />
+                      <h3 className="text-sm font-bold text-slate-800">人工确认建议行动方案 / Recommended Actions (Requiring Human Action)</h3>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {safeRecs.map((rec: any, idx: number) => {
+                        const isExecuted = rec.status === "applied";
+                        const isIgnored = rec.status === "ignored";
+                        const meta = rec.parsedMeta || {};
+
+                        return (
+                          <div 
+                            key={idx} 
+                            className={`p-5 border rounded-xl flex flex-col justify-between space-y-4 transition-all bg-white relative overflow-hidden ${
+                              isExecuted ? "border-emerald-200 opacity-80" : isIgnored ? "border-slate-200 opacity-60" : "border-slate-200 hover:border-slate-300"
+                            }`}
+                          >
+                            {/* Banner background status tags */}
+                            {isExecuted && (
+                              <div className="absolute top-0 right-0 bg-emerald-500 text-white px-2 py-0.5 text-[8px] font-black uppercase tracking-wider font-mono">
+                                已标记实施 / Completed
+                              </div>
+                            )}
+                            {isIgnored && (
+                              <div className="absolute top-0 right-0 bg-slate-400 text-white px-2 py-0.5 text-[8px] font-black uppercase tracking-wider font-mono">
+                                已忽略 / Ignored
+                              </div>
+                            )}
+
+                            <div className="space-y-2">
+                              <div className="flex items-start justify-between">
+                                <span className={`px-2 py-0.5 text-[9px] font-black rounded font-mono ${
+                                  rec.priority === 1 ? "bg-red-50 text-red-600" : (rec.priority === 2 ? "bg-amber-50 text-amber-600" : "bg-blue-50 text-blue-600")
+                                }`}>
+                                  {rec.priority === 1 ? "紧急 / Urgent" : (rec.priority === 2 ? "重要 / High" : "日常 / Medium")}
+                                </span>
+                                <span className="text-[9px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded font-mono font-bold">
+                                  {meta.actionVerb?.toUpperCase()} @ {meta.actionTarget}
+                                </span>
+                              </div>
+
+                              <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600">
+                                {meta.title || rec.action}
+                              </h4>
+                              <p className="text-xs text-slate-500 font-normal leading-relaxed">
+                                {rec.rationale}
+                              </p>
+
+                              {/* Evidence metrics panel */}
+                              {meta.evidence && (
+                                <div className="mt-2 bg-indigo-50/20 border border-indigo-100/60 p-2.5 rounded-lg space-y-1.5">
+                                  <div className="flex items-center gap-1 text-[10px] text-indigo-700 font-bold">
+                                    <Database className="w-3.5 h-3.5" />
+                                    <span>对账事实依据 (Evidence)</span>
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-1 text-center font-mono text-[9px] text-slate-600">
+                                    <div className="bg-white p-1 rounded border border-indigo-100/30">
+                                      <p className="text-slate-400">SPEND</p>
+                                      <p className="font-bold">${Number(meta.evidence.metrics?.spend || 0).toLocaleString()}</p>
+                                    </div>
+                                    <div className="bg-white p-1 rounded border border-indigo-100/30">
+                                      <p className="text-slate-400">ROAS</p>
+                                      <p className="font-bold">{Number(meta.evidence.metrics?.roas || 0).toFixed(2)}x</p>
+                                    </div>
+                                    <div className="bg-white p-1 rounded border border-indigo-100/30">
+                                      <p className="text-slate-400">CPA</p>
+                                      <p className="font-bold">${Number(meta.evidence.metrics?.cpa || 0).toFixed(2)}</p>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Jumps Disabled Tooltip */}
+                              {meta.entityRefs && (
+                                <div className="pt-1 flex items-center gap-1">
+                                  {meta.entityRefs.map((ent: any, i: number) => (
+                                    <div key={i} className="group/btn relative inline-block">
+                                      <button
+                                        disabled
+                                        className="px-2 py-1 bg-slate-50 hover:bg-slate-100 text-slate-300 text-[9px] font-bold rounded border border-slate-200 cursor-not-allowed flex items-center gap-1"
+                                      >
+                                        <Lock className="w-3 h-3" />
+                                        <span>跳转 {ent.entityName || ent.entityId} ({ent.entityType})</span>
+                                      </button>
+                                      <span className="absolute bottom-full left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[9px] px-2 py-1 rounded shadow-lg opacity-0 group-hover/btn:opacity-100 transition-opacity duration-150 pointer-events-none whitespace-normal w-40 z-10 text-center mb-1 leading-normal font-sans">
+                                        暂未接入详情页，无法作为正式建议。
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                          )}
-                          {isIgnored && (
-                            <div className="absolute top-0 right-0 bg-slate-400 text-white px-2 py-0.5 text-[8px] font-black uppercase tracking-wider font-mono">
-                              已忽略 / Ignored
-                            </div>
-                          )}
 
-                          <div className="space-y-2">
-                            <div className="flex items-start justify-between">
-                              <span className={`px-2 py-0.5 text-[9px] font-black rounded font-mono ${
-                                rec.priority === 1 ? "bg-red-50 text-red-600" : (rec.priority === 2 ? "bg-amber-50 text-amber-600" : "bg-blue-50 text-blue-600")
-                              }`}>
-                                {rec.priority === 1 ? "紧急 / Urgent" : (rec.priority === 2 ? "重要 / High" : "日常 / Medium")}
-                              </span>
-                            </div>
+                            {/* Human Action buttons */}
+                            {!isExecuted && !isIgnored && rec.id && (
+                              <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                                <button
+                                  onClick={() => updateSuggestionStatus(rec.id, "applied")}
+                                  className="flex-1 py-1.5 bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-600 text-[11px] font-bold rounded-lg transition-all"
+                                >
+                                  确认标记已实施
+                                </button>
+                                <button
+                                  onClick={() => updateSuggestionStatus(rec.id, "ignored")}
+                                  className="px-2 py-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-600 text-[11px] font-bold rounded-lg transition-all"
+                                >
+                                  忽略
+                                </button>
+                              </div>
+                            )}
 
-                            <h4 className="text-sm font-bold text-slate-900 group-hover:text-blue-600">
-                              {rec.action}
-                            </h4>
-                            <p className="text-xs text-slate-500 font-normal leading-relaxed">
-                              {rec.rationale}
-                            </p>
+                            {/* Fallback mock actions action if DB doesn't have an ID yet */}
+                            {!rec.id && (
+                              <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                                <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                                  <Lock className="w-3 h-3 text-slate-300" />
+                                  <span>在 [建议中心] 对标记此作业</span>
+                                </span>
+                              </div>
+                            )}
                           </div>
+                        );
+                      })}
 
-                          {/* Human Action buttons */}
-                          {!isExecuted && !isIgnored && rec.id && (
-                            <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-                              <button
-                                onClick={() => updateSuggestionStatus(rec.id, "applied")}
-                                className="flex-1 py-1.5 bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-600 text-[11px] font-bold rounded-lg transition-all"
-                              >
-                                确认标记已实施
-                              </button>
-                              <button
-                                onClick={() => updateSuggestionStatus(rec.id, "ignored")}
-                                className="px-2 py-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-600 text-[11px] font-bold rounded-lg transition-all"
-                              >
-                                忽略
-                              </button>
-                            </div>
-                          )}
+                      {safeRecs.length === 0 && (
+                        <div className="col-span-full border border-dashed border-slate-200 rounded-xl p-8 text-center text-slate-400 text-xs">
+                          此项诊断未筛选出符合生产安全及证据完整的闭环作业建议。
+                        </div>
+                      )}
+                    </div>
 
-                          {/* Fallback mock actions action if DB doesn't have an ID yet (offline rule card tags representation) */}
-                          {!rec.id && (
-                            <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-                              <span className="text-[10px] text-slate-400 flex items-center gap-1">
-                                <Lock className="w-3 h-3 text-slate-300" />
-                                <span>在 [建议中心] 对应标记此作业</span>
+                    {/* Collapsible details for filtered out suggestions in the analysis center */}
+                    {filteredDebugRecs.length > 0 && (
+                      <div className="mt-4 bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-2">
+                        <summary className="text-[11px] font-mono font-bold text-slate-500 cursor-pointer list-none select-none flex items-center gap-1.5">
+                          <Settings className="w-3.5 h-3.5" />
+                          <span>开发调试安全过滤拦截记录 (Hidden Filtered out recommendation counts: {filteredDebugRecs.length})</span>
+                        </summary>
+                        <div className="space-y-1 pt-1.5">
+                          {filteredDebugRecs.map((rec: any, idx: number) => (
+                            <div key={idx} className="text-[10px] font-mono text-slate-400 bg-white p-2 rounded border border-slate-150 flex justify-between items-center">
+                              <span>「{rec.action}」-{rec.rationale}</span>
+                              <span className="text-red-500 font-bold shrink-0">
+                                [该建议缺少证据链，已安全隐藏，不参与实际经营决策]
                               </span>
                             </div>
-                          )}
+                          ))}
                         </div>
-                      );
-                    })}
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           )}
         </div>

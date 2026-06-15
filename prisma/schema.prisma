@@ -365,6 +365,7 @@ model AiActionSuggestion {
   priority           Int                @default(3)
   status             String             @default("pending") // "pending" | "accepted" | "rejected" | "done"
   executionChecklist String?
+  metadata           String?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
