@@ -131,4 +131,77 @@ router.post("/suggestions/:id/status", async (req, res) => {
   }
 });
 
+/**
+ * POST /api/intelligence/audit
+ * Supports interactive Store Diagnostic Ask AI from StoreDataDashboard
+ */
+router.post("/audit", async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt) return res.status(400).json({ error: "Prompt is required" });
+
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      // Dynamic elegant offline heuristic parser
+      const storeNameMatch = prompt.match(/店铺 "([^"]+)"/);
+      const storeName = storeNameMatch ? storeNameMatch[1] : "未知店铺";
+
+      const ordersMatch = prompt.match(/系统订单数：(\d+)/);
+      const orders = ordersMatch ? parseInt(ordersMatch[1], 10) : 0;
+
+      const salesMatch = prompt.match(/全渠道销售额：\$([\d\.,]+)/);
+      const sales = salesMatch ? parseFloat(salesMatch[1].replace(/,/g, "")) : 0;
+
+      const adSpendMatch = prompt.match(/广告花费总支出：\$([\d\.,]+)/);
+      const spend = adSpendMatch ? parseFloat(adSpendMatch[1].replace(/,/g, "")) : 0;
+
+      const roasMatch = prompt.match(/真实整店广告 ROAS：([\d\.]+)/);
+      const roas = roasMatch ? parseFloat(roasMatch[1]) : null;
+
+      const unbound = prompt.includes("未绑定") || prompt.includes("未绑定推广广告账号");
+
+      let diagnostic = `📊 **《${storeName}》整店投放经营体检与优化建议短报**\n\n`;
+      diagnostic += `**【ROAS 及经营综合点评】：**\n`;
+
+      if (unbound) {
+        diagnostic += `⚠️ **警告**: 当前店铺**未绑定任何 Meta 推广账号**，无法进行精确的流量 ROI 换算！前端处于纯买量盲跑状态，整店 ROAS 处于归因真空中。建议立刻前往【配置中心】建立 Account-Store 映射，阻断流量浪费。\n\n`;
+      } else if (orders === 0 && sales === 0) {
+        diagnostic += `🌱 **冷启动诊断**: 当前店铺成交订单数与全渠道销售额均为零，处于**冷启动建站对策期**。建议先利用少量核心 SKU 测试高意向受众，不要盲目扩大预算。建立漏斗跟踪，首先跑通首单转化。\n\n`;
+      } else if (roas !== null && roas < 1.5) {
+        diagnostic += `🚨 **高亏损严重警告**: 当前计算得出的真实整店 ROAS 仅为 **${roas.toFixed(2)}x**，低于 1.5 的健康保本水位。利润已被流量成本严重蚕食，正处于越跑越亏状态！建议立刻排查高消低效 Campaign，收止亏损，优化客单价和商品转化。\n\n`;
+      } else if (roas !== null && roas >= 2.5) {
+        diagnostic += `✅ **表现极佳**: 恭喜！当前真实整店 ROAS 为 **${roas.toFixed(2)}x**，表明测款转化极其健康，买量模型工作良好。可在控制 CPM 与频次的前提下，按 20% 节奏梯度递增拓量预算。\n\n`;
+      } else if (roas !== null) {
+        diagnostic += `⚖️ **平衡状态**: 真实整店 ROAS 当前录得 **${roas.toFixed(2)}x**，处于基本保本或微利区间。建议针对漏斗中段（加入购物车、发起结账）进行前端 A/B 测试，提升全店 AOV 以摆脱流量成本拉锯战。\n\n`;
+      }
+
+      diagnostic += `**【落地优化人工作业三条建议】:**\n`;
+      diagnostic += `1. **资产齐套性校验**: 优先确定所有产生消耗的 Facebook 像素与独立站绑定完全，规避对账不归因。\n`;
+      diagnostic += `2. **品控端严防死守**: 调取高单量 SKU 退货数据，防止假爆款退款带来隐形财务亏本。\n`;
+      diagnostic += `3. **离线退避备注**: 当前处于本地离线诊断，配置 Gemini 密匙后可解锁深度 AI 投放策略。`;
+
+      return res.json({ success: true, analysis: diagnostic });
+    }
+
+    const { GoogleGenAI } = await import("@google/genai");
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    const aiRes = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+    });
+
+    res.json({ success: true, analysis: aiRes.text || "未返回分析报告" });
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to perform store AI audit", details: error.message });
+  }
+});
+
 export default router;

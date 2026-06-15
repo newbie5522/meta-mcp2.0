@@ -16,6 +16,7 @@ import { MonitoringDashboard } from './MonitoringDashboard';
 import { SuggestionsDashboard } from './SuggestionsDashboard';
 import { ProductIntelligenceDashboard } from './ProductIntelligenceDashboard';
 import { CountryAnalyticsDashboard } from './CountryAnalyticsDashboard';
+import { AIAnalysisCenter } from './AIAnalysisCenter';
 
 export function StandardPageHeader({ 
   title, 
@@ -207,10 +208,14 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
         return <MonitoringDashboard />;
       case 'sugg-cards':
         return <SuggestionsDashboard />;
+      case 'ai-account':
+        return <AIAnalysisCenter startDate={startDate} endDate={endDate} defaultType="account_analysis" />;
+      case 'ai-store':
+        return <AIAnalysisCenter startDate={startDate} endDate={endDate} defaultType="store_analysis" />;
       case 'ai-product':
-        return <ProductIntelligenceDashboard startDate={startDate} endDate={endDate} />;
+        return <AIAnalysisCenter startDate={startDate} endDate={endDate} defaultType="product_analysis" />;
       case 'ai-country':
-        return <CountryAnalyticsDashboard startDate={startDate} endDate={endDate} />;
+        return <AIAnalysisCenter startDate={startDate} endDate={endDate} defaultType="country_analysis" />;
       default:
         return (
           <div className="p-8 border border-slate-200 rounded-2xl bg-white/50 backdrop-blur-sm border-dashed min-h-[400px] flex flex-col items-center justify-center text-center">
