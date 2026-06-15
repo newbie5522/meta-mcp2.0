@@ -125,7 +125,7 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
         endDate: format(endDate, "yyyy-MM-dd")
       });
 
-      setReport(response.data);
+      setReport(response.data.report || response.data);
       toast.success("🎯 AI 诊断完成！报告已实时渲染并落库归档。");
     } catch (err: any) {
       console.error(err);

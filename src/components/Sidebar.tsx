@@ -34,6 +34,7 @@ export const menuGroups: MenuItem[] = [
     label: 'AI 分析', 
     icon: Brain,
     subs: [
+      { id: 'ai-center', label: 'AI 分析中心' },
       { id: 'ai-account', label: '账户分析' },
       { id: 'ai-store', label: '店铺分析' },
       { id: 'ai-country', label: '国家分析' },

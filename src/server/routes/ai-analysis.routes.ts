@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { AIAnalysisCenterService } from "../services/ai-analysis-center.service.js";
+import { generateAIAnalysis } from "../services/ai-analysis-center.service.js";
 
 const router = Router();
 
@@ -8,7 +8,7 @@ const router = Router();
  * Dynamic systemic AI analysis generator for specific targets and dates
  */
 router.post("/generate", async (req, res) => {
-  const { type, entityType, entityId, startDate, endDate, storeId, accountId } = req.body;
+  const { type, entityType, entityId, startDate, endDate, storeId, accountId, includeRecommendations } = req.body;
 
   if (!type || !entityType || !entityId || !startDate || !endDate) {
     return res.status(400).json({
@@ -17,17 +17,23 @@ router.post("/generate", async (req, res) => {
   }
 
   try {
-    const report = await AIAnalysisCenterService.runAnalysis({
+    const report = await generateAIAnalysis({
       type,
       entityType,
       entityId,
       startDate,
       endDate,
       storeId: storeId ? Number(storeId) : undefined,
-      accountId: accountId ? String(accountId) : undefined
+      accountId: accountId ? String(accountId) : undefined,
+      includeRecommendations: !!includeRecommendations
     });
 
-    res.json(report);
+    res.json({
+      success: true,
+      report,
+      dataSourceExplain: report.dataSourceExplain,
+      limitations: report.limitations
+    });
   } catch (error: any) {
     res.status(500).json({
       error: "Failed to generate AI analysis report",

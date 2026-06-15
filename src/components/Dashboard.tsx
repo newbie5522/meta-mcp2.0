@@ -208,6 +208,8 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
         return <MonitoringDashboard />;
       case 'sugg-cards':
         return <SuggestionsDashboard />;
+      case 'ai-center':
+        return <AIAnalysisCenter startDate={startDate} endDate={endDate} defaultType="data_health_summary" />;
       case 'ai-account':
         return <AIAnalysisCenter startDate={startDate} endDate={endDate} defaultType="account_analysis" />;
       case 'ai-store':
