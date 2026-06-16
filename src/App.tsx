@@ -10,8 +10,8 @@ import { AccountDetailsPage } from './components/AccountDetailsPage';
 import { AICopilotWindow } from './components/AICopilotWindow';
 import { MetaConfigPage } from './components/MetaConfigPage';
 import { AiConfigPage } from './components/AiConfigPage';
-import { TeamConfigPage } from './components/TeamConfigPage';
 import { SyncCenterPage } from './components/SyncCenterPage';
+import { OperatorTeamPlaceholderPage } from './components/team/OperatorTeamPlaceholderPage';
 
 function LoginScreen({ onLogin }: { onLogin: (u: string, p: string) => void }) {
   const [username, setUsername] = useState('');
@@ -98,7 +98,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('data-details');
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     data: true,
-    analysis: true,
+    diagnosis: true,
+    prescription: true,
     creative: true,
     config: true
   });
@@ -159,7 +160,7 @@ export default function App() {
             ) : activeTab === 'ai-config' ? (
               <AiConfigPage />
             ) : activeTab === 'team-config' ? (
-              <TeamConfigPage />
+              <OperatorTeamPlaceholderPage />
             ) : activeTab === 'sync-center' ? (
               <SyncCenterPage />
             ) : (

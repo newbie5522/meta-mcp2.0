@@ -22,31 +22,38 @@ export const menuGroups: MenuItem[] = [
     label: '数据中心', 
     icon: Database,
     subs: [
-      { id: 'data-details', label: '账户表现' },
+      { id: 'data-details', label: '账户数据' },
       { id: 'data-store', label: '店铺订单' },
       { id: 'data-campaigns', label: '广告层级' },
-      { id: 'data-audiences', label: '受众洞察' },
-      { id: 'data-creatives', label: '素材洞察' },
+      { id: 'data-audiences', label: '受众 / 国家' },
+      { id: 'data-creatives', label: '素材数据' },
+      { id: 'data-products', label: '产品数据' },
     ]
   },
   { 
-    id: 'analysis', 
-    label: 'AI 分析', 
+    id: 'diagnosis', 
+    label: 'AI 诊断中心', 
     icon: Brain,
     subs: [
-      { id: 'ai-center', label: 'AI 分析中心' },
-      { id: 'ai-account', label: '账户分析' },
-      { id: 'ai-store', label: '店铺分析' },
-      { id: 'ai-country', label: '国家分析' },
-      { id: 'ai-product', label: '产品分析' },
+      { id: 'diag-overview', label: '诊断总览' },
+      { id: 'diag-ad', label: '广告表现诊断' },
+      { id: 'diag-funnel', label: '转化漏斗诊断' },
+      { id: 'diag-store', label: '店铺经营诊断' },
+      { id: 'diag-creative', label: '素材疲劳诊断' },
+      { id: 'diag-product', label: '产品表现诊断' },
+      { id: 'diag-health', label: '数据健康诊断' },
     ]
   },
   { 
-    id: 'suggestions', 
-    label: '建议中心', 
+    id: 'prescription', 
+    label: '建议处方中心', 
     icon: MessageSquareWarning,
     subs: [
-      { id: 'sugg-cards', label: 'AI 建议卡片' },
+      { id: 'rx-pending', label: '待处理建议' },
+      { id: 'rx-health', label: '数据健康提醒' },
+      { id: 'rx-accepted', label: '已采纳 / 执行中' },
+      { id: 'rx-review', label: '执行回测' },
+      { id: 'rx-debug', label: '规则命中记录' },
     ]
   },
   { 
@@ -55,6 +62,7 @@ export const menuGroups: MenuItem[] = [
     icon: Sparkles,
     subs: [
       { id: 'creative-copilot', label: 'Creative Copilot' },
+      { id: 'creative-variants', label: '素材变体建议' },
     ]
   },
   { 
@@ -66,7 +74,7 @@ export const menuGroups: MenuItem[] = [
       { id: 'meta-config', label: 'Meta 账户配置' },
       { id: 'sync-center', label: '数据同步中心' },
       { id: 'ai-config', label: 'AI 模型设置' },
-      { id: 'team-config', label: '人员团队配置' },
+      { id: 'team-config', label: '运营团队配置' },
     ]
   },
 ];

@@ -18,6 +18,16 @@ import { ProductIntelligenceDashboard } from './ProductIntelligenceDashboard';
 import { CountryAnalyticsDashboard } from './CountryAnalyticsDashboard';
 import { AIAnalysisCenter } from './AIAnalysisCenter';
 
+import { DiagnosisOverviewPage } from './diagnosis/DiagnosisOverviewPage';
+import { AdPerformanceDiagnosisPage } from './diagnosis/AdPerformanceDiagnosisPage';
+import { FunnelDiagnosisPage } from './diagnosis/FunnelDiagnosisPage';
+import { StoreDiagnosisPage } from './diagnosis/StoreDiagnosisPage';
+import { CreativeFatigueDiagnosisPage } from './diagnosis/CreativeFatigueDiagnosisPage';
+import { ProductDiagnosisPage } from './diagnosis/ProductDiagnosisPage';
+import { DataHealthDiagnosisPage } from './diagnosis/DataHealthDiagnosisPage';
+import { PrescriptionCenterPage } from './prescription/PrescriptionCenterPage';
+import { PrescriptionReviewPage } from './prescription/PrescriptionReviewPage';
+
 export function StandardPageHeader({ 
   title, 
   description, 
@@ -204,6 +214,32 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
         return <CampaignStructureDashboard startDate={startDate} endDate={endDate} />;
       case 'data-audiences':
         return <AudienceAnalysisDashboard startDate={startDate} endDate={endDate} />;
+      case 'data-products':
+        return <ProductIntelligenceDashboard startDate={startDate} endDate={endDate} />;
+      case 'diag-overview':
+        return <DiagnosisOverviewPage />;
+      case 'diag-ad':
+        return <AdPerformanceDiagnosisPage />;
+      case 'diag-funnel':
+        return <FunnelDiagnosisPage />;
+      case 'diag-store':
+        return <StoreDiagnosisPage />;
+      case 'diag-creative':
+        return <CreativeFatigueDiagnosisPage />;
+      case 'diag-product':
+        return <ProductDiagnosisPage />;
+      case 'diag-health':
+        return <DataHealthDiagnosisPage />;
+      case 'rx-pending':
+        return <PrescriptionCenterPage currentSubTab="rx-pending" />;
+      case 'rx-health':
+        return <PrescriptionCenterPage currentSubTab="rx-health" />;
+      case 'rx-accepted':
+        return <PrescriptionCenterPage currentSubTab="rx-accepted" />;
+      case 'rx-debug':
+        return <PrescriptionCenterPage currentSubTab="rx-debug" />;
+      case 'rx-review':
+        return <PrescriptionReviewPage />;
       case 'monitoring':
         return <MonitoringDashboard />;
       case 'sugg-cards':
