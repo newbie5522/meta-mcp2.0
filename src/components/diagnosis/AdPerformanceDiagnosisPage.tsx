@@ -1,56 +1,64 @@
 import React from "react";
 import { 
-  DollarSign, 
-  Eye, 
-  MousePointerClick, 
-  ShoppingCart, 
   Sparkles, 
-  TrendingUp, 
-  Activity,
-  Heart
+  Activity, 
+  AlertCircle,
+  Inbox,
+  RefreshCw,
+  TrendingDown,
+  Layers,
+  Award,
+  DollarSign,
+  Calendar
 } from "lucide-react";
+import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
 
 export function AdPerformanceDiagnosisPage() {
-  const diagnosticCards = [
-    {
-      title: "效率 Cost Efficiency",
-      keyMetrics: [
-        { label: "CPM", value: "$12.45", benchmark: "< $15.00", status: "excellent" },
-        { label: "CPC", value: "$0.84", benchmark: "< $1.00", status: "excellent" },
-        { label: "Frequency", value: "2.14", benchmark: "< 3.00", status: "warning" },
-      ],
-      aiConclusion: "展现花费覆盖均衡。Frequency 微升在近期高消耗高频触达下属于正常震荡，但应谨防老素材过度盘剥导致的买不进人。",
-      suggestion: "暂不需高干扰调整；可为高消耗组合适度引入 10%-15% 的国家地理交叉排除受众。"
-    },
-    {
-      title: "吸引力 Attractiveness",
-      keyMetrics: [
-        { label: "Overall CTR", value: "2.15%", benchmark: "> 1.50%", status: "excellent" },
-        { label: "Link CTR", value: "0.98%", benchmark: "> 1.20%", status: "danger" },
-      ],
-      aiConclusion: "创意整体吸引力尚可，但 Link CTR（链接点击率）偏低，表明用户虽停留在广告卡片上，但在文案末尾或引导按钮处的点击动力不足。",
-      suggestion: "重点优化 CTA（Call-To-Action）文案与直达页标题，采用更短、更具号召力的行动词。引入高转化对比色标签。"
-    },
-    {
-      title: "意向度 Intent",
-      keyMetrics: [
-        { label: "ATC Rate", value: "4.85%", benchmark: "> 6.00%", status: "danger" },
-        { label: "IC Rate", value: "32.40%", benchmark: "> 40.00%", status: "danger" },
-      ],
-      aiConclusion: "到达产品落地页后，加购率（ATC）和发起结账率（IC）双重承压。表明买量受众在承接页上遇到了价格阻碍，或者商品信任感（ trust rating ）过低。",
-      suggestion: "优化落地页文案，提高评价可读性，并在前三屏提供醒目的安全结算徽章及真实的退款换货承诺。"
-    },
-    {
-      title: "结局 Outcome",
-      keyMetrics: [
-        { label: "CPA (Meta)", value: "$28.50", benchmark: "$25.00", status: "warning" },
-        { label: "ROAS (Meta)", value: "1.85", benchmark: "2.20", status: "danger" },
-        { label: "Store ROAS", value: "1.42", benchmark: "1.80", status: "danger" },
-      ],
-      aiConclusion: "结局性指标显示买量处于微幅亏损或微利边缘。主因是加购到结账流失漏失。Store ROAS 与 Meta 归因存在背离，反映了有未映射账号消耗或多通道混合转化现象。",
-      suggestion: "在未大幅度扭转漏斗中段的前提下，建议全链降低 10% 预算，避免盲目买量，同步核查未映射消耗。"
-    }
-  ];
+  const {
+    issues,
+    loading,
+    error,
+    refetch,
+    startDate,
+    endDate,
+    setStartDate,
+    setEndDate
+  } = useDiagnosticsIssues();
+
+  // Categorize issues based on the requirements:
+  // 1. ad_delivery 相关 issues
+  const deliveryIssues = issues.filter(
+    (iss) => 
+      iss.issueType === "ad_delivery" || 
+      iss.problemStage === "ad_delivery" ||
+      iss.optimizationArea === "delivery"
+  );
+
+  // 2. creative_attraction 相关 issues
+  const creativeIssues = issues.filter(
+    (iss) => 
+      iss.issueType === "creative_attraction" || 
+      iss.problemStage === "creative_attraction" ||
+      iss.optimizationArea === "creative"
+  );
+
+  // 3. outcome 相关 issues
+  const outcomeIssues = issues.filter(
+    (iss) => 
+      iss.issueType === "outcome" || 
+      iss.problemStage === "outcome" ||
+      iss.optimizationArea === "budget"
+  );
+
+  // 4. budget / audience 相关 issues (or other general optimizationAreas)
+  const budgetAudienceIssues = issues.filter(
+    (iss) => 
+      iss.optimizationArea === "budget" || 
+      iss.optimizationArea === "audience"
+  );
+
+  // Check if we have any relevant ad performance issues at all
+  const hasData = deliveryIssues.length > 0 || creativeIssues.length > 0 || outcomeIssues.length > 0 || budgetAudienceIssues.length > 0;
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
@@ -58,7 +66,7 @@ export function AdPerformanceDiagnosisPage() {
       <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
         <div className="flex">
           <div className="flex-shrink-0">
-            <span className="text-amber-500">⚠️</span>
+            <span className="text-amber-500 font-bold">⚠️</span>
           </div>
           <div className="ml-3">
             <p className="text-xs text-amber-800 font-bold">
@@ -68,67 +76,212 @@ export function AdPerformanceDiagnosisPage() {
         </div>
       </div>
 
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-        <h1 className="text-xl font-bold text-slate-900">广告表现诊断</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          对广告消耗、流量表现、结账流程进行四维解构，快速指出问题卡点与干预手段
-        </p>
-      </div>
+      {/* Title Header with date search */}
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">广告表现诊断</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            读取后端诊断异常，对广告消耗覆盖、创意吸引力、多维定向结局进行实时剖析说明。
+          </p>
+        </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {diagnosticCards.map((card, idx) => (
-          <div key={idx} className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between">
-            {/* Header */}
-            <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-              <h3 className="font-bold text-slate-900 text-base">{card.title}</h3>
-            </div>
-
-            {/* Metrics List */}
-            <div className="p-6 space-y-4 flex-1">
-              <div className="grid grid-cols-3 gap-4 border-b border-slate-100 pb-5">
-                {card.keyMetrics.map((m, mIdx) => (
-                  <div key={mIdx} className="space-y-1">
-                    <span className="text-[11px] text-slate-400 font-medium tracking-wide uppercase">{m.label}</span>
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-lg font-bold text-slate-900">{m.value}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-1">
-                      <span className={`w-2 h-2 rounded-full ${
-                        m.status === "excellent" ? "bg-emerald-500" :
-                        m.status === "warning" ? "bg-amber-500" : "bg-rose-500"
-                      }`} />
-                      <span className="text-[10px] text-slate-450 font-medium">健康线 {m.benchmark}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* AI conclusion */}
-              <div className="space-y-2 mt-4">
-                <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
-                  <Sparkles className="w-3.5 h-3.5 text-blue-600" /> AI 诊断意见
-                </div>
-                <p className="text-xs text-slate-600 leading-relaxed bg-blue-50/40 p-3 rounded-lg border border-blue-50">
-                  {card.aiConclusion}
-                </p>
-              </div>
-            </div>
-
-            {/* Suggestions Footer */}
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 mt-auto">
-              <div className="flex items-start gap-2">
-                <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded font-bold text-[9px] uppercase tracking-wider shrink-0 mt-0.5">
-                  建议对策
-                </span>
-                <p className="text-[11px] text-slate-500 leading-normal">
-                  {card.suggestion}
-                </p>
-              </div>
-            </div>
-
+        {/* Date picking box */}
+        <div className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs text-slate-705">
+          <div className="flex items-center gap-1">
+            <span>开始:</span>
+            <input 
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="px-2 py-1 bg-white border border-slate-200 rounded text-slate-800"
+            />
           </div>
-        ))}
+          <span className="text-slate-300">|</span>
+          <div className="flex items-center gap-1">
+            <span>结束:</span>
+            <input 
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="px-2 py-1 bg-white border border-slate-200 rounded text-slate-800"
+            />
+          </div>
+          <button 
+            onClick={refetch}
+            disabled={loading}
+            className="p-1 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors disabled:bg-blue-300"
+          >
+            <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
+          </button>
+        </div>
       </div>
+
+      {loading ? (
+        <div className="bg-white border border-slate-200 rounded-2xl p-16 text-center space-y-4">
+          <RefreshCw className="w-8 h-8 animate-spin mx-auto text-blue-600" />
+          <h4 className="text-sm font-bold text-slate-700">正在调取广告流诊断结果...</h4>
+        </div>
+      ) : error ? (
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-8 space-y-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-6 h-6 text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <h4 className="text-sm font-bold text-red-900">接口诊断加载失败 (API Error)</h4>
+              <p className="text-xs text-red-700 mt-1">{error.message}</p>
+            </div>
+          </div>
+          <button 
+            onClick={refetch}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> 重新连接并刷新
+          </button>
+        </div>
+      ) : !hasData ? (
+        <div className="bg-white/50 border border-slate-205 border-dashed rounded-2xl p-16 text-center space-y-3">
+          <Inbox className="w-12 h-12 text-slate-400 mx-auto" />
+          <h4 className="text-sm font-bold text-slate-700">暂无诊断数据。当前数据库可能为空，或所选日期范围内没有可诊断记录。</h4>
+          <p className="text-xs text-slate-400">没有任何匹配 [投放 / 创意吸引力 / 优化结局 / 预算定向] 分区的异常诊断处方记录。</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          
+          {/* Section 1: ad_delivery (投放效率) */}
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between">
+            <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+              <h3 className="font-bold text-slate-900 text-sm">加购与投放效率 (Ad Delivery)</h3>
+              <span className="px-2 py-0.5 bg-blue-105 text-blue-800 text-[10px] font-bold rounded">
+                数量: {deliveryIssues.length}
+              </span>
+            </div>
+            
+            <div className="p-5 space-y-4 flex-1">
+              {deliveryIssues.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">在此诊断区间内，未发现 ad_delivery 相关的效率问题。</p>
+              ) : (
+                <div className="space-y-4">
+                  {deliveryIssues.map((iss) => (
+                    <div key={iss.issueId} className="p-3.5 rounded-lg border border-slate-100 bg-slate-50/40 space-y-2">
+                       <div className="flex items-center justify-between">
+                         <span className="text-[10px] font-mono text-slate-420 font-bold uppercase">{iss.issueId}</span>
+                         <span className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase ${
+                           iss.severity === "critical" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"
+                         }`}>
+                           {iss.severity}
+                         </span>
+                       </div>
+                       <h4 className="text-xs font-bold text-slate-905">{iss.title}</h4>
+                       <div className="text-xs text-slate-600 bg-white p-2.5 rounded border border-slate-100 italic">
+                         <strong>诊断分析: </strong>{iss.diagnosisReason || iss.oneLineReason}
+                       </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Section 2: creative_attraction (创意吸引力) */}
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between">
+            <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+              <h3 className="font-bold text-slate-900 text-sm">创意吸引力 (Creative Attraction)</h3>
+              <span className="px-2 py-0.5 bg-purple-105 text-purple-800 text-[10px] font-bold rounded">
+                数量: {creativeIssues.length}
+              </span>
+            </div>
+            
+            <div className="p-5 space-y-4 flex-1">
+              {creativeIssues.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">在此诊断区间内，未发现 creative_attraction 相关的素材疲劳或流量漏减问题。</p>
+              ) : (
+                <div className="space-y-4">
+                  {creativeIssues.map((iss) => (
+                    <div key={iss.issueId} className="p-3.5 rounded-lg border border-slate-100 bg-slate-50/40 space-y-2">
+                       <div className="flex items-center justify-between">
+                         <span className="text-[10px] font-mono text-slate-420 font-bold uppercase">{iss.issueId}</span>
+                         <span className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase bg-purple-100 text-purple-800`}>
+                           {iss.severity}
+                         </span>
+                       </div>
+                       <h4 className="text-xs font-bold text-slate-905">{iss.title}</h4>
+                       <div className="text-xs text-slate-600 bg-white p-2.5 rounded border border-slate-100 italic">
+                         <strong>诊断分析: </strong>{iss.diagnosisReason || iss.oneLineReason}
+                       </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Section 3: outcome (大结局归因/低ROAS) */}
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between">
+            <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+              <h3 className="font-bold text-slate-900 text-sm">购买结局与效果归因 (Outcome Benchmarking)</h3>
+              <span className="px-2 py-0.5 bg-emerald-105 text-emerald-800 text-[10px] font-bold rounded">
+                数量: {outcomeIssues.length}
+              </span>
+            </div>
+            
+            <div className="p-5 space-y-4 flex-1">
+              {outcomeIssues.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">在此诊断区间内，未发现 outcome 相关的宏观转化预警。</p>
+              ) : (
+                <div className="space-y-4">
+                  {outcomeIssues.map((iss) => (
+                    <div key={iss.issueId} className="p-3.5 rounded-lg border border-slate-100 bg-slate-50/40 space-y-2">
+                       <div className="flex items-center justify-between">
+                         <span className="text-[10px] font-mono text-slate-420 font-bold uppercase">{iss.issueId}</span>
+                         <span className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase bg-emerald-100 text-emerald-800`}>
+                           {iss.severity}
+                         </span>
+                       </div>
+                       <h4 className="text-xs font-bold text-slate-905">{iss.title}</h4>
+                       <div className="text-xs text-slate-600 bg-white p-2.5 rounded border border-slate-100 italic">
+                         <strong>诊断分析: </strong>{iss.diagnosisReason || iss.oneLineReason}
+                       </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Section 4: budget / audience (预算区域与受众定向) */}
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between">
+            <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+              <h3 className="font-bold text-slate-900 text-sm">预算控制与定向优化 (Budget & Audience Direction)</h3>
+              <span className="px-2 py-0.5 bg-amber-105 text-amber-800 text-[10px] font-bold rounded">
+                数量: {budgetAudienceIssues.length}
+              </span>
+            </div>
+            
+            <div className="p-5 space-y-4 flex-1">
+              {budgetAudienceIssues.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">在此诊断区间内，未发现针对 budget 或 audience 相关的专项对策建议。</p>
+              ) : (
+                <div className="space-y-4">
+                  {budgetAudienceIssues.map((iss) => (
+                    <div key={iss.issueId} className="p-3.5 rounded-lg border border-slate-100 bg-slate-50/40 space-y-2">
+                       <div className="flex items-center justify-between">
+                         <span className="text-[10px] font-mono text-slate-420 font-bold uppercase">{iss.issueId}</span>
+                         <span className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase bg-amber-100 text-amber-800`}>
+                           {iss.severity}
+                         </span>
+                       </div>
+                       <h4 className="text-xs font-bold text-slate-905">{iss.title}</h4>
+                       <div className="text-xs text-slate-600 bg-white p-2.5 rounded border border-slate-100 italic">
+                         <strong>诊断分析: </strong>{iss.diagnosisReason || iss.oneLineReason}
+                       </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+        </div>
+      )}
     </div>
   );
 }
