@@ -139,8 +139,12 @@ export function validateAIExplainOutput(
     }
   }
 
-  // 10. If missingMetrics / evidence.missingMetrics non-empty logic
-  const missingMetrics = input.issue.evidence?.missingMetrics || input.issue.missingMetrics || [];
+  // 10. If missingMetrics / evidence.missingMetrics / funnelSnapshot.missingMetrics non-empty logic
+  const missingMetrics =
+    input.issue.evidence?.funnelSnapshot?.missingMetrics ||
+    input.issue.evidence?.missingMetrics ||
+    input.issue.missingMetrics ||
+    [];
   if (missingMetrics.length > 0) {
     const hasMissingMetricsInNotes = typedOutput.riskNotes?.some(risk => 
       missingMetrics.some((metric: string) => risk.includes(metric) || risk.includes("指标缺失") || risk.includes("数据不足") || risk.includes("缺失"))
@@ -159,7 +163,27 @@ export function validateAIExplainOutput(
     "已应用到 Meta",
     "自动投放",
     "自动调价",
-    "API 已通知修改"
+    "API 已通知修改",
+    "已调低预算",
+    "已调高预算",
+    "已关闭广告",
+    "已暂停广告",
+    "已开启广告",
+    "已调整页面",
+    "已修改页面",
+    "已完成优化",
+    "已完成投放调整",
+    "已在 Meta 后台",
+    "我已帮你",
+    "我已经帮你",
+    "已为您关闭",
+    "已为您暂停",
+    "已为您调整",
+    "已为您修改",
+    "系统已自动",
+    "模型已自动",
+    "AI 已自动",
+    "AI已经自动"
   ];
 
   // Utility to scan a text for banned words
