@@ -163,12 +163,12 @@ export function SuggestionsDashboard() {
       meta.generationMode
     );
 
-    // Scan for mock/sample terms
+    // Scan for demo/sample terms
     const textToScan = `${card.action} ${card.rationale} ${meta?.title || ""} ${meta ? JSON.stringify(meta.entityRefs) : ""}`.toLowerCase();
-    const hasMockCodes = /cr0[1-5]/.test(textToScan);
+    const hasDemoCodes = /variant_[1-5]/.test(textToScan);
     const hasForbiddenKeywords = /artificial|manual_intervention|manual_review|manual_adjustment|人工介入|人工审阅|人工调配/.test(textToScan);
 
-    if (isTraceable && !hasMockCodes && !hasForbiddenKeywords) {
+    if (isTraceable && !hasDemoCodes && !hasForbiddenKeywords) {
       safeCards.push(card);
     } else {
       hiddenDebugCards.push(card);

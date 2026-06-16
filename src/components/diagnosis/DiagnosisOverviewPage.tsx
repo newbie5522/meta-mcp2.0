@@ -16,6 +16,20 @@ import {
 export function DiagnosisOverviewPage() {
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
+      {/* Disclaimer Banner */}
+      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
+        <div className="flex">
+          <div className="flex-shrink-0">
+            <span className="text-amber-500">⚠️</span>
+          </div>
+          <div className="ml-3">
+            <p className="text-xs text-amber-800 font-bold">
+              当前页面为 UI 骨架占位示例，展示数据为占位示例，不代表真实店铺或广告账户表现。下一阶段将接入 /api/diagnostics/issues。
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Introduction Banner */}
       <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-indigo-800 rounded-2xl p-8 text-white shadow-lg relative overflow-hidden">
         <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 w-64 h-64 bg-white/5 rounded-full blur-2xl" />
@@ -199,7 +213,7 @@ export function DiagnosisOverviewPage() {
                   <span className="text-xs text-slate-500">数据健康</span>
                 </div>
                 <h4 className="text-xs font-bold text-slate-900">
-                  绑定未映射高消耗账户 act_unknown
+                  绑定未映射高消耗账户 act_placeholder
                 </h4>
                 <p className="text-[11px] text-slate-500 leading-relaxed">
                   检测到有未绑定的消费账户，建议立即前往配置中心关联到对应独立站。

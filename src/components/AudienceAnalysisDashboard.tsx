@@ -667,12 +667,12 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                     const rowSpendRatio = totalSpend > 0 ? (row.spend / totalSpend) * 100 : 0;
                     const rowPurchaseRatio = totalPurchases > 0 ? (row.purchases / totalPurchases) * 100 : 0;
                     const suggestion = getSuggestionAction(row);
-                    const rowKey = `${row.dimensionType || activeTab}-${row.dimensionValue || "unknown"}-${row.lastSyncedAt || ""}`;
+                    const rowKey = `${row.dimensionType || activeTab}-${row.dimensionValue || "unspecified"}-${row.lastSyncedAt || ""}`;
                     
                     return (
                       <TableRow key={rowKey} className="hover:bg-slate-50/80 border-b">
                         <TableCell className="font-extrabold text-slate-800 whitespace-nowrap pr-4">
-                          {row.dimensionValue || "unknown"}
+                          {row.dimensionValue || "unspecified"}
                         </TableCell>
                         <TableCell className="text-right font-bold text-slate-900 font-mono">
                           ${row.spend.toFixed(2)}

@@ -46,6 +46,20 @@ export function ProductDiagnosisPage() {
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
+      {/* Disclaimer Banner */}
+      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
+        <div className="flex">
+          <div className="flex-shrink-0">
+            <span className="text-amber-500">⚠️</span>
+          </div>
+          <div className="ml-3">
+            <p className="text-xs text-amber-800 font-bold">
+              当前页面为 UI 骨架占位示例，展示数据为占位示例，不代表真实店铺或广告账户表现。下一阶段将接入 /api/diagnostics/issues。
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
         <h1 className="text-xl font-bold text-slate-900">产品表现诊断</h1>
         <p className="text-sm text-slate-500">

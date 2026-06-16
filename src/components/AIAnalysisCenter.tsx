@@ -783,7 +783,7 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
                               </div>
                             )}
 
-                            {/* Fallback mock actions action if DB doesn't have an ID yet */}
+                            {/* Fallback default actions action if DB doesn't have an ID yet */}
                             {!rec.id && (
                               <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
                                 <span className="text-[10px] text-slate-400 flex items-center gap-1">

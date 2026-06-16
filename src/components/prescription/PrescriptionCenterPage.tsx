@@ -140,6 +140,20 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
+      {/* Disclaimer Banner */}
+      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
+        <div className="flex">
+          <div className="flex-shrink-0">
+            <span className="text-amber-500">⚠️</span>
+          </div>
+          <div className="ml-3">
+            <p className="text-xs text-amber-800 font-bold">
+              当前建议卡片为 UI 占位示例，不代表真实 AI 诊断结果。下一阶段将接入后端 /api/diagnostics/issues 接口。
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <h1 className="text-xl font-bold text-slate-900">建议处方中心</h1>
         <p className="text-sm text-slate-500 mt-1">

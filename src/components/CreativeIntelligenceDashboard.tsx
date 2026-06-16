@@ -755,8 +755,8 @@ export function CreativeIntelligenceDashboard({
     }
   };
 
-  const generateMockThumbnail = (creativeId: string, type: string) => {
-    const mockUrl = `https://business.facebook.com/adsmanager/manage/ads?act=all&selected_creative_ids=${creativeId}`;
+  const generateDirectThumbnail = (creativeId: string, type: string) => {
+    const directUrl = `https://business.facebook.com/adsmanager/manage/ads?act=all&selected_creative_ids=${creativeId}`;
     return (
       <div className="w-full rounded-lg bg-slate-50 border border-slate-200 p-4 transition-all hover:border-meta-blue hover:bg-slate-100 flex flex-col justify-between gap-3 text-slate-800 shadow-sm relative group cursor-pointer">
         <div className="flex justify-between items-start gap-2 border-b border-slate-200 pb-2">
@@ -771,7 +771,7 @@ export function CreativeIntelligenceDashboard({
         <div className="space-y-1">
           <p className="text-[10px] text-slate-500 leading-tight font-medium">外部素材源直达链接：</p>
           <a
-            href={mockUrl}
+            href={directUrl}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => {
@@ -779,7 +779,7 @@ export function CreativeIntelligenceDashboard({
             }}
             className="text-[11px] font-mono text-meta-blue underline hover:text-blue-700 font-bold break-all block"
           >
-            {mockUrl}
+            {directUrl}
           </a>
         </div>
         
@@ -1710,7 +1710,7 @@ export function CreativeIntelligenceDashboard({
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1">
                   <Maximize2 className="w-3.5 h-3.5 text-slate-500" /> 格式直达规格
                 </p>
-                {generateMockThumbnail(selectedPreviewCreative.id, selectedPreviewCreative.type)}
+                {generateDirectThumbnail(selectedPreviewCreative.id, selectedPreviewCreative.type)}
                 
                 <div className="grid grid-cols-2 gap-2 text-center text-xs mt-3 bg-slate-50 p-2.5 rounded-lg border border-slate-150 font-mono">
                   <div>
