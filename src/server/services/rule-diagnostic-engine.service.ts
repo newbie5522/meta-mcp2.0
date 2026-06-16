@@ -42,6 +42,55 @@ export interface UniformIssue {
   manualSelected?: boolean;
   activeInLast30Days?: boolean;
   urgent?: boolean;
+
+  // Added P1 funnel and classification fields
+  problemStage?:
+    | "ad_delivery"
+    | "creative_attraction"
+    | "landing_page_arrival"
+    | "product_page_intent"
+    | "cart_to_checkout"
+    | "checkout_payment"
+    | "outcome"
+    | "data_health"
+    | null;
+
+  optimizationArea?:
+    | "budget"
+    | "audience"
+    | "creative"
+    | "landing_page_speed"
+    | "product_page"
+    | "pricing"
+    | "trust"
+    | "cart"
+    | "checkout"
+    | "payment"
+    | "retargeting"
+    | "tracking"
+    | "mapping"
+    | "data_sync"
+    | null;
+
+  funnelStage?:
+    | "impression_to_click"
+    | "click_to_landing_page"
+    | "landing_page_to_add_to_cart"
+    | "add_to_cart_to_checkout"
+    | "checkout_to_purchase"
+    | "meta_to_store_reconciliation"
+    | "not_applicable"
+    | null;
+
+  diagnosisReason?: string | null;
+  suggestedActions?: string[];
+  validationMetrics?: string[];
+  priorityScore?: number;
+  confidenceScore?: number;
+  impactScore?: number;
+  urgencyScore?: number;
+  ownerUserId?: string | null;
+  ownerUserName?: string | null;
 }
 
 // Approved list of legal action verbs
@@ -75,18 +124,46 @@ const PROHIBITED_ENTITIES = [
 ];
 
 export function sanitizeIssueForbiddenWords(issue: UniformIssue): UniformIssue {
-  const serialized = JSON.stringify(issue);
-  let updatedStr = serialized;
-  updatedStr = updatedStr
-    .replace(/cr01/gi, "vid_01")
-    .replace(/cr02/gi, "vid_02")
-    .replace(/cr03/gi, "vid_03")
-    .replace(/free_text/gi, "custom_field")
-    .replace(/unknown/gi, "standard");
-  return JSON.parse(updatedStr);
+  // P0 correction: Disable replacement/whitewashing behavior completely!
+  return issue;
 }
 
 export function validateIssueEligibility(issue: any): any {
+  const badWords = [
+    "unknown",
+    "free_text",
+    "cr01",
+    "cr02",
+    "cr03",
+    "mock",
+    "demo",
+    "sample",
+    "sandbox",
+    "fake"
+  ];
+
+  const checkStringContainsBadWord = (str: string) => {
+    const lower = str.toLowerCase();
+    return badWords.some(bad => lower.includes(bad));
+  };
+
+  // P0 verification: Ensure illegal items are fully quarantined to debug_invalid and never whitewashed.
+  let hasForbiddenWord = false;
+  if (issue.issueId && checkStringContainsBadWord(issue.issueId)) hasForbiddenWord = true;
+  if (issue.entityId && checkStringContainsBadWord(issue.entityId)) hasForbiddenWord = true;
+  if (issue.entityName && checkStringContainsBadWord(issue.entityName)) hasForbiddenWord = true;
+  if (issue.actionTarget && checkStringContainsBadWord(issue.actionTarget)) hasForbiddenWord = true;
+  if (issue.route && checkStringContainsBadWord(issue.route)) hasForbiddenWord = true;
+  if (issue.evidence) {
+    const evidenceStr = JSON.stringify(issue.evidence);
+    if (checkStringContainsBadWord(evidenceStr)) hasForbiddenWord = true;
+  }
+
+  if (hasForbiddenWord) {
+    issue.category = "debug_invalid";
+    return issue;
+  }
+
   const isIdProhibited = PROHIBITED_ENTITIES.some(bad => 
     (issue.entityId || "").toLowerCase().includes(bad) || 
     (issue.entityName || "").toLowerCase().includes(bad)
@@ -120,7 +197,7 @@ export function validateIssueEligibility(issue: any): any {
         issue.issueType.includes("pipeline") || 
         issue.issueType.includes("unmapped");
         
-      if (isDataHealthRelated && issue.entityId && !issue.entityId.toLowerCase().includes("unknown")) {
+      if (isDataHealthRelated && issue.entityId) {
         issue.category = "data_health_notice";
       } else {
         issue.category = "debug_invalid";
@@ -131,6 +208,301 @@ export function validateIssueEligibility(issue: any): any {
       issue.category = "debug_invalid";
     }
   }
+
+  return issue;
+}
+
+// P1 basic scoring helper functions (non-AI pure logic)
+export function calculateImpactScore(issue: any): number {
+  const evidence = issue.evidence || {};
+  const metrics = evidence.metrics || {};
+  const spend = Number(metrics.spend || metrics.boundAccountSpend || 0);
+  const clicks = Number(metrics.clicks || 0);
+  const revenue = Number(metrics.storeRevenue || metrics.purchaseValue || 0);
+
+  let score = 0.2; // default base impact
+
+  if (spend > 500) score += 0.4;
+  else if (spend > 100) score += 0.2;
+  else if (spend > 50) score += 0.1;
+
+  if (revenue > 2000) score += 0.3;
+  else if (revenue > 500) score += 0.15;
+
+  if (clicks > 500) score += 0.1;
+  else if (clicks > 100) score += 0.05;
+
+  return Math.min(1.0, Math.max(0.01, score));
+}
+
+export function calculateConfidenceScore(issue: any): number {
+  const evidence = issue.evidence || {};
+  const metrics = evidence.metrics || {};
+  const spend = Number(metrics.spend || metrics.boundAccountSpend || 0);
+  const clicks = Number(metrics.clicks || 0);
+  const funnelSnapshot = evidence.funnelSnapshot || {};
+  const missingMetrics = funnelSnapshot.missingMetrics || [];
+
+  let score = 0.8; // base confidence
+
+  if (missingMetrics.length > 0) {
+    score -= missingMetrics.length * 0.1;
+  }
+
+  if (spend > 0 && spend < 50) {
+    score -= 0.2;
+  }
+  if (clicks > 0 && clicks < 20) {
+    score -= 0.1;
+  }
+
+  if (issue.issueType === "route_missing_notice") {
+    score = 0.5;
+  }
+
+  return Math.min(1.0, Math.max(0.1, score));
+}
+
+export function calculateUrgencyScore(issue: any): number {
+  const severity = issue.severity;
+  const issueType = issue.issueType;
+  const evidence = issue.evidence || {};
+  const metrics = evidence.metrics || {};
+  const spend = Number(metrics.spend || metrics.boundAccountSpend || 0);
+
+  let score = 0.3; // base urgency
+
+  if (severity === "critical") {
+    score += 0.4;
+  } else if (severity === "warning") {
+    score += 0.2;
+  }
+
+  if (issueType === "meta_token_status") {
+    score += 0.3;
+  }
+  if (issueType === "high_spend_no_purchase" || issueType === "high_spend_low_roas") {
+    if (spend > 150) {
+      score += 0.2;
+    }
+  }
+
+  return Math.min(1.0, Math.max(0.1, score));
+}
+
+export function calculatePriorityScore(issue: any): number {
+  const impact = calculateImpactScore(issue);
+  const confidence = calculateConfidenceScore(issue);
+  const urgency = calculateUrgencyScore(issue);
+
+  const rawScore = Math.round(impact * confidence * urgency * 100);
+  return Math.min(100, Math.max(1, rawScore));
+}
+
+// P1 Funnel Snapshot builder helper (strict zero-mock, actual metrics)
+export function buildFunnelSnapshot(
+  impressions: number | null,
+  linkClicks: number | null,
+  landingPageViews: number | null,
+  addToCart: number | null,
+  initiateCheckout: number | null,
+  metaPurchase: number | null,
+  storeOrders: number | null,
+  storeRevenue: number | null,
+  spend: number | null
+) {
+  const missingMetrics: string[] = [];
+  if (impressions === null) missingMetrics.push("impressions");
+  if (linkClicks === null) missingMetrics.push("linkClicks");
+  if (landingPageViews === null) missingMetrics.push("landingPageViews");
+  if (addToCart === null) missingMetrics.push("addToCart");
+  if (initiateCheckout === null) missingMetrics.push("initiateCheckout");
+  if (metaPurchase === null) missingMetrics.push("metaPurchase");
+  if (storeOrders === null) missingMetrics.push("storeOrders");
+  if (storeRevenue === null) missingMetrics.push("storeRevenue");
+
+  const linkCtr = (impressions && impressions > 0 && linkClicks !== null) ? linkClicks / impressions : null;
+  const arrivalRate = (linkClicks && linkClicks > 0 && landingPageViews !== null) ? landingPageViews / linkClicks : null;
+  const atcRate = (landingPageViews && landingPageViews > 0 && addToCart !== null) ? addToCart / landingPageViews : null;
+  const icRate = (addToCart && addToCart > 0 && initiateCheckout !== null) ? initiateCheckout / addToCart : null;
+  const purchaseRate = (initiateCheckout && initiateCheckout > 0 && metaPurchase !== null) ? metaPurchase / initiateCheckout : null;
+  
+  const cartAbandonmentRate = (addToCart && addToCart > 0 && initiateCheckout !== null) ? 1 - (initiateCheckout / addToCart) : null;
+  const checkoutAbandonmentRate = (initiateCheckout && initiateCheckout > 0 && metaPurchase !== null) ? 1 - (metaPurchase / initiateCheckout) : null;
+  
+  const metaStoreOrderGap = (metaPurchase && metaPurchase > 0 && storeOrders !== null) ? (storeOrders - metaPurchase) / metaPurchase : null;
+  const storeRoas = (spend && spend > 0 && storeRevenue !== null) ? storeRevenue / spend : null;
+
+  return {
+    impressions,
+    linkClicks,
+    landingPageViews,
+    addToCart,
+    initiateCheckout,
+    metaPurchase,
+    storeOrders,
+    storeRevenue,
+    linkCtr,
+    arrivalRate,
+    atcRate,
+    icRate,
+    purchaseRate,
+    cartAbandonmentRate,
+    checkoutAbandonmentRate,
+    metaStoreOrderGap,
+    storeRoas,
+    missingMetrics
+  };
+}
+
+// P1 Dynamic Field Enricher
+export function enrichIssueFields(issue: any): any {
+  if (!issue.evidence) {
+    issue.evidence = {};
+  }
+  if (!issue.evidence.funnelSnapshot) {
+    issue.evidence.funnelSnapshot = buildFunnelSnapshot(
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    );
+  }
+
+  issue.problemStage = issue.problemStage || null;
+  issue.optimizationArea = issue.optimizationArea || null;
+  issue.funnelStage = issue.funnelStage || "not_applicable";
+  issue.diagnosisReason = issue.oneLineReason || "";
+  issue.suggestedActions = issue.suggestedActions || [];
+  issue.validationMetrics = issue.validationMetrics || [];
+  issue.ownerUserId = null;
+  issue.ownerUserName = null;
+
+  const type = issue.issueType;
+
+  if (type === "high_spend_low_roas" || type === "store_roas_drop" || type === "low_roas_creative") {
+    issue.problemStage = "outcome";
+    issue.optimizationArea = "budget";
+    issue.funnelStage = "not_applicable";
+    issue.suggestedActions = [
+      "降低预算或暂停高消耗广告组/素材",
+      "检查高消耗素材的创意吸引力",
+      "检查国家受众是否有亏损严重的偏差",
+      "核对 Store ROAS 评估最终效益"
+    ];
+    issue.validationMetrics = ["ROAS", "CPA", "Store ROAS", "spend"];
+  } 
+  else if (type === "high_spend_no_purchase") {
+    issue.problemStage = "checkout_payment";
+    issue.optimizationArea = "budget";
+    issue.funnelStage = "checkout_to_purchase";
+    issue.suggestedActions = [
+      "暂停或降低该级别预算",
+      "检查支付链路是否有报错、耗时过长或阻碍",
+      "检查像素回传（Pixel/CAPI）配置是否合规",
+      "检查落地页及商品页的价格和结算跳转"
+    ];
+    issue.validationMetrics = ["Purchase", "CPA", "IC Rate", "Store Orders"];
+  } 
+  else if (type === "high_clicks_low_purchase" || type === "high_ctr_low_purchase_creative") {
+    issue.problemStage = "product_page_intent";
+    issue.optimizationArea = "product_page";
+    issue.funnelStage = "landing_page_to_add_to_cart";
+    issue.suggestedActions = [
+      "针对产品落地页首屏内容进行排版与加载速度优化",
+      "增加更有说服力的用户评价或信任背书",
+      "优化价格锚点与折扣信息，提升加购意向",
+      "检查广告素材的文案/承诺与落地页内容是否一致"
+    ];
+    issue.validationMetrics = ["ATC Rate", "IC Rate", "Purchase Rate", "Store Orders"];
+  } 
+  else if (type === "unmapped_spend_account" || type === "unmapped_spend_notice" || type === "unmapped_spend_risk") {
+    issue.problemStage = "data_health";
+    issue.optimizationArea = "mapping";
+    issue.funnelStage = "not_applicable";
+    issue.suggestedActions = [
+      "前往店铺账户映射页面，绑定该广告账户到对应的独立站店铺",
+      "检查 AccountMapping 配置表是否正确同步",
+      "重新运行对账服务以正确计算 Store ROAS"
+    ];
+    issue.validationMetrics = ["unmappedSpend", "Store ROAS", "AccountMapping 完整度"];
+  } 
+  else if (type === "country_high_spend_low_roas") {
+    issue.problemStage = "ad_delivery";
+    issue.optimizationArea = "audience";
+    issue.funnelStage = "impression_to_click";
+    
+    if (!issue.limitations.includes("当前为 Meta 受众国家表现，不代表真实订单国家销售。")) {
+      issue.limitations.push("当前为 Meta 受众国家表现，不代表真实订单国家销售。");
+    }
+    
+    issue.suggestedActions = [
+      "降低该国家的买量预算或排除受众",
+      "单独建立广告组针对该地区进行观察和冷启动",
+      "等待后台订单国家销售数据补齐，核算最终 ROI"
+    ];
+    issue.validationMetrics = ["Country ROAS", "CPC", "CPM", "Purchases"];
+  } 
+  else if (
+    type === "product_attribution_missing" || 
+    type === "order_country_missing" || 
+    type === "sync_delay_notice" || 
+    type === "meta_token_status" ||
+    type === "route_missing_notice" ||
+    type === "country_data_insufficient" ||
+    type === "product_data_missing"
+  ) {
+    issue.problemStage = "data_health";
+    issue.funnelStage = "not_applicable";
+    issue.category = "data_health_notice";
+    
+    if (type === "product_attribution_missing") {
+      issue.optimizationArea = "tracking";
+      issue.suggestedActions = ["调查单品像素归因直连通道", "核对单品配置与全站订单对账规则"];
+      issue.validationMetrics = ["Product Attribution Consistency"];
+    } else if (type === "order_country_missing") {
+      issue.optimizationArea = "tracking";
+      issue.suggestedActions = ["补齐 Order 表中的 ISO 国家物理字段", "排查同步信道中的地址解析逻辑"];
+      issue.validationMetrics = ["Country Code Fill Rate"];
+    } else if (type === "sync_delay_notice") {
+      issue.optimizationArea = "data_sync";
+      issue.suggestedActions = ["检查后台同步服务（SyncTask / SyncLog）运行状态", "排查 Meta Graph API 与独立站 API 是否耗尽限频"];
+      issue.validationMetrics = ["Data Lag Hours"];
+    } else if (type === "meta_token_status") {
+      issue.optimizationArea = "data_sync";
+      issue.suggestedActions = ["前往 Meta 配置项更新合法的长期/永久访问 Token键值", "手动运行 Token 测试接口验证健康度"];
+      issue.validationMetrics = ["Token Status Valid"];
+    } else {
+      issue.optimizationArea = "mapping";
+      issue.suggestedActions = ["持续观察账户映射或路由状态", "核查后端数据库路由是否健全"];
+      issue.validationMetrics = ["Integrity Status"];
+    }
+  }
+  else {
+    if (issue.category === "production_suggestion") {
+      issue.problemStage = "ad_delivery";
+      issue.optimizationArea = "creative";
+      issue.funnelStage = "impression_to_click";
+      issue.suggestedActions = ["观察创意后续表现", "进行受众或预算微调"];
+      issue.validationMetrics = ["spend", "ROAS"];
+    } else {
+      issue.problemStage = "data_health";
+      issue.optimizationArea = "mapping";
+      issue.funnelStage = "not_applicable";
+      issue.suggestedActions = ["排查底层事实表之间的关联性"];
+      issue.validationMetrics = ["Consistency Score"];
+    }
+  }
+
+  issue.impactScore = calculateImpactScore(issue);
+  issue.confidenceScore = calculateConfidenceScore(issue);
+  issue.urgencyScore = calculateUrgencyScore(issue);
+  issue.priorityScore = calculatePriorityScore(issue);
 
   return issue;
 }
@@ -189,10 +561,47 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
     const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
     const roas = spend > 0 ? purchaseValue / spend : 0;
 
+    // Fetch addToCart and initiateCheckout from AdInsight for exact accountId
+    const accountInsights = await prisma.adInsight.findMany({
+      where: {
+        accountId: accountId,
+        date: { gte: startDate, lte: endDate }
+      }
+    });
+    const addToCart = accountInsights.reduce((sum, r) => sum + (r.addToCart || 0), 0);
+    const initiateCheckout = accountInsights.reduce((sum, r) => sum + (r.initiateCheckout || 0), 0);
+    const landingPageViews = null;
+
+    let storeOrders: number | null = null;
+    let storeRevenue: number | null = null;
+    if (acc.storeId) {
+      const storeOrdersRecords = await prisma.order.findMany({
+        where: {
+          storeId: acc.storeId,
+          createdAt: { gte: parseISO(startDate), lte: parseISO(endDate) }
+        }
+      });
+      storeOrders = storeOrdersRecords.length;
+      storeRevenue = storeOrdersRecords.reduce((sum, o) => sum + (o.revenue || 0), 0);
+    }
+
+    const funnelSnapshot = buildFunnelSnapshot(
+      impressions || null,
+      clicks || null,
+      landingPageViews,
+      addToCart || null,
+      initiateCheckout || null,
+      purchases || null,
+      storeOrders,
+      storeRevenue,
+      spend || null
+    );
+
     const baseEvidence = {
       primarySource: "FactMetaPerformance",
-      supportingSources: ["AdAccount", "AccountMapping"],
+      supportingSources: ["AdAccount", "AccountMapping", "AdInsight"],
       dateRange: `${startDate} 至 ${endDate}`,
+      funnelSnapshot,
       metrics: {
         spend,
         impressions,
@@ -368,6 +777,8 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
 
     const spend = perfRecords.reduce((sum, r) => sum + (r.spend || 0), 0);
     const metaPurchases = perfRecords.reduce((sum, r) => sum + (r.purchases || 0), 0);
+    const impressions = perfRecords.reduce((sum, r) => sum + (r.impressions || 0), 0);
+    const clicks = perfRecords.reduce((sum, r) => sum + (r.clicks || 0), 0);
 
     const totalOrders = orders.length;
     const storeProfit = orders.reduce((sum, o) => sum + (o.profit || 0), 0);
@@ -375,10 +786,34 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
     const refundOrders = orders.filter(o => o.refunded).length;
     const refundRate = totalOrders > 0 ? (refundOrders / totalOrders) * 100 : 0;
 
+    // Fetch addToCart and initiateCheckout from AdInsight for exact boundAccountIds
+    const storeInsights = await prisma.adInsight.findMany({
+      where: {
+        accountId: { in: boundAccountIds },
+        date: { gte: startDate, lte: endDate }
+      }
+    });
+    const addToCart = storeInsights.reduce((sum, r) => sum + (r.addToCart || 0), 0);
+    const initiateCheckout = storeInsights.reduce((sum, r) => sum + (r.initiateCheckout || 0), 0);
+    const landingPageViews = null;
+
+    const funnelSnapshot = buildFunnelSnapshot(
+      impressions || null,
+      clicks || null,
+      landingPageViews,
+      addToCart || null,
+      initiateCheckout || null,
+      metaPurchases || null,
+      totalOrders,
+      storeRevenue,
+      spend || null
+    );
+
     const baseEvidence = {
       primarySource: "Order",
-      supportingSources: ["Store", "AccountMapping", "FactMetaPerformance"],
+      supportingSources: ["Store", "AccountMapping", "FactMetaPerformance", "AdInsight"],
       dateRange: `${startDate} 至 ${endDate}`,
+      funnelSnapshot,
       metrics: {
         spend,
         boundAccountSpend: spend,
@@ -1210,7 +1645,8 @@ export async function generateDiagnosticIssues(params: any): Promise<{
       ...dataHealthIssues
     ];
 
-    const sanitizedAll = rawAll.map(issue => sanitizeIssueForbiddenWords(issue));
+    const enrichedAll = rawAll.map(issue => enrichIssueFields(issue));
+    const sanitizedAll = enrichedAll.map(issue => sanitizeIssueForbiddenWords(issue));
     const validatedAll = sanitizedAll.map(issue => validateIssueEligibility(issue));
 
     let productionCount = 0;
