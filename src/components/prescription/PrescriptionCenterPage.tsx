@@ -12,7 +12,8 @@ import {
   AlertCircle,
   EyeOff,
   User,
-  Database
+  Database,
+  X
 } from "lucide-react";
 import { useSuggestionStatus } from "./useSuggestionStatus";
 import { SuggestionActionPanel } from "./SuggestionActionPanel";
@@ -57,14 +58,105 @@ interface UniformIssue {
 }
 
 function getLocalDateString(offsetDays = 0) {
-  const d = new Date();
-  d.setDate(d.getDate() - d.getDay() - offsetDays); // safer baseline or standard offset
   const today = new Date();
   today.setDate(today.getDate() - offsetDays);
   const year = today.getFullYear();
   const month = String(today.getMonth() + 1).padStart(2, "0");
   const day = String(today.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function NonConfirmedActionPanel({
+  issue,
+  statusDetail,
+  onUpdateStatus
+}: {
+  issue: UniformIssue;
+  statusDetail: { status: string; ignoreReason?: string };
+  onUpdateStatus: (status: "ignored", extra?: any) => void;
+}) {
+  const [showIgnoreInput, setShowIgnoreInput] = useState(false);
+  const [ignoreReason, setIgnoreReason] = useState(statusDetail.ignoreReason || "");
+
+  const handleIgnoreSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ignoreReason.trim()) {
+      alert("请填写忽略原因");
+      return;
+    }
+    onUpdateStatus("ignored", { ignoreReason });
+    setShowIgnoreInput(false);
+  };
+
+  return (
+    <div className="border-t border-slate-100 pt-4 mt-2 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-400 font-medium">当前流转状态:</span>
+          {statusDetail.status === "ignored" ? (
+            <span className="px-2 py-0.5 bg-red-50 border border-red-250 text-red-800 text-xs font-bold rounded">
+              已忽略
+            </span>
+          ) : (
+            <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold rounded">
+              待处理
+            </span>
+          )}
+        </div>
+
+        {statusDetail.status === "ignored" && statusDetail.ignoreReason && (
+          <div className="text-xs bg-red-50 text-red-800 px-3 py-1 rounded-md border border-red-100 font-medium flex-1 max-w-sm break-words">
+            <strong>忽略原因:</strong> {statusDetail.ignoreReason}
+          </div>
+        )}
+      </div>
+
+      {!showIgnoreInput ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {statusDetail.status !== "ignored" && (
+            <button
+              onClick={() => setShowIgnoreInput(true)}
+              className="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all bg-slate-100 hover:bg-red-50 hover:text-red-700 text-slate-700 border border-slate-200"
+            >
+              <X className="w-3.5 h-3.5" /> 忽略
+            </button>
+          )}
+          <span className="text-xs font-medium text-red-505 bg-red-50 px-2.5 py-1 rounded-md border border-red-100 flex items-center gap-1">
+            <AlertCircle className="w-3.5 h-3.5" /> 该建议缺少人工确认标记，已阻止执行
+          </span>
+        </div>
+      ) : (
+        <form onSubmit={handleIgnoreSubmit} className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-2">
+          <label className="block text-[11px] font-bold text-slate-700">请填写忽略原因 (必填):</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              required
+              placeholder="例如：策略不合 / 待核对后再行处理..."
+              value={ignoreReason}
+              onChange={(e) => setIgnoreReason(e.target.value)}
+              className="flex-1 px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-red-500 text-slate-800"
+            />
+            <div className="flex gap-1 shrink-0">
+              <button
+                type="submit"
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-md"
+              >
+                确定
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowIgnoreInput(false)}
+                className="px-2 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-md border"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
+    </div>
+  );
 }
 
 export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: string }) {
@@ -262,8 +354,8 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
               <RefreshCw className="w-6 h-6 animate-spin" />
             </div>
             <div>
-              <h4 className="text-sm font-bold text-slate-700">正在生成全新离线诊断数据...</h4>
-              <p className="text-xs text-slate-400 mt-1">正在跑底层的 Meta 分析及独立站漏斗监控规则流...</p>
+              <h4 className="text-sm font-bold text-slate-700">正在加载离线规则诊断结果...</h4>
+              <p className="text-xs text-slate-400 mt-1">正在请求 /api/diagnostics/issues 并读取规则诊断结果...</p>
             </div>
           </div>
         ) : error ? (
@@ -370,9 +462,15 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
                         {getSeverityLabel(item.severity)}
                       </span>
                       {item.category === "production_suggestion" && (
-                        <span className="px-2 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-bold rounded border border-purple-200">
-                          需要人工确认及执行 (humanConfirmationRequired: true)
-                        </span>
+                        item.humanConfirmationRequired === true ? (
+                          <span className="px-2 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-bold rounded border border-purple-200">
+                            需要人工确认及执行
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 bg-red-100 text-red-800 text-[10px] font-bold rounded border border-red-200">
+                            该建议缺少人工确认标记，已阻止执行
+                          </span>
+                        )
                       )}
                     </div>
                     <h3 className="font-bold text-slate-900 text-sm mt-1">{item.title}</h3>
@@ -492,11 +590,19 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
                 </div>
 
                 {/* Suggestion Action panel & Status flows */}
-                <SuggestionActionPanel 
-                  issue={item} 
-                  statusDetail={statusDetail} 
-                  onUpdateStatus={(status, extra) => updateStatus(item.issueId, status, extra)}
-                />
+                {item.category === "production_suggestion" && item.humanConfirmationRequired !== true ? (
+                  <NonConfirmedActionPanel 
+                    issue={item} 
+                    statusDetail={statusDetail} 
+                    onUpdateStatus={(status, extra) => updateStatus(item.issueId, status, extra)}
+                  />
+                ) : (
+                  <SuggestionActionPanel 
+                    issue={item} 
+                    statusDetail={statusDetail} 
+                    onUpdateStatus={(status, extra) => updateStatus(item.issueId, status, extra)}
+                  />
+                )}
 
               </div>
             );
