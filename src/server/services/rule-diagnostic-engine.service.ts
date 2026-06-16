@@ -118,9 +118,9 @@ const PROHIBITED_ENTITIES = [
   "cyber_recon",
   "mock",
   "demo",
-  "test",
   "sample",
-  "sandbox"
+  "sandbox",
+  "fake"
 ];
 
 export function sanitizeIssueForbiddenWords(issue: UniformIssue): UniformIssue {
@@ -309,7 +309,8 @@ export function buildFunnelSnapshot(
   metaPurchase: number | null,
   storeOrders: number | null,
   storeRevenue: number | null,
-  spend: number | null
+  spend: number | null,
+  notes?: string
 ) {
   const missingMetrics: string[] = [];
   if (impressions === null) missingMetrics.push("impressions");
@@ -330,7 +331,10 @@ export function buildFunnelSnapshot(
   const cartAbandonmentRate = (addToCart && addToCart > 0 && initiateCheckout !== null) ? 1 - (initiateCheckout / addToCart) : null;
   const checkoutAbandonmentRate = (initiateCheckout && initiateCheckout > 0 && metaPurchase !== null) ? 1 - (metaPurchase / initiateCheckout) : null;
   
-  const metaStoreOrderGap = (metaPurchase && metaPurchase > 0 && storeOrders !== null) ? (storeOrders - metaPurchase) / metaPurchase : null;
+  const metaStoreOrderGap =
+    metaPurchase && metaPurchase > 0 && storeOrders !== null
+      ? Math.abs(storeOrders - metaPurchase) / metaPurchase
+      : null;
   const storeRoas = (spend && spend > 0 && storeRevenue !== null) ? storeRevenue / spend : null;
 
   return {
@@ -351,7 +355,8 @@ export function buildFunnelSnapshot(
     checkoutAbandonmentRate,
     metaStoreOrderGap,
     storeRoas,
-    missingMetrics
+    missingMetrics,
+    notes: notes || null
   };
 }
 
@@ -585,6 +590,7 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
       storeRevenue = storeOrdersRecords.reduce((sum, o) => sum + (o.revenue || 0), 0);
     }
 
+    const funnelSnapshotNotes = "当前 linkClicks 暂使用 FactMetaPerformance.clicks 代替；若后续补充真实 link_clicks，应切换为真实 Link Click。当前缺少 Landing Page View 字段，暂无法计算点击到落地页到达率。";
     const funnelSnapshot = buildFunnelSnapshot(
       impressions || null,
       clicks || null,
@@ -594,13 +600,19 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
       purchases || null,
       storeOrders,
       storeRevenue,
-      spend || null
+      spend || null,
+      funnelSnapshotNotes
     );
 
     const baseEvidence = {
       primarySource: "FactMetaPerformance",
       supportingSources: ["AdAccount", "AccountMapping", "AdInsight"],
       dateRange: `${startDate} 至 ${endDate}`,
+      limitations: [
+        "当前 linkClicks 暂使用 FactMetaPerformance.clicks 代替；若后续补充真实 link_clicks，应切换为真实 Link Click。",
+        "当前缺少 Landing Page View 字段，暂无法计算点击到落地页到达率。",
+        "AdInsight 仅作为 ATC / IC 漏斗事件补充来源，不作为 spend / ROAS / purchases 主事实源。"
+      ],
       funnelSnapshot,
       metrics: {
         spend,
@@ -797,6 +809,7 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
     const initiateCheckout = storeInsights.reduce((sum, r) => sum + (r.initiateCheckout || 0), 0);
     const landingPageViews = null;
 
+    const funnelSnapshotNotes = "当前 linkClicks 暂使用 FactMetaPerformance.clicks 代替；若后续补充真实 link_clicks，应切换为真实 Link Click。当前缺少 Landing Page View 字段，暂无法计算点击到落地页到达率。";
     const funnelSnapshot = buildFunnelSnapshot(
       impressions || null,
       clicks || null,
@@ -806,13 +819,19 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
       metaPurchases || null,
       totalOrders,
       storeRevenue,
-      spend || null
+      spend || null,
+      funnelSnapshotNotes
     );
 
     const baseEvidence = {
       primarySource: "Order",
       supportingSources: ["Store", "AccountMapping", "FactMetaPerformance", "AdInsight"],
       dateRange: `${startDate} 至 ${endDate}`,
+      limitations: [
+        "当前 linkClicks 暂使用 FactMetaPerformance.clicks 代替；若后续补充真实 link_clicks，应切换为真实 Link Click。",
+        "当前缺少 Landing Page View 字段，暂无法计算点击到落地页到达率。",
+        "AdInsight 仅作为 ATC / IC 漏斗事件补充来源，不作为 spend / ROAS / purchases 主事实源。"
+      ],
       funnelSnapshot,
       metrics: {
         spend,
