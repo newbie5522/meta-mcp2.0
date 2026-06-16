@@ -9,15 +9,16 @@ const router = Router();
 router.get("/accounts", async (req, res) => {
   try {
     const { refresh } = req.query;
-    const token = await getMetaToken();
-    if (!token) {
-      return res.status(400).json({ error: "Meta Token 未配置" });
-    }
+    const token = await getMetaToken().catch(() => null);
 
-    // 1. Fetch persistent cache or refresh if requested
+    // 1. Fetch persistent cache
     let cachedAccounts = await prisma.metaAccountMonitoring.findMany();
+
+    if (refresh === "true" && !token) {
+      return res.status(400).json({ error: "Meta Token 未配置，无法主动刷新实时 API 数据。" });
+    }
     
-    if (refresh === "true" || cachedAccounts.length === 0) {
+    if (token && (refresh === "true" || cachedAccounts.length === 0)) {
       console.log("🔄 Refreshing Meta Account Monitoring data from API...");
       const accountsRes = await axios.get(`https://graph.facebook.com/v22.0/me/adaccounts`, {
         params: {
