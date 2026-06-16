@@ -14,6 +14,8 @@ import {
   User,
   Database
 } from "lucide-react";
+import { useSuggestionStatus } from "./useSuggestionStatus";
+import { SuggestionActionPanel } from "./SuggestionActionPanel";
 
 interface UniformIssue {
   issueId: string;
@@ -70,6 +72,9 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
   const [startDate, setStartDate] = useState<string>(() => getLocalDateString(29));
   const [endDate, setEndDate] = useState<string>(() => getLocalDateString(0));
   
+  // Local storage statuses hook
+  const { statusMap, updateStatus, getStatusDetail } = useSuggestionStatus();
+
   // States for API call
   const [issues, setIssues] = useState<UniformIssue[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
@@ -123,29 +128,48 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
     fetchIssues();
   }, [startDate, endDate]);
 
-  const pendingIssuesCount = issues.filter(r => r.category === "production_suggestion").length;
+  const pendingIssuesCount = issues.filter(r => {
+    const s = getStatusDetail(r.issueId).status;
+    return r.category === "production_suggestion" && (s === "pending" || !s);
+  }).length;
+
   const healthIssuesCount = issues.filter(r => r.category === "data_health_notice").length;
+
+  const acceptedIssuesCount = issues.filter(r => {
+    const s = getStatusDetail(r.issueId).status;
+    return ["accepted", "in_progress", "executed"].includes(s);
+  }).length;
+
   const debugIssuesCount = issues.filter(r => r.category === "debug_invalid").length;
 
   const tabsConfig = [
     { id: "rx-pending", label: "待处理建议", badge: pendingIssuesCount },
     { id: "rx-health", label: "数据健康提醒", badge: healthIssuesCount },
-    { id: "rx-accepted", label: "已采纳 / 执行中", badge: 0 },
+    { id: "rx-accepted", label: "已采纳 / 执行中", badge: acceptedIssuesCount },
     { id: "rx-debug", label: "规则命中记录", badge: debugIssuesCount }
   ];
 
   // Helper to filter items for current tab
   const getFilteredIssues = () => {
     if (activeSubTab === "rx-pending") {
-      return issues.filter(r => r.category === "production_suggestion");
+      return issues.filter(r => {
+        const s = getStatusDetail(r.issueId).status;
+        return r.category === "production_suggestion" && (s === "pending" || !s);
+      });
     }
     if (activeSubTab === "rx-health") {
       return issues.filter(r => r.category === "data_health_notice");
     }
+    if (activeSubTab === "rx-accepted") {
+      return issues.filter(r => {
+        const s = getStatusDetail(r.issueId).status;
+        return ["accepted", "in_progress", "executed"].includes(s);
+      });
+    }
     if (activeSubTab === "rx-debug") {
       return issues.filter(r => r.category === "debug_invalid");
     }
-    return []; // rx-accepted gives empty list
+    return [];
   };
 
   const filteredIssues = getFilteredIssues();
@@ -160,7 +184,7 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
           </div>
           <div className="ml-3">
             <p className="text-xs text-amber-800 font-bold">
-              当前页面已接入离线规则诊断引擎。若数据库为空，将不会展示演示建议。后续 STEP 13-D-Lite 将接入采纳、执行和回测状态。
+              当前页面已接入离线规则诊断引擎并成功连接 [STEP 13-D-Lite] 处方流转与回测机制。
             </p>
           </div>
         </div>
@@ -170,7 +194,7 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
         <div>
           <h1 className="text-xl font-bold text-slate-900">建议处方中心</h1>
           <p className="text-sm text-slate-500 mt-1">
-            整合规则诊断引擎产生的预警结果，一键提炼建议动作、责任机制与预期成效率回溯。
+            整合规则诊断引擎产生的预警结果，进行本地采纳、忽略、执行中与已执行流转。
           </p>
         </div>
 
@@ -220,7 +244,7 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
           >
             <div className="flex items-center gap-2 m-0">
               {item.label}
-              {item.badge > 0 && (
+              {item.badge >= 0 && (
                 <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-blue-100 text-blue-800 font-bold">
                   {item.badge}
                 </span>
@@ -264,14 +288,6 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
                 <RefreshCw className="w-3.5 h-3.5" /> 重新连接并刷新
               </button>
             </div>
-          </div>
-        ) : activeSubTab === "rx-accepted" ? (
-          <div className="bg-white/50 border border-slate-200 border-dashed rounded-2xl p-16 text-center space-y-3">
-            <div className="w-12 h-12 bg-slate-100 text-slate-400 rounded-xl flex items-center justify-center mx-auto">
-              <CheckCircle2 className="w-6 h-6 text-slate-400" />
-            </div>
-            <h4 className="text-sm font-bold text-slate-700">执行状态流转将在 STEP 13-D-Lite 接入。</h4>
-            <p className="text-xs text-slate-405">当前阶段暂未开始流转诊断卡片的状态机，请在下一功能节点验证。</p>
           </div>
         ) : filteredIssues.length === 0 ? (
           <div className="bg-white/50 border border-slate-200 border-dashed rounded-2xl p-16 text-center space-y-3">
@@ -331,11 +347,13 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
                 );
               }
               return (
-                <span className="flex items-center gap-1 bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] text-slate-700 font-extrabold rounded">
-                  规则命中记录 (无效建议)
+                <span className="flex items-center gap-1 bg-slate-105 border border-slate-205 px-2 py-0.5 text-[10px] text-slate-700 font-extrabold rounded">
+                  规则命中记录，不可执行
                 </span>
               );
             };
+
+            const statusDetail = getStatusDetail(item.issueId);
 
             return (
               <div key={item.issueId} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-5 hover:shadow-md transition-shadow relative">
@@ -351,9 +369,9 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
                       <span className={`px-2 py-0.5 text-[10px] font-bold rounded border ${getSeverityColor(item.severity)}`}>
                         {getSeverityLabel(item.severity)}
                       </span>
-                      {item.humanConfirmationRequired && (
+                      {item.category === "production_suggestion" && (
                         <span className="px-2 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-bold rounded border border-purple-200">
-                          需要人工确认及执行
+                          需要人工确认及执行 (humanConfirmationRequired: true)
                         </span>
                       )}
                     </div>
@@ -472,6 +490,13 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
                     )}
                   </div>
                 </div>
+
+                {/* Suggestion Action panel & Status flows */}
+                <SuggestionActionPanel 
+                  issue={item} 
+                  statusDetail={statusDetail} 
+                  onUpdateStatus={(status, extra) => updateStatus(item.issueId, status, extra)}
+                />
 
               </div>
             );

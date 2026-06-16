@@ -7,37 +7,72 @@ import {
   CheckCircle2, 
   DollarSign, 
   ChevronRight, 
-  ArrowUpRight 
+  ArrowUpRight,
+  Clock,
+  Check,
+  X,
+  Play,
+  AlertCircle,
+  Calendar,
+  Layers,
+  Sparkles
 } from "lucide-react";
+import { useSuggestionStatus } from "./useSuggestionStatus";
 
 export function PrescriptionReviewPage() {
-  const backtestHistory = [
-    {
-      id: "BCK-201",
-      prescriptionName: "禁用转化率低于 0.5% 的冷启动国家定向 GB",
-      executionDate: "2026-06-08",
-      controlPeriod: "2026-06-01 至 2026-06-07",
-      testPeriod: "2026-06-08 至 2026-06-14",
-      spendSaved: "$345.00",
-      changeInRoas: "+14.5% (1.52 → 1.74)",
-      resultStatus: "提效显著",
-      eval: "裁撤非主力不饱和定向后，广告算法预算自然向北美、西欧等优质订单腹地收敛，溢出效益明显。"
-    },
-    {
-      id: "BCK-202",
-      prescriptionName: "满 $39.99 免邮主站 Banner 置顶与详情页加载流速精进",
-      executionDate: "2026-05-28",
-      controlPeriod: "2026-05-21 至 2026-05-27",
-      testPeriod: "2026-05-28 至 2026-06-03",
-      spendSaved: "--",
-      changeInRoas: "+22.8% (1.35 → 1.66)",
-      resultStatus: "转化突破",
-      eval: "通过满额免邮打消末端运费跳出心智卡点。测试期加购到结账率止跌上涨了 8.2 个百分点，全站 Store ROAS 顺其拉高。"
+  const { statusMap } = useSuggestionStatus();
+  
+  // Convert our storage status map into an array
+  const statusList = Object.values(statusMap);
+  
+  // Count states
+  const acceptedCount = statusList.filter(s => s.status === "accepted").length;
+  const inProgressCount = statusList.filter(s => s.status === "in_progress").length;
+  const executedCount = statusList.filter(s => s.status === "executed").length;
+  const ignoredCount = statusList.filter(s => s.status === "ignored").length;
+
+  const totalActions = statusList.filter(s => ["accepted", "in_progress", "executed", "ignored"].includes(s.status)).length;
+
+  // Helper to translate backtest review status to human label/color classes
+  const getBacktestBadge = (val: string | undefined) => {
+    switch (val) {
+      case "improved":
+        return (
+          <span className="px-2 py-1 text-[10px] sm:text-xs font-bold rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+            ✅ 改善/提升 (Improved)
+          </span>
+        );
+      case "no_change":
+        return (
+          <span className="px-2 py-1 text-[10px] sm:text-xs font-bold rounded bg-slate-100 text-slate-700 border border-slate-200">
+            📊 无变化 (No Change)
+          </span>
+        );
+      case "worse":
+        return (
+          <span className="px-2 py-1 text-[10px] sm:text-xs font-bold rounded bg-red-100 text-red-800 border border-red-200">
+            ⚠️ 偏离恶化 (Worse)
+          </span>
+        );
+      case "waiting":
+        return (
+          <span className="px-2 py-1 text-[10px] sm:text-xs font-bold rounded bg-blue-100 text-blue-800 border border-blue-200 animate-pulse">
+            ⏳ 等待对账数据 (Waiting)
+          </span>
+        );
+      case "not_started":
+      default:
+        return (
+          <span className="px-2 py-1 text-[10px] sm:text-xs font-bold rounded bg-slate-100 text-slate-400 border border-slate-150">
+            🌙 未开始 (Not Started)
+          </span>
+        );
     }
-  ];
+  };
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
+      
       {/* Disclaimer Banner */}
       <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
         <div className="flex">
@@ -46,89 +81,140 @@ export function PrescriptionReviewPage() {
           </div>
           <div className="ml-3">
             <p className="text-xs text-amber-800 font-bold">
-              当前回测及执行分析面板为示例展示。后续将伴随处方状态流转机制，在 STEP 13-D-Lite 关联真实已被采纳执行的动作与成效率对账。
+              当前 STEP 13-D-Lite 仅记录人工执行状态。真实 3 / 7 / 14 天数据回测将在后续版本接入。
             </p>
           </div>
         </div>
       </div>
 
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-        <h1 className="text-xl font-bold text-slate-900">执行回测 (Prescription Backtesting)</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          将已被采纳并执行的建议处方的动作，与执行前的基线数据进行对比对账，校验动作真实收益率。
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <span className="text-[10px] text-slate-400 font-bold block uppercase mb-1">累计验证采纳建议</span>
-          <div className="text-2xl font-black text-slate-900">8 条</div>
-          <p className="text-[10px] text-slate-400 mt-2">已被对账校验引擎打标完成</p>
-        </div>
-
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <span className="text-[10px] text-slate-400 font-bold block uppercase mb-1">因避错而挽回消耗</span>
-          <div className="text-2xl font-black text-emerald-600">+$678.90</div>
-          <p className="text-[10px] text-slate-400 mt-2">削减亏损低效冷定向国家溢出</p>
-        </div>
-
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <span className="text-[10px] text-slate-400 font-bold block uppercase mb-1">全站综合增效 ROI</span>
-          <div className="text-2xl font-black text-blue-600">+18.4%</div>
-          <p className="text-[10px] text-slate-400 mt-2">对照组 VS 实验组平均 Store ROAS 差异数</p>
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">执行回测 (Prescription Backtesting)</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            追踪和回溯已被采纳、执行或在执行中建议的实操状态，提供多周期回测效果观察占位。
+          </p>
         </div>
       </div>
 
-      <div className="space-y-6">
-        <h3 className="font-bold text-slate-900 text-sm">已归档的历史动作回测记录</h3>
-        <div className="space-y-4">
-          {backtestHistory.map((item, idx) => (
-            <div key={idx} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-100 pb-3 gap-2">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-bold rounded">
-                      ID: {item.id}
-                    </span>
-                    <span className="text-slate-400 text-xs">实施日期: {item.executionDate}</span>
-                  </div>
-                  <h4 className="font-bold text-slate-900 text-sm mt-1">{item.prescriptionName}</h4>
-                </div>
-                <span className="px-2.5 py-1 text-xs font-semibold bg-emerald-100 text-emerald-800 rounded-full">
-                  {item.resultStatus}
-                </span>
-              </div>
-
-              {/* Multi data contrast */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-xl text-xs">
-                <div>
-                  <span className="text-[10px] text-slate-400 block mb-1">对照组区间 (基线期)</span>
-                  <span className="font-medium text-slate-700">{item.controlPeriod}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 block mb-1">实验组区间 (验证期)</span>
-                  <span className="font-medium text-slate-700">{item.testPeriod}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 block mb-1">挽回低效消耗</span>
-                  <span className="font-bold text-slate-900">{item.spendSaved}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 block mb-1">综合店面 ROAS 对比</span>
-                  <strong className="text-slate-900 text-sm flex items-center gap-1">
-                    {item.changeInRoas} <ArrowUpRight className="w-3 h-3 text-emerald-500 inline" />
-                  </strong>
-                </div>
-              </div>
-
-              <div className="text-xs text-slate-650 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-100">
-                <span className="font-bold text-slate-800 block mb-1">对账回溯解析:</span>
-                {item.eval}
-              </div>
+      {totalActions === 0 ? (
+        <div className="bg-white border border-slate-200 border-dashed rounded-2xl p-16 text-center space-y-4 max-w-2xl mx-auto">
+          <Clock className="w-12 h-12 text-slate-300 mx-auto" />
+          <div className="space-y-2">
+            <h4 className="text-base font-bold text-slate-700">暂无执行回测记录。请先在建议处方中心采纳或执行建议。</h4>
+            <p className="text-xs text-slate-400">
+              一旦您在建议处方中心对处方卡片点击“采纳”、“忽略”、“标记执行中”或“标记已执行”，此处将自动捕获并展示流转进度和轻量级回测控制台。
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-8">
+          
+          {/* Section: Status aggregation counters */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <span className="text-[10px] text-slate-400 font-extrabold block uppercase tracking-wider mb-1">已采纳</span>
+              <div className="text-3xl font-black text-emerald-700">{acceptedCount} 条</div>
+              <p className="text-[10px] text-slate-400 mt-2">已采纳但尚未标记执行的提案</p>
             </div>
-          ))}
+
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <span className="text-[10px] text-slate-400 font-extrabold block uppercase tracking-wider mb-1">执行中</span>
+              <div className="text-3xl font-black text-blue-700">{inProgressCount} 条</div>
+              <p className="text-[10px] text-slate-400 mt-2">正在操作及测试组调优的提案</p>
+            </div>
+
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <span className="text-[10px] text-slate-400 font-extrabold block uppercase tracking-wider mb-1">已执行</span>
+              <div className="text-3xl font-black text-purple-700">{executedCount} 条</div>
+              <p className="text-[10px] text-slate-400 mt-2">人工标记在广告或独立站完成实操的提案</p>
+            </div>
+
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <span className="text-[10px] text-slate-400 font-extrabold block uppercase tracking-wider mb-1">已忽略</span>
+              <div className="text-3xl font-black text-slate-500">{ignoredCount} 条</div>
+              <p className="text-[10px] text-slate-400 mt-2">因不可控、越位或环境影响而放弃的提案</p>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+              <Layers className="w-4 h-4 text-blue-600" />
+              当前活跃流转的建议与轻量级回测控制台 (3 / 7 / 14 天占位)
+            </h3>
+
+            <div className="space-y-4">
+              {statusList.map((item) => (
+                <div key={item.issueId} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 hover:shadow-md transition-shadow">
+                  {/* Title and main status details */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-bold rounded">
+                          ID: {item.issueId}
+                        </span>
+                        <span className="text-xs text-slate-400 font-medium">
+                          流转分类: {
+                            item.status === "accepted" ? "已采纳" :
+                            item.status === "in_progress" ? "执行中" :
+                            item.status === "executed" ? "已执行" : "已忽略"
+                          }
+                        </span>
+                      </div>
+                      <h4 className="font-bold text-slate-900 text-sm mt-1">处方建议：{item.issueId}</h4>
+                    </div>
+                  </div>
+
+                  {/* Multi-cycle backtesting display states */}
+                  <div className="bg-slate-50 border border-slate-150/60 rounded-xl p-4 space-y-3">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                      多维度周期回测占位监测：
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                      <div className="p-3 bg-white rounded-lg border border-slate-100 space-y-1.5 shadow-sm">
+                        <span className="text-[10px] text-slate-400 block font-semibold">📅 3 天效果校验期</span>
+                        <div>{getBacktestBadge(item.review3dStatus)}</div>
+                      </div>
+
+                      <div className="p-3 bg-white rounded-lg border border-slate-100 space-y-1.5 shadow-sm">
+                        <span className="text-[10px] text-slate-400 block font-semibold">📅 7 天效果校验期</span>
+                        <div>{getBacktestBadge(item.review7dStatus)}</div>
+                      </div>
+
+                      <div className="p-3 bg-white rounded-lg border border-slate-100 space-y-1.5 shadow-sm">
+                        <span className="text-[10px] text-slate-400 block font-semibold">📅 14 天效果校验期</span>
+                        <div>{getBacktestBadge(item.review14dStatus)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Execution detail outputs */}
+                  {item.status === "ignored" && item.ignoreReason && (
+                    <div className="text-xs bg-red-50 text-red-800 p-3 rounded-lg border border-red-100 leading-relaxed">
+                      <strong>忽略原因记录:</strong> {item.ignoreReason}
+                      {item.ignoredAt && <span className="block text-[10px] text-red-500 mt-1">忽略时间: {item.ignoredAt}</span>}
+                    </div>
+                  )}
+
+                  {item.status === "executed" && item.operatorNotes && (
+                    <div className="text-xs bg-purple-50 text-purple-800 p-3 rounded-lg border border-purple-100 leading-relaxed">
+                      <strong>人工实操执行备注:</strong> {item.operatorNotes}
+                      {item.executedAt && <span className="block text-[10px] text-purple-500 mt-1">执行时间: {item.executedAt}</span>}
+                    </div>
+                  )}
+
+                  {item.status === "in_progress" && (
+                    <div className="text-xs bg-blue-50 text-blue-800 p-3 rounded-lg border border-blue-100 leading-relaxed flex items-center justify-between">
+                      <div>
+                        <strong>执行状态中：</strong> 建议已被标记为实操跟进，基线对账期启动。
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
