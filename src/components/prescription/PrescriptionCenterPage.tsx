@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { useSuggestionStatus } from "./useSuggestionStatus";
 import { SuggestionActionPanel } from "./SuggestionActionPanel";
+import { AiExplainButton } from "../ai/AiExplainButton";
+import { AiExplanationPanel } from "../ai/AiExplanationPanel";
 
 interface UniformIssue {
   issueId: string;
@@ -171,6 +173,83 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
   const [issues, setIssues] = useState<UniformIssue[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<{ message: string; details?: string } | null>(null);
+
+  // AI dry-run explanation state
+  const [aiPanelStates, setAiPanelStates] = useState<{
+    [issueId: string]: {
+      loading: boolean;
+      error: string | null;
+      response: any | null;
+      expanded: boolean;
+    }
+  }>({});
+
+  const handleExplainIssue = async (item: UniformIssue) => {
+    const issueId = item.issueId;
+    const currentStatusDetail = getStatusDetail(issueId);
+
+    // Initial state setup to trigger panel show & loader
+    setAiPanelStates(prev => ({
+      ...prev,
+      [issueId]: {
+        loading: true,
+        error: null,
+        response: null,
+        expanded: true
+      }
+    }));
+
+    try {
+      const res = await fetch("/api/ai/explain-issue", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          provider: "auto",
+          model: "",
+          issue: item,
+          statusDetail: currentStatusDetail,
+          context: {
+            dateRange: {
+              startDate,
+              endDate
+            },
+            currentPage: "prescription_center",
+            userRole: "admin",
+            targetLanguage: "zh-CN"
+          }
+        })
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `HTTP error ${res.status}`);
+      }
+
+      const data = await res.json();
+      setAiPanelStates(prev => ({
+        ...prev,
+        [issueId]: {
+          loading: false,
+          error: null,
+          response: data,
+          expanded: true
+        }
+      }));
+    } catch (err: any) {
+      console.error("[AI EXPLAIN ERROR]", err);
+      setAiPanelStates(prev => ({
+        ...prev,
+        [issueId]: {
+          loading: false,
+          error: err.message || "请求 AI 解释失败",
+          response: null,
+          expanded: true
+        }
+      }));
+    }
+  };
 
   useEffect(() => {
     if (currentSubTab) {
@@ -587,6 +666,30 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
                       </div>
                     )}
                   </div>
+                </div>
+
+                {/* AI Explanation Interface (STEP 13-AI-R1-UI-DryRun) */}
+                <div id={`ai-explain-area-${item.issueId}`} className="border-t border-dashed border-slate-200 pt-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
+                      <Sparkles className="w-4 h-4 text-indigo-500" />
+                      <span>AI 安全解释辅助 (Offline Boundary Monitor)</span>
+                    </div>
+
+                    <AiExplainButton 
+                      loading={aiPanelStates[item.issueId]?.loading}
+                      onClick={() => handleExplainIssue(item)}
+                    />
+                  </div>
+
+                  {aiPanelStates[item.issueId]?.expanded && (
+                    <AiExplanationPanel
+                      loading={aiPanelStates[item.issueId]?.loading || false}
+                      error={aiPanelStates[item.issueId]?.error}
+                      response={aiPanelStates[item.issueId]?.response}
+                      onRetry={() => handleExplainIssue(item)}
+                    />
+                  )}
                 </div>
 
                 {/* Suggestion Action panel & Status flows */}
