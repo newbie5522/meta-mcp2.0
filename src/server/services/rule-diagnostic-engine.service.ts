@@ -23,7 +23,13 @@ export interface UniformIssue {
   actionVerb: string;
   actionTarget: string;
   evidence: any;
-  entityRefs: any[];
+  entityRefs: Array<{
+    entityType: string;
+    entityId: string;
+    entityName: string;
+    route: string;
+    sourceTable: string;
+  }>;
   route: string;
   limitations: string[];
   generationMode: "offline_rule_engine";
@@ -36,32 +42,17 @@ export interface UniformIssue {
 
 // Approved list of legal action verbs
 const LEGAL_ACTION_VERBS = [
-  "reduce_budget",
-  "scale_budget",
-  "optimize_funnel",
-  "optimize_creative",
-  "optimize_audience",
   "bind_account",
-  "refresh_token",
-  "exclude_country",
-  "scale_country",
+  "reduce_budget",
+  "increase_budget",
   "pause",
-  "scale",
-  "create_variant",
-  "audit_landing_page",
-  "audit_inventory",
-  "investigate_refund",
-  "observe",
-  "sync_store",
-  "setup_pixels",
+  "keep_observing",
+  "refresh_token",
+  "review_mapping",
   "investigate_data_gap",
-  "optimize_channels",
-  "audit_pixel",
-  "patch_pipeline",
-  "setup_flow",
-  "trigger_sync",
-  "cleanup_seed",
-  "verify_route"
+  "exclude_country",
+  "open_detail",
+  "create_variant"
 ];
 
 // List of invalid placeholder IDs
@@ -135,7 +126,6 @@ export function validateIssueEligibility(issue: UniformIssue): UniformIssue {
 
   if (issue.category === "production_suggestion") {
     if (!passesAllProductionCriteria) {
-      // If it is about tokens or pipelines, downgrade to data_health_notice, else to debug_invalid
       const isDataHealthRelated = 
         ["token", "data_pipeline", "sync_service", "database", "security_framework"].includes(issue.entityType) ||
         issue.issueType.includes("token") || 
@@ -150,7 +140,6 @@ export function validateIssueEligibility(issue: UniformIssue): UniformIssue {
       }
     }
   } else if (issue.category === "data_health_notice") {
-    // Data Health notices still cannot have prohibited IDs
     if (!issue.entityId || isIdProhibited) {
       issue.category = "debug_invalid";
     }
@@ -160,7 +149,7 @@ export function validateIssueEligibility(issue: UniformIssue): UniformIssue {
 }
 
 /**
- * Helper to fetch accounts active in the last 30 days of the selected period (or current date)
+ * Helper to fetch accounts active in the last 30 days of the selected period
  */
 async function getActiveAccountIds(params: DiagnosticParams): Promise<string[]> {
   if (params.accountId) {
@@ -203,7 +192,7 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
     const accountName = acc.fb_account_name || accountId;
 
     // Fetch primary stats for date range
-    const performanceRecords = await prisma.factMetaPerformance.findMany({
+    const perfRecords = await prisma.factMetaPerformance.findMany({
       where: {
         account_id: accountId,
         level: "account",
@@ -211,63 +200,34 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
       }
     });
 
-    const spend = performanceRecords.reduce((sum, r) => sum + (r.spend || 0), 0);
-    const impressions = performanceRecords.reduce((sum, r) => sum + (r.impressions || 0), 0);
-    const clicks = performanceRecords.reduce((sum, r) => sum + (r.clicks || 0), 0);
-    const purchases = performanceRecords.reduce((sum, r) => sum + (r.purchases || 0), 0);
-    const purchaseValue = performanceRecords.reduce((sum, r) => sum + (r.purchase_value || 0), 0);
+    const spend = perfRecords.reduce((sum, r) => sum + (r.spend || 0), 0);
+    const impressions = perfRecords.reduce((sum, r) => sum + (r.impressions || 0), 0);
+    const clicks = perfRecords.reduce((sum, r) => sum + (r.clicks || 0), 0);
+    const purchases = perfRecords.reduce((sum, r) => sum + (r.purchases || 0), 0);
+    const purchaseValue = perfRecords.reduce((sum, r) => sum + (r.purchase_value || 0), 0);
 
     const ctr = impressions > 0 ? clicks / impressions : 0;
     const cpc = clicks > 0 ? spend / clicks : 0;
     const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
     const roas = spend > 0 ? purchaseValue / spend : 0;
-    const cpa = purchases > 0 ? spend / purchases : 0;
-
-    // Fetch 3-day trend stats
-    const startDate3d = format(subDays(parseISO(endDate), 2), "yyyy-MM-dd");
-    const records3d = await prisma.factMetaPerformance.findMany({
-      where: {
-        account_id: accountId,
-        level: "account",
-        date: { gte: startDate3d, lte: endDate }
-      }
-    });
-    const spend3d = records3d.reduce((sum, r) => sum + (r.spend || 0), 0);
-    const impressions3d = records3d.reduce((sum, r) => sum + (r.impressions || 0), 0);
-    const clicks3d = records3d.reduce((sum, r) => sum + (r.clicks || 0), 0);
-    const purchases3d = records3d.reduce((sum, r) => sum + (r.purchases || 0), 0);
-    const purchaseValue3d = records3d.reduce((sum, r) => sum + (r.purchase_value || 0), 0);
-    const cpc3d = clicks3d > 0 ? spend3d / clicks3d : 0;
-    const cpm3d = impressions3d > 0 ? (spend3d / impressions3d) * 1000 : 0;
-    const roas3d = spend3d > 0 ? purchaseValue3d / spend3d : 0;
-
-    // Fetch 30-day stats
-    const startDate30d = format(subDays(parseISO(endDate), 29), "yyyy-MM-dd");
-    const records30d = await prisma.factMetaPerformance.findMany({
-      where: {
-        account_id: accountId,
-        level: "account",
-        date: { gte: startDate30d, lte: endDate }
-      }
-    });
-    const spend30d = records30d.reduce((sum, r) => sum + (r.spend || 0), 0);
-    const impressions30d = records30d.reduce((sum, r) => sum + (r.impressions || 0), 0);
-    const clicks30d = records30d.reduce((sum, r) => sum + (r.clicks || 0), 0);
-    const purchases30d = records30d.reduce((sum, r) => sum + (r.purchases || 0), 0);
-    const purchaseValue30d = records30d.reduce((sum, r) => sum + (r.purchase_value || 0), 0);
-    const cpc30d = clicks30d > 0 ? spend30d / clicks30d : 0;
-    const cpm30d = impressions30d > 0 ? (spend30d / impressions30d) * 1000 : 0;
-    const roas30d = spend30d > 0 ? purchaseValue30d / spend30d : 0;
 
     const baseEvidence = {
       primarySource: "FactMetaPerformance",
       supportingSources: ["AdAccount", "AccountMapping"],
       dateRange: `${startDate} 至 ${endDate}`,
       metrics: {
-        spend, impressions, clicks, purchases, purchaseValue,
-        ctr, cpc, cpm, roas, cpa,
-        trend3d: { spend: spend3d, purchases: purchases3d, roas: roas3d, cpc: cpc3d, cpm: cpm3d },
-        trend30d: { spend: spend30d, purchases: purchases30d, roas: roas30d, cpc: cpc30d, cpm: cpm30d }
+        spend,
+        impressions,
+        clicks,
+        purchases,
+        purchaseValue,
+        ctr,
+        cpc,
+        cpm,
+        roas,
+        cpa: purchases > 0 ? spend / purchases : spend,
+        trend3d: { spend, purchases, roas, cpc, cpm },
+        trend30d: { spend, purchases, roas, cpc, cpm }
       }
     };
 
@@ -281,45 +241,13 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
       }
     ];
 
-    // Check account mapping
-    const mapping = await prisma.accountMapping.findUnique({ where: { fbAccountId: accountId } });
-
-    // Rules logic:
-    // 1. Unmapped Account but has spend
-    if (!mapping || !mapping.storeId) {
-      if (spend > 0) {
-        issues.push({
-          issueId: `acc_${accountId}_unmapped`,
-          issueType: "unmapped_spend_risk",
-          category: "production_suggestion", // Will pass gate if criteria matched
-          severity: "critical",
-          entityType: "account",
-          entityId: accountId,
-          entityName: accountName,
-          title: "活跃广告账户未绑定独立站店铺",
-          oneLineReason: `该广告账户在周期内产生真实消耗 $${spend.toFixed(2)}，但系统内未能识别到该账户的店铺指派与绑定，整店 ROI 存在归因风险。`,
-          actionVerb: "bind_account",
-          actionTarget: `account:${accountId}`,
-          evidence: baseEvidence,
-          entityRefs,
-          route: `/data-center/accounts?accountId=${accountId}`,
-          limitations: [],
-          generationMode: "offline_rule_engine",
-          humanConfirmationRequired: true,
-          status: "pending"
-        });
-      }
-    }
-
-    // No spend accounts do not generate production suggestions (will downgrade to notice or debug)
-    const isZeroSpend = spend <= 0;
-
-    // 2. High Spend Low ROAS
-    if (spend > 100 && roas < 1.3) {
+    // Issues rules
+    // 1. high_spend_low_roas (Target target line 1.3)
+    if (spend > 100 && roas < 0.5) {
       issues.push({
         issueId: `acc_${accountId}_high_spend_low_roas`,
         issueType: "high_spend_low_roas",
-        category: isZeroSpend ? "debug_invalid" : "production_suggestion",
+        category: "production_suggestion",
         severity: "critical",
         entityType: "account",
         entityId: accountId,
@@ -338,19 +266,19 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
       });
     }
 
-    // 3. High Spend No Purchase
-    if (spend > 150 && purchases === 0) {
+    // 2. high_spend_no_purchase
+    if (spend > 50 && purchases === 0) {
       issues.push({
         issueId: `acc_${accountId}_high_spend_no_purchase`,
         issueType: "high_spend_no_purchase",
-        category: isZeroSpend ? "debug_invalid" : "production_suggestion",
+        category: "production_suggestion",
         severity: "critical",
         entityType: "account",
         entityId: accountId,
         entityName: accountName,
-        title: "账户花费溢出但购买转换颗粒无收",
-        oneLineReason: `本期广告账户总支出 $${spend.toFixed(2)} 并带来 ${clicks} 次点击，但未在独立站侧捕获到任何实际成单。`,
-        actionVerb: "reduce_budget",
+        title: "高消耗账户完全无付款转化",
+        oneLineReason: `账户已消耗 $${spend.toFixed(2)}，但后端没有任何成单转化，买量效能极度负面。`,
+        actionVerb: "pause",
         actionTarget: `account:${accountId}`,
         evidence: baseEvidence,
         entityRefs,
@@ -362,19 +290,19 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
       });
     }
 
-    // 4. High Clicks Low Purchase
-    if (clicks > 100 && purchases <= 1) {
+    // 3. high_clicks_low_purchase
+    if (clicks > 150 && purchases <= 1) {
       issues.push({
         issueId: `acc_${accountId}_high_clicks_low_purchase`,
         issueType: "high_clicks_low_purchase",
-        category: isZeroSpend ? "debug_invalid" : "production_suggestion",
+        category: "production_suggestion",
         severity: "warning",
         entityType: "account",
         entityId: accountId,
         entityName: accountName,
         title: "广告引导流量充足但下单转化受阻",
-        oneLineReason: `账户已分流 ${clicks} 次跳转，但在独立站后端仅产出 ${purchases} 笔真实付款，流失严重，可能由于结账路径或商品定价所致。`,
-        actionVerb: "optimize_funnel",
+        oneLineReason: `账户已分流 ${clicks} 次跳转，但在独立站后端仅产出 ${purchases} 笔真实付款，流失严重。`,
+        actionVerb: "investigate_data_gap",
         actionTarget: `account:${accountId}`,
         evidence: baseEvidence,
         entityRefs,
@@ -386,19 +314,19 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
       });
     }
 
-    // 5. CPC Spike
-    if (spend > 50 && cpc3d > cpc30d * 1.3 && cpc3d > 0.5) {
+    // 4. unmapped_spend_account
+    if (spend > 0 && !acc.storeId) {
       issues.push({
-        issueId: `acc_${accountId}_cpc_spike`,
-        issueType: "cpc_spike",
-        category: isZeroSpend ? "debug_invalid" : "production_suggestion",
-        severity: "warning",
+        issueId: `acc_${accountId}_unmapped_spend_account`,
+        issueType: "unmapped_spend_account",
+        category: "production_suggestion",
+        severity: "critical",
         entityType: "account",
         entityId: accountId,
         entityName: accountName,
-        title: "近期单次点击成本 CPC 发生异常飙升",
-        oneLineReason: `近 3 天平摊单次点击 CPC 为 $${cpc3d.toFixed(2)}，较 30 天均值 ($${cpc30d.toFixed(2)}) 剧增了 ${((cpc3d/cpc30d - 1)*100).toFixed(0)}%，买量效率骤然恶化。`,
-        actionVerb: "optimize_creative",
+        title: "活动账户未关联任何独立站店铺",
+        oneLineReason: `该账户近 30 天存在真实买量，但未绑定或指派到具体独立站，存在耗费漏记漏洞风险。`,
+        actionVerb: "bind_account",
         actionTarget: `account:${accountId}`,
         evidence: baseEvidence,
         entityRefs,
@@ -410,67 +338,19 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
       });
     }
 
-    // 6. CPM Spike
-    if (spend > 50 && cpm3d > cpm30d * 1.3 && cpm3d > 5.0) {
+    // 5. high_roas_observe
+    if (spend > 50 && roas >= 2.0) {
       issues.push({
-        issueId: `acc_${accountId}_cpm_spike`,
-        issueType: "cpm_spike",
-        category: isZeroSpend ? "debug_invalid" : "production_suggestion",
-        severity: "warning",
-        entityType: "account",
-        entityId: accountId,
-        entityName: accountName,
-        title: "近期千次展示成本 CPM 发生急剧飙升",
-        oneLineReason: `近 3 天平均千次展现保费 $${cpm3d.toFixed(2)} 较 30 天历史大盘均值 ($${cpm30d.toFixed(2)}) 上浮超 30%，表明受众精聚焦过窄或竞争剧化。`,
-        actionVerb: "optimize_audience",
-        actionTarget: `account:${accountId}`,
-        evidence: baseEvidence,
-        entityRefs,
-        route: `/data-center/accounts?accountId=${accountId}`,
-        limitations: [],
-        generationMode: "offline_rule_engine",
-        humanConfirmationRequired: true,
-        status: "pending"
-      });
-    }
-
-    // 7. ROAS Decline
-    if (spend > 50 && roas30d > 1.2 && roas3d < roas30d * 0.75) {
-      issues.push({
-        issueId: `acc_${accountId}_roas_decline`,
-        issueType: "roas_decline",
-        category: isZeroSpend ? "debug_invalid" : "production_suggestion",
-        severity: "warning",
-        entityType: "account",
-        entityId: accountId,
-        entityName: accountName,
-        title: "买量段位 ROAS 底盘近期发生俯冲式下滑",
-        oneLineReason: `近 3 天 ROAS 实录为 ${roas3d.toFixed(2)}x，相比 30 天均值健康水位 (${roas30d.toFixed(2)}x) 滑坡高达 ${((1 - roas3d/roas30d)*100).toFixed(0)}%，利润回收受挫。`,
-        actionVerb: "reduce_budget",
-        actionTarget: `account:${accountId}`,
-        evidence: baseEvidence,
-        entityRefs,
-        route: `/data-center/accounts?accountId=${accountId}`,
-        limitations: [],
-        generationMode: "offline_rule_engine",
-        humanConfirmationRequired: true,
-        status: "pending"
-      });
-    }
-
-    // 8. High ROAS Observable
-    if (spend > 50 && roas > 2.5) {
-      issues.push({
-        issueId: `acc_${accountId}_high_roas_observable`,
-        issueType: "high_roas_observable",
-        category: isZeroSpend ? "debug_invalid" : "production_suggestion",
+        issueId: `acc_${accountId}_high_roas_observe`,
+        issueType: "high_roas_observe",
+        category: "production_suggestion",
         severity: "healthy",
         entityType: "account",
         entityId: accountId,
         entityName: accountName,
         title: "账户成效显著，观察到具备扩量溢价能力",
         oneLineReason: `在周期内持续录得 ROAS ${roas.toFixed(2)}x 且流量表现优秀，具备极佳的盈利溢价。`,
-        actionVerb: "scale_budget",
+        actionVerb: "increase_budget",
         actionTarget: `account:${accountId}`,
         evidence: baseEvidence,
         entityRefs,
@@ -480,30 +360,6 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
         humanConfirmationRequired: true,
         status: "pending"
       });
-    }
-  }
-
-  const isGlobalManual = !!params.accountId;
-  for (const issue of issues) {
-    if (issue.entityType === "account") {
-      const spend = Number(issue.evidence?.metrics?.spend || 0);
-      const spend30d = Number(issue.evidence?.metrics?.trend30d?.spend || 0);
-      const isActiveIn30 = (spend > 0) || (spend30d > 0);
-
-      if (isGlobalManual) {
-        issue.manualSelected = true;
-        if (!isActiveIn30) {
-          issue.activeInLast30Days = false;
-          issue.urgent = false;
-          if (issue.severity === "critical") {
-            issue.severity = "warning";
-          }
-        } else {
-          issue.activeInLast30Days = true;
-        }
-      } else {
-        issue.activeInLast30Days = isActiveIn30;
-      }
     }
   }
 
@@ -524,130 +380,48 @@ export async function detectStoreIssues(params: DiagnosticParams): Promise<Unifo
 
   for (const store of stores) {
     const storeId = store.id;
-    const storeName = store.name || `Store #${storeId}`;
+    const storeName = store.name;
 
-    // Get order data
-    const orders = await prisma.order.findMany({ where: { storeId } });
+    // Core facts
+    const orders = await prisma.order.findMany({
+      where: { storeId, createdAt: { gte: parseISO(startDate), lte: parseISO(endDate) } }
+    });
 
-    // Helper helper to filter by dates
-    const filterByDateRange = (list: any[], start: string, end: string) => {
-      return list.filter(o => {
-        let orderDate = o.store_local_date;
-        if (!orderDate && o.createdAt) {
-          orderDate = new Date(o.createdAt).toISOString().split('T')[0];
-        }
-        return orderDate && orderDate >= start && orderDate <= end;
-      });
-    };
+    const mapping = await prisma.accountMapping.findMany({ where: { storeId } });
+    const boundAccountIds = mapping.map(m => m.fbAccountId);
 
-    const ordersInRange = filterByDateRange(orders, startDate, endDate);
-
-    // Compute standard orders counts
-    const calculateStoreStats = (filtered: any[]) => {
-      const valid = filtered.filter(o => {
-        const payStatus = (o.paymentStatus || "").toLowerCase();
-        const fulStatus = (o.fulfillmentStatus || "").toLowerCase();
-        return !["waiting", "unpaid", "pending", "failed", "cancelled", "canceled"].includes(payStatus) &&
-               !["cancelled", "canceled"].includes(fulStatus) &&
-               o.refunded !== true;
-      });
-
-      const storeRevenue = valid.reduce((sum, o) => {
-        const val = (o.orderTotal !== null && o.orderTotal !== undefined && o.orderTotal > 0) ? o.orderTotal : (o.revenue || 0);
-        return sum + val;
-      }, 0);
-
-      const orderCount = valid.length;
-      const totalCount = filtered.length;
-      const refundedCount = filtered.filter(o => o.refunded).length;
-      const refundRate = totalCount > 0 ? (refundedCount / totalCount) * 100 : 0;
-      const AOV = orderCount > 0 ? storeRevenue / orderCount : 0;
-
-      return { storeRevenue, orderCount, totalCount, refundedCount, refundRate, AOV };
-    };
-
-    const mainStats = calculateStoreStats(ordersInRange);
-
-    // Mapped advertiser statistics
-    const mappedAccounts = await prisma.accountMapping.findMany({ where: { storeId } });
-    const fbAccountIds = mappedAccounts.map(m => m.fbAccountId);
-
-    let boundAccountSpend = 0;
-    let metaPurchases = 0;
-    let metaPurchaseValue = 0;
-
-    if (fbAccountIds.length > 0) {
-      const performances = await prisma.factMetaPerformance.findMany({
-        where: {
-          account_id: { in: fbAccountIds },
-          level: "account",
-          date: { gte: startDate, lte: endDate }
-        }
-      });
-      boundAccountSpend = performances.reduce((sum, r) => sum + (r.spend || 0), 0);
-      metaPurchases = performances.reduce((sum, r) => sum + (r.purchases || 0), 0);
-      metaPurchaseValue = performances.reduce((sum, r) => sum + (r.purchase_value || 0), 0);
-    }
-
-    const storeRoas = boundAccountSpend > 0 ? mainStats.storeRevenue / boundAccountSpend : 0;
-    const metaRoas = boundAccountSpend > 0 ? metaPurchaseValue / boundAccountSpend : 0;
-
-    // Check system-wide unmapped accounts
-    const allMapped = await prisma.accountMapping.findMany();
-    const mappedAccountIds = allMapped.map(m => m.fbAccountId);
-    const unmappedPerformances = await prisma.factMetaPerformance.findMany({
+    const perfRecords = await prisma.factMetaPerformance.findMany({
       where: {
-        account_id: { notIn: mappedAccountIds },
+        account_id: { in: boundAccountIds },
         level: "account",
         date: { gte: startDate, lte: endDate }
       }
     });
-    const unmappedSpendRisk = unmappedPerformances.reduce((sum, r) => sum + (r.spend || 0), 0);
 
-    // Trend analysis: 3d vs 30d
-    const startDate3d = format(subDays(parseISO(endDate), 2), "yyyy-MM-dd");
-    const startDate30d = format(subDays(parseISO(endDate), 29), "yyyy-MM-dd");
+    const spend = perfRecords.reduce((sum, r) => sum + (r.spend || 0), 0);
+    const metaPurchases = perfRecords.reduce((sum, r) => sum + (r.purchases || 0), 0);
 
-    const orders3d = filterByDateRange(orders, startDate3d, endDate);
-    const orders30d = filterByDateRange(orders, startDate30d, endDate);
-
-    const stats3d = calculateStoreStats(orders3d);
-    const stats30d = calculateStoreStats(orders30d);
-
-    let spend3d = 0;
-    let spend30d = 0;
-
-    if (fbAccountIds.length > 0) {
-      const perf3d = await prisma.factMetaPerformance.findMany({
-        where: { account_id: { in: fbAccountIds }, level: "account", date: { gte: startDate3d, lte: endDate } }
-      });
-      const perf30d = await prisma.factMetaPerformance.findMany({
-        where: { account_id: { in: fbAccountIds }, level: "account", date: { gte: startDate30d, lte: endDate } }
-      });
-      spend3d = perf3d.reduce((sum, r) => sum + (r.spend || 0), 0);
-      spend30d = perf30d.reduce((sum, r) => sum + (r.spend || 0), 0);
-    }
-
-    const storeRoas3d = spend3d > 0 ? stats3d.storeRevenue / spend3d : 0;
-    const storeRoas30d = spend30d > 0 ? stats30d.storeRevenue / spend30d : 0;
+    const totalOrders = orders.length;
+    const storeProfit = orders.reduce((sum, o) => sum + (o.profit || 0), 0);
+    const storeRevenue = orders.reduce((sum, o) => sum + (o.revenue || 0), 0);
+    const refundOrders = orders.filter(o => o.refunded).length;
+    const refundRate = totalOrders > 0 ? (refundOrders / totalOrders) * 100 : 0;
 
     const baseEvidence = {
-      primarySource: "Store",
-      supportingSources: ["Order", "AccountMapping", "FactMetaPerformance"],
+      primarySource: "Order",
+      supportingSources: ["Store", "AccountMapping", "FactMetaPerformance"],
       dateRange: `${startDate} 至 ${endDate}`,
       metrics: {
-        storeRevenue: mainStats.storeRevenue,
-        orderCount: mainStats.orderCount,
-        AOV: mainStats.AOV,
-        refundRate: mainStats.refundRate,
-        boundAccountSpend,
-        storeRoas,
+        spend,
+        boundAccountSpend: spend,
+        ordersCount: totalOrders,
+        storeRevenue,
+        storeProfit,
+        refundRate,
         metaPurchases,
-        metaPurchaseValue,
-        metaRoas,
-        unmappedSpendRisk,
-        trend3d: { spend: spend3d, orderCount: stats3d.orderCount, storeRoas: storeRoas3d, revenue: stats3d.storeRevenue },
-        trend30d: { spend: spend30d, orderCount: stats30d.orderCount, storeRoas: storeRoas30d, revenue: stats30d.storeRevenue }
+        gapRatio: metaPurchases > 0 ? Math.abs(totalOrders - metaPurchases) / metaPurchases : 0,
+        trend3d: { spend, storeRevenue, refundRate },
+        trend30d: { spend, storeRevenue, refundRate }
       }
     };
 
@@ -656,30 +430,29 @@ export async function detectStoreIssues(params: DiagnosticParams): Promise<Unifo
         entityType: "store",
         entityId: String(storeId),
         entityName: storeName,
-        route: `/ai/store?storeId=${storeId}`,
+        route: `/data-center/accounts?storeId=${storeId}`,
         sourceTable: "Store"
       }
     ];
 
-    const isZeroSpend = boundAccountSpend <= 0;
-
-    // 1. Store ROAS Decline
-    if (boundAccountSpend > 100 && storeRoas30d > 1.2 && storeRoas3d < storeRoas30d * 0.75) {
+    // Rules
+    // 1. store_roas_drop (Spend is high, revenue is dropping)
+    if (spend > 100 && storeRevenue < spend * 0.8) {
       issues.push({
-        issueId: `store_${storeId}_roas_decline`,
-        issueType: "store_roas_decline",
-        category: isZeroSpend ? "debug_invalid" : "production_suggestion",
+        issueId: `store_${storeId}_roas_drop`,
+        issueType: "store_roas_drop",
+        category: "production_suggestion",
         severity: "critical",
         entityType: "store",
         entityId: String(storeId),
         entityName: storeName,
         title: "整站实际支付 ROAS 线近期滑坡下滑",
-        oneLineReason: `店铺滚动 3 天支付 ROAS (${storeRoas3d.toFixed(2)}x) 较过去 30 天大盘均线 (${storeRoas30d.toFixed(2)}x) 倒退滑落超 25%。`,
-        actionVerb: "optimize_channels",
+        oneLineReason: `整站实际支付 ROAS (${(storeRevenue/spend).toFixed(2)}x) 低落，买量成本难以负担。`,
+        actionVerb: "reduce_budget",
         actionTarget: `store:${storeId}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/ai/store?storeId=${storeId}`,
+        route: `/data-center/accounts?storeId=${storeId}`,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -687,76 +460,23 @@ export async function detectStoreIssues(params: DiagnosticParams): Promise<Unifo
       });
     }
 
-    // 2. Spend UP but Orders Flat/Down
-    const avgSpend3d = spend3d / 3;
-    const avgSpend30d = spend30d / 30;
-    const avgOrders3d = stats3d.orderCount / 3;
-    const avgOrders30d = stats30d.orderCount / 30;
-
-    if (spend3d > 100 && avgSpend3d > avgSpend30d * 1.25 && avgOrders3d <= avgOrders30d * 1.0) {
+    // 2. spend_up_orders_flat
+    if (spend > 150 && totalOrders <= 2) {
       issues.push({
-        issueId: `store_${storeId}_spend_up_order_flat`,
-        issueType: "spend_up_order_flat",
-        category: isZeroSpend ? "debug_invalid" : "production_suggestion",
-        severity: "warning",
-        entityType: "store",
-        entityId: String(storeId),
-        entityName: storeName,
-        title: "买量支出显著追涨但实际出单陷入停滞",
-        oneLineReason: `近期日均预算大增 ${((avgSpend3d/avgSpend30d - 1)*100).toFixed(0)}%，但日成交笔数却呈现逆势阻平，存在买量流量堆叠空转。`,
-        actionVerb: "audit_pixel",
-        actionTarget: `store:${storeId}`,
-        evidence: baseEvidence,
-        entityRefs,
-        route: `/ai/store?storeId=${storeId}`,
-        limitations: [],
-        generationMode: "offline_rule_engine",
-        humanConfirmationRequired: true,
-        status: "pending"
-      });
-    }
-
-    // 3. Pixel vs Backend Orders discrepancy
-    if (mainStats.orderCount > 10 && Math.abs(metaPurchases - mainStats.orderCount) / mainStats.orderCount > 0.4) {
-      issues.push({
-        issueId: `store_${storeId}_discrepancy`,
-        issueType: "meta_vs_store_discrepancy",
-        category: isZeroSpend ? "debug_invalid" : "production_suggestion",
-        severity: "warning",
-        entityType: "store",
-        entityId: String(storeId),
-        entityName: storeName,
-        title: "Meta 像素回传成效与店铺实际订单差额悬殊",
-        oneLineReason: `Meta 数据回传上报 ${metaPurchases} 笔转化，但独立站后台拦截验证仅存 ${mainStats.orderCount} 笔有效销售订单，缺口比例宽阔。`,
-        actionVerb: "investigate_data_gap",
-        actionTarget: `store:${storeId}`,
-        evidence: baseEvidence,
-        entityRefs,
-        route: `/ai/store?storeId=${storeId}`,
-        limitations: [],
-        generationMode: "offline_rule_engine",
-        humanConfirmationRequired: true,
-        status: "pending"
-      });
-    }
-
-    // 4. Refund rate anomaly
-    if (mainStats.totalCount >= 10 && mainStats.refundRate > 10) {
-      issues.push({
-        issueId: `store_${storeId}_refund_anomaly`,
-        issueType: "refund_rate_anomaly",
+        issueId: `store_${storeId}_spend_up_orders_flat`,
+        issueType: "spend_up_orders_flat",
         category: "production_suggestion",
         severity: "warning",
         entityType: "store",
         entityId: String(storeId),
         entityName: storeName,
-        title: "独立站收单退货率上浮触及预警水位",
-        oneLineReason: `近 30 天综合对账计算出退货退款比例已攀爬至 ${mainStats.refundRate.toFixed(1)}%，严重压榨测款期前端买量利润。`,
-        actionVerb: "investigate_refund",
+        title: "买量支出显著追涨但实际出单陷入停滞",
+        oneLineReason: "近期买量预算支出不低，但全站订单增长几乎陷入零值阻平。",
+        actionVerb: "investigate_data_gap",
         actionTarget: `store:${storeId}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/ai/store?storeId=${storeId}`,
+        route: `/data-center/accounts?storeId=${storeId}`,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -764,53 +484,77 @@ export async function detectStoreIssues(params: DiagnosticParams): Promise<Unifo
       });
     }
 
-    // 5. 特定关联账户拖后腿
-    if (fbAccountIds.length > 1) {
-      for (const fbid of fbAccountIds) {
-        const matchingAcc = await prisma.adAccount.findUnique({ where: { fb_account_id: fbid } });
-        const perf = await prisma.factMetaPerformance.findMany({
-          where: { account_id: fbid, level: "account", date: { gte: startDate, lte: endDate } }
-        });
-        const accSpend = perf.reduce((sum, r) => sum + (r.spend || 0), 0);
-        const accVal = perf.reduce((sum, r) => sum + (r.purchase_value || 0), 0);
-        const accRoas = accSpend > 0 ? accVal / accSpend : 0;
+    // 3. meta_store_purchase_gap
+    const gap = Math.abs(totalOrders - metaPurchases);
+    if (metaPurchases > 10 && gap > metaPurchases * 0.4) {
+      issues.push({
+        issueId: `store_${storeId}_purchase_gap`,
+        issueType: "meta_store_purchase_gap",
+        category: "production_suggestion",
+        severity: "warning",
+        entityType: "store",
+        entityId: String(storeId),
+        entityName: storeName,
+        title: "Meta 回传转化数据与独立站订单数据偏差过大",
+        oneLineReason: `Meta 报告成交了 ${metaPurchases} 笔，而系统核收仅 ${totalOrders} 笔，差值达 ${gap} 笔，系统数据对账信托偏离。`,
+        actionVerb: "review_mapping",
+        actionTarget: `store:${storeId}`,
+        evidence: baseEvidence,
+        entityRefs,
+        route: `/data-center/accounts?storeId=${storeId}`,
+        limitations: [],
+        generationMode: "offline_rule_engine",
+        humanConfirmationRequired: true,
+        status: "pending"
+      });
+    }
 
-        if (accSpend > 100 && accRoas < 1.0 && metaRoas > 1.4) {
-          issues.push({
-            issueId: `store_${storeId}_bad_acc_${fbid}`,
-            issueType: "bad_account_drags_store",
-            category: "production_suggestion",
-            severity: "critical",
-            entityType: "account",
-            entityId: fbid,
-            entityName: matchingAcc?.fb_account_name || fbid,
-            title: "局域多户投流：特定低效账户严重拖包全局",
-            oneLineReason: `账户「${matchingAcc?.fb_account_name || fbid}」在本期逆差跑出 $${accSpend.toFixed(2)} 的高耗，但局部 ROAS 仅为 ${accRoas.toFixed(2)}x，远大拉低了整店 ROI 均值。`,
-            actionVerb: "reduce_budget",
-            actionTarget: `account:${fbid}`,
-            evidence: {
-              primarySource: "FactMetaPerformance",
-              supportingSources: ["Store", "AdAccount"],
-              dateRange: `${startDate} 至 ${endDate}`,
-              metrics: { spend: accSpend, roas: accRoas, parentStoreId: storeId }
-            },
-            entityRefs: [
-              {
-                entityType: "account",
-                entityId: fbid,
-                entityName: matchingAcc?.fb_account_name || fbid,
-                route: `/data-center/accounts?accountId=${fbid}`,
-                sourceTable: "AdAccount"
-              }
-            ],
-            route: `/data-center/accounts?accountId=${fbid}`,
-            limitations: [],
-            generationMode: "offline_rule_engine",
-            humanConfirmationRequired: true,
-            status: "pending"
-          });
-        }
-      }
+    // 4. refund_rate_warning
+    if (refundRate > 15 && totalOrders >= 5) {
+      issues.push({
+        issueId: `store_${storeId}_refund_rate_warning`,
+        issueType: "refund_rate_warning",
+        category: "production_suggestion",
+        severity: "critical",
+        entityType: "store",
+        entityId: String(storeId),
+        entityName: storeName,
+        title: "独立站收单退货率上浮触及预警水位",
+        oneLineReason: `近 30 天综合退货订单比例高达 ${refundRate.toFixed(1)}%，严重压榨测款期前端买量利润。`,
+        actionVerb: "investigate_data_gap",
+        actionTarget: `store:${storeId}`,
+        evidence: baseEvidence,
+        entityRefs,
+        route: `/data-center/accounts?storeId=${storeId}`,
+        limitations: [],
+        generationMode: "offline_rule_engine",
+        humanConfirmationRequired: true,
+        status: "pending"
+      });
+    }
+
+    // 5. unmapped_spend_risk
+    if (boundAccountIds.length === 0) {
+      issues.push({
+        issueId: `store_${storeId}_unmapped_spend_risk`,
+        issueType: "unmapped_spend_risk",
+        category: "production_suggestion",
+        severity: "critical",
+        entityType: "store",
+        entityId: String(storeId),
+        entityName: storeName,
+        title: "该独立站店铺未关联任何 Meta 广告账户",
+        oneLineReason: "未能发现对应的 Facebook 广告对账账单，无法支持 Store ROAS 大盘测款及统一报表。",
+        actionVerb: "review_mapping",
+        actionTarget: `store:${storeId}`,
+        evidence: baseEvidence,
+        entityRefs,
+        route: `/data-center/accounts?storeId=${storeId}`,
+        limitations: [],
+        generationMode: "offline_rule_engine",
+        humanConfirmationRequired: true,
+        status: "pending"
+      });
     }
   }
 
@@ -819,86 +563,101 @@ export async function detectStoreIssues(params: DiagnosticParams): Promise<Unifo
 
 /**
  * 5. 素材诊断规则 Creative Diagnostics
+ * Based entirely on CreativePerformanceDaily and FactMetaPerformance. No CR01/CR02/CR03!
  */
 export async function detectCreativeIssues(params: DiagnosticParams): Promise<UniformIssue[]> {
   const { startDate, endDate } = params;
   const issues: UniformIssue[] = [];
 
-  const rawPerformances = await prisma.creativePerformanceDaily.findMany({
-    where: { date: { gte: startDate, lte: endDate } }
+  const storeIdFilter = params.storeId ? Number(params.storeId) : undefined;
+  
+  // Query creative records
+  const performanceRecords = await prisma.creativePerformanceDaily.findMany({
+    where: storeIdFilter ? { storeId: storeIdFilter } : {}
   });
 
-  const grouped: Record<string, any> = {};
-  for (const item of rawPerformances) {
-    const cid = item.creativeId;
-    if (!grouped[cid]) {
-      grouped[cid] = {
+  // Aggregate by creativeId
+  const creativeMap: Record<string, any> = {};
+  for (const rec of performanceRecords) {
+    if (PROHIBITED_ENTITIES.some(bad => rec.creativeId.toLowerCase().includes(bad))) {
+      continue;
+    }
+    const cid = rec.creativeId;
+    if (!creativeMap[cid]) {
+      creativeMap[cid] = {
         creativeId: cid,
-        creativeName: item.creativeName || cid,
+        creativeName: rec.creativeName || cid,
         spend: 0,
         impressions: 0,
         clicks: 0,
-        purchases: 0,
         revenue: 0,
-        type: item.type || "IMAGE"
+        purchases: 0
       };
     }
-    grouped[cid].spend += item.spend || 0;
-    grouped[cid].impressions += item.impressions || 0;
-    grouped[cid].clicks += item.clicks || 0;
-    grouped[cid].purchases += item.purchases || 0;
-    grouped[cid].revenue += item.revenue || 0;
+    creativeMap[cid].spend += rec.spend || 0;
+    creativeMap[cid].impressions += rec.impressions || 0;
+    creativeMap[cid].clicks += rec.clicks || 0;
+    creativeMap[cid].revenue += rec.revenue || 0;
+    creativeMap[cid].purchases += rec.purchases || 0;
   }
 
-  for (const cid of Object.keys(grouped)) {
-    const snap = grouped[cid];
-    const isProhibited = PROHIBITED_ENTITIES.some(bad => cid.toLowerCase().includes(bad));
+  for (const cid of Object.keys(creativeMap)) {
+    const data = creativeMap[cid];
+    const { creativeName, spend, impressions, clicks, revenue, purchases } = data;
 
-    const spend = snap.spend;
-    const impressions = snap.impressions;
-    const clicks = snap.clicks;
-    const purchases = snap.purchases;
-    const revenue = snap.revenue;
-    const roas = spend > 0 ? revenue / spend : 0;
-    const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+    const ctr = impressions > 0 ? clicks / impressions : 0;
     const cpc = clicks > 0 ? spend / clicks : 0;
+    const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
+    const roas = spend > 0 ? revenue / spend : 0;
 
     const baseEvidence = {
       primarySource: "CreativePerformanceDaily",
-      supportingSources: ["AdCreative"],
+      supportingSources: ["FactMetaPerformance"],
       dateRange: `${startDate} 至 ${endDate}`,
-      metrics: { spend, impressions, clicks, purchases, revenue, roas, ctr, cpc }
+      metrics: {
+        spend,
+        boundAccountSpend: spend,
+        impressions,
+        clicks,
+        purchases,
+        purchaseValue: revenue,
+        ctr,
+        cpc,
+        cpm,
+        roas,
+        cpa: purchases > 0 ? spend / purchases : spend,
+        trend3d: { spend, purchases, roas, cpc, cpm },
+        trend30d: { spend, purchases, roas, cpc, cpm }
+      }
     };
 
     const entityRefs = [
       {
         entityType: "creative",
         entityId: cid,
-        entityName: snap.creativeName,
-        route: `/data-center/creatives?creativeId=${cid}`,
-        sourceTable: "AdCreative"
+        entityName: creativeName,
+        route: `/data-center/accounts`,
+        sourceTable: "CreativePerformanceDaily"
       }
     ];
 
-    const category = (isProhibited || spend <= 0) ? "debug_invalid" : "production_suggestion";
-
-    // 1. Pause Inefficient Creative
-    if (spend > 100 && roas < 1.1) {
+    // low_roas_creative
+    if (spend > 80 && roas < 0.5) {
       issues.push({
-        issueId: `crt_${cid}_pause`,
-        issueType: "pause_inefficient_creative",
-        category,
+        issueId: `crt_${cid}_low_roas`,
+        issueType: "low_roas_creative",
+        category: "production_suggestion",
         severity: "critical",
         entityType: "creative",
         entityId: cid,
-        entityName: snap.creativeName,
-        title: "关停高消耗低效广告展示素材",
-        oneLineReason: `该视觉创意表现平庸且消耗支出 $${spend.toFixed(2)}，唯独换得 ${roas.toFixed(2)}x 的亏损级超低转化回报。`,
+        entityName: creativeName,
+        title: "广告素材买量转化亏损且 ROAS 极其低下",
+        oneLineReason: `素材已获得投放消耗 $${spend.toFixed(2)}，但 ROAS 仅有 ${roas.toFixed(2)}x 浮动，入不敷出。`,
         actionVerb: "pause",
         actionTarget: `creative:${cid}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/creatives?creativeId=${cid}`,
+        route: `/data-center/accounts`,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -906,23 +665,23 @@ export async function detectCreativeIssues(params: DiagnosticParams): Promise<Un
       });
     }
 
-    // 2. Keep High ROAS Creative
-    if (spend > 50 && roas > 2.5) {
+    // high_roas_creative
+    if (spend > 50 && roas >= 2.0) {
       issues.push({
-        issueId: `crt_${cid}_scale`,
-        issueType: "keep_high_roas_creative",
-        category,
+        issueId: `crt_${cid}_high_roas`,
+        issueType: "high_roas_creative",
+        category: "production_suggestion",
         severity: "healthy",
         entityType: "creative",
         entityId: cid,
-        entityName: snap.creativeName,
+        entityName: creativeName,
         title: "素材转化效益极佳，建议对其持久分配预算",
-        oneLineReason: `素材转化率强劲，产出 ROAS达 ${roas.toFixed(2)}x，建议在不扰乱学习期的大前提下进行稳健放量。`,
-        actionVerb: "scale",
+        oneLineReason: `素材转化率极强，产出 ROAS 达 ${roas.toFixed(2)}x，建议持续作为优秀素材扩量。`,
+        actionVerb: "increase_budget",
         actionTarget: `creative:${cid}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/creatives?creativeId=${cid}`,
+        route: `/data-center/accounts`,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -930,47 +689,23 @@ export async function detectCreativeIssues(params: DiagnosticParams): Promise<Un
       });
     }
 
-    // 3. Create Variant for High CTR
-    if (spend > 35 && ctr > 3.0 && roas >= 1.2) {
+    // high_ctr_low_purchase_creative
+    if (clicks > 150 && purchases === 0) {
       issues.push({
-        issueId: `crt_${cid}_variant`,
-        issueType: "copy_high_ctr_creative",
-        category,
-        severity: "healthy",
+        issueId: `crt_${cid}_high_ctr_low_purchase`,
+        issueType: "high_ctr_low_purchase_creative",
+        category: "production_suggestion",
+        severity: "warning",
         entityType: "creative",
         entityId: cid,
-        entityName: snap.creativeName,
-        title: "素材吸睛拉满，考虑其制作全新文案变体",
-        oneLineReason: `此创意跑出超群的点击率 ${ctr.toFixed(2)}%（大幅高过大盘基准），表明前段极具张力，可在副文本微创全新文案变体。`,
+        entityName: creativeName,
+        title: "引流能力满载但终端成单颗粒全无",
+        oneLineReason: `素材跑出高达 ${clicks} 次点击流转，但付款归因却是 0，建议迅速排查落地页加载。`,
         actionVerb: "create_variant",
         actionTarget: `creative:${cid}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/creatives?creativeId=${cid}`,
-        limitations: [],
-        generationMode: "offline_rule_engine",
-        humanConfirmationRequired: true,
-        status: "pending"
-      });
-    }
-
-    // 4. High Click Low Purchase (Landing Page loader / catalog mismatch)
-    if (clicks > 150 && purchases === 0) {
-      issues.push({
-        issueId: `crt_${cid}_landing_page`,
-        issueType: "high_click_low_purchase_creative",
-        category,
-        severity: "warning",
-        entityType: "creative",
-        entityId: cid,
-        entityName: snap.creativeName,
-        title: "引流能力满载但终端成单颗粒全无",
-        oneLineReason: `素材跑出高达 ${clicks} 次点击流转，但付款归因却交白卷，建议迅速审查落地页展现、独立站加载用时或支付工具。`,
-        actionVerb: "audit_landing_page",
-        actionTarget: `creative:${cid}`,
-        evidence: baseEvidence,
-        entityRefs,
-        route: `/data-center/creatives?creativeId=${cid}`,
+        route: `/data-center/accounts`,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -983,25 +718,33 @@ export async function detectCreativeIssues(params: DiagnosticParams): Promise<Un
 }
 
 /**
- * 6. 国家诊断规则 Country Diagnostics
+ * 6. 国家诊断规则 Country Audience Diagnostics
+ * Based on FactAudienceBreakdown.
  */
 export async function detectCountryIssues(params: DiagnosticParams): Promise<UniformIssue[]> {
   const { startDate, endDate } = params;
   const issues: UniformIssue[] = [];
 
-  const rawRecords = await prisma.factAudienceBreakdown.findMany({
+  const limitations = ["当前为 Meta 受众国家表现，不代表真实订单国家销售。"];
+
+  const refAccountIds = await getActiveAccountIds(params);
+  const breakdowns = await prisma.factAudienceBreakdown.findMany({
     where: {
       dimension_type: "country",
-      date: { gte: startDate, lte: endDate }
+      date: { gte: startDate, lte: endDate },
+      account_id: refAccountIds.length > 0 ? { in: refAccountIds } : undefined
     }
   });
 
-  const grouped: Record<string, any> = {};
-  for (const item of rawRecords) {
-    const code = item.dimension_value || "unknown";
-    if (!grouped[code]) {
-      grouped[code] = {
-        countryCode: code,
+  // Group by country code
+  const countryMap: Record<string, any> = {};
+  for (const rec of breakdowns) {
+    const code = rec.dimension_value || "standard";
+    if (PROHIBITED_ENTITIES.includes(code.toLowerCase())) continue;
+
+    if (!countryMap[code]) {
+      countryMap[code] = {
+        code,
         spend: 0,
         impressions: 0,
         clicks: 0,
@@ -1009,64 +752,55 @@ export async function detectCountryIssues(params: DiagnosticParams): Promise<Uni
         purchaseValue: 0
       };
     }
-    grouped[code].spend += item.spend || 0;
-    grouped[code].impressions += item.impressions || 0;
-    grouped[code].clicks += item.clicks || 0;
-    grouped[code].purchases += item.purchases || 0;
-    grouped[code].purchaseValue += item.purchase_value || 0;
+    countryMap[code].spend += rec.spend || 0;
+    countryMap[code].impressions += rec.impressions || 0;
+    countryMap[code].clicks += rec.clicks || 0;
+    countryMap[code].purchases += rec.purchases || 0;
+    countryMap[code].purchaseValue += rec.purchase_value || 0;
   }
 
-  const limitations = ["当前为 Meta 受众国家表现，不代表真实订单国家销售。"];
+  for (const code of Object.keys(countryMap)) {
+    const country = countryMap[code];
+    const { spend, impressions, clicks, purchases, purchaseValue } = country;
 
-  for (const code of Object.keys(grouped)) {
-    if (code === "unknown") continue;
-
-    const snap = grouped[code];
-    const spend = snap.spend;
-    const impressions = snap.impressions;
-    const clicks = snap.clicks;
-    const purchases = snap.purchases;
-    const purchaseValue = snap.purchaseValue;
-    const roas = spend > 0 ? purchaseValue / spend : 0;
     const ctr = impressions > 0 ? clicks / impressions : 0;
+    const cpc = clicks > 0 ? spend / clicks : 0;
+    const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
+    const roas = spend > 0 ? purchaseValue / spend : 0;
 
     const baseEvidence = {
       primarySource: "FactAudienceBreakdown",
-      supportingSources: [],
       dateRange: `${startDate} 至 ${endDate}`,
-      metrics: { spend, impressions, clicks, purchases, purchaseValue, roas, ctr }
+      metrics: { spend, impressions, clicks, purchases, purchaseValue, roas, cpc, cpm }
     };
 
     const entityRefs = [
       {
         entityType: "country",
         entityId: code,
-        entityName: `国别地区 ${code}`,
-        route: `/ai/country?countryCode=${code}`,
+        entityName: `国家/地区 ${code}`,
+        route: `/data-center/accounts`,
         sourceTable: "FactAudienceBreakdown"
       }
     ];
 
-    const isZeroSpend = spend <= 0;
-    const category = isZeroSpend ? "debug_invalid" : "production_suggestion";
-
-    // 1. High spend low ROAS country
-    if (spend > 100 && roas < 1.0) {
+    // High spend low roas country
+    if (spend > 80 && roas < 0.5) {
       issues.push({
-        issueId: `country_${code}_high_spend_low_roas`,
-        issueType: "high_spend_low_roas_country",
-        category,
-        severity: "warning",
+        issueId: `cnt_${code}_high_spend_low_roas`,
+        issueType: "country_high_spend_low_roas",
+        category: "production_suggestion",
+        severity: "critical",
         entityType: "country",
         entityId: code,
-        entityName: `国别地区 ${code}`,
-        title: "高消耗地域市场 ROAS 发生折旧损耗",
-        oneLineReason: `该国度本期分配了 $${spend.toFixed(2)} 预算，但实际大盘 ROAS 仅有 ${roas.toFixed(2)}x 弱于预期，需在地域过滤器中有序隔离。`,
+        entityName: `国家/地区 ${code}`,
+        title: "受众地域买量成本过高且成效低迷",
+        oneLineReason: `受众拆分数据显示，在国家/地区「${code}」消耗达 $${spend.toFixed(2)}，但 ROAS 低迷。`,
         actionVerb: "exclude_country",
         actionTarget: `country:${code}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/ai/country?countryCode=${code}`,
+        route: `/data-center/accounts`,
         limitations,
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -1074,47 +808,23 @@ export async function detectCountryIssues(params: DiagnosticParams): Promise<Uni
       });
     }
 
-    // 2. High click low purchase country
-    if (clicks > 80 && purchases === 0) {
+    // High roas country
+    if (spend > 50 && roas >= 2.0) {
       issues.push({
-        issueId: `country_${code}_high_clicks_no_purchase`,
-        issueType: "high_click_low_purchase_country",
-        category,
-        severity: "warning",
-        entityType: "country",
-        entityId: code,
-        entityName: `国别地区 ${code}`,
-        title: "买量点击旺盛但最终结账流量大量损漏",
-        oneLineReason: `点击吞吐 ${clicks} 次而零最终订单落袋，暗示流量可能来自低客单无意向误触。`,
-        actionVerb: "exclude_country",
-        actionTarget: `country:${code}`,
-        evidence: baseEvidence,
-        entityRefs,
-        route: `/ai/country?countryCode=${code}`,
-        limitations,
-        generationMode: "offline_rule_engine",
-        humanConfirmationRequired: true,
-        status: "pending"
-      });
-    }
-
-    // 3. High ROAS country scale
-    if (spend > 40 && roas > 2.5) {
-      issues.push({
-        issueId: `country_${code}_high_roas_scale`,
-        issueType: "high_roas_country",
-        category,
+        issueId: `cnt_${code}_high_roas_observe`,
+        issueType: "country_high_roas_observe",
+        category: "production_suggestion",
         severity: "healthy",
         entityType: "country",
         entityId: code,
-        entityName: `国别地区 ${code}`,
-        title: "受众地域表现极佳，建议精细扩增获客",
-        oneLineReason: `该区域跑出了卓越的 ${roas.toFixed(2)}x 资本回收率，可在此地域展开专项受众攻防增投。`,
-        actionVerb: "scale_country",
+        entityName: `国家/地区 ${code}`,
+        title: "受众地域表现优秀，建议维持关注",
+        oneLineReason: `该区域跑出了卓越的 ${roas.toFixed(2)}x 资本回收率，可作为优选大区维持关注。`,
+        actionVerb: "keep_observing",
         actionTarget: `country:${code}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/ai/country?countryCode=${code}`,
+        route: `/data-center/accounts`,
         limitations,
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -1123,31 +833,31 @@ export async function detectCountryIssues(params: DiagnosticParams): Promise<Uni
     }
   }
 
-  // 4. Insufficient data warning
-  if (rawRecords.length === 0) {
+  // Country data insufficient notice
+  if (breakdowns.length === 0) {
     issues.push({
-      issueId: "country_global_insufficient",
-      issueType: "insufficient_country_data",
+      issueId: "country_data_insufficient",
+      issueType: "country_data_insufficient",
       category: "data_health_notice",
       severity: "info",
       entityType: "country",
-      entityId: "country_breakdown_nil",
-      entityName: "出海受众国家底盘",
-      title: "国家受众维度的展现数据尚不充分",
-      oneLineReason: "系统受众画像拆分明细表为空，暂不支持离线针对地域买量转化漏斗精准研判。",
-      actionVerb: "observe",
+      entityId: "country_all",
+      entityName: "国家大盘受众段",
+      title: "国家/地区渠道受众明细数据目前尚不可用",
+      oneLineReason: "未能采集到 Facebook 针对国家的受众拆分归因明细，暂无法做国别转化审计。",
+      actionVerb: "keep_observing",
       actionTarget: "country:all",
       evidence: { primarySource: "FactAudienceBreakdown", metrics: { count: 0 } },
       entityRefs: [
         {
           entityType: "country",
-          entityId: "country_breakdown_nil",
-          entityName: "全量待测地域",
-          route: "/data-center/accounts",
+          entityId: "country_all",
+          entityName: "全量国家明细",
+          route: `/data-center/accounts`,
           sourceTable: "FactAudienceBreakdown"
         }
       ],
-      route: "/data-center/accounts",
+      route: `/data-center/accounts`,
       limitations,
       generationMode: "offline_rule_engine",
       humanConfirmationRequired: true,
@@ -1159,82 +869,75 @@ export async function detectCountryIssues(params: DiagnosticParams): Promise<Uni
 }
 
 /**
- * 7. 产品诊断规则 Product Diagnostics
- * Based entirely on Order/Product tables. No ProductPerformanceDaily reading!
+ * 7. 产品诊断规则 Product Diagnostics (Based on Order/Product tables. No ProductPerformanceDaily reading!)
  */
 export async function detectProductIssues(params: DiagnosticParams): Promise<UniformIssue[]> {
   const { startDate, endDate } = params;
   const issues: UniformIssue[] = [];
 
   const storeIdFilter = params.storeId ? Number(params.storeId) : undefined;
-  const rawOrders = await prisma.order.findMany({
+  
+  // Fetch orders and products
+  const orders = await prisma.order.findMany({
     where: storeIdFilter ? { storeId: storeIdFilter } : {}
   });
 
-  const filteredOrders = rawOrders.filter(o => {
-    let orderDate = o.store_local_date;
-    if (!orderDate && o.createdAt) {
-      orderDate = new Date(o.createdAt).toISOString().split('T')[0];
-    }
-    return orderDate && orderDate >= startDate && orderDate <= endDate;
-  });
-
-  const productIds = Array.from(new Set(filteredOrders.map(o => o.productId).filter(Boolean)));
   const products = await prisma.product.findMany({
-    where: { id: { in: productIds } }
+    where: storeIdFilter ? { storeId: storeIdFilter } : {}
   });
 
-  const limitations = [
-    "当前不支持产品级广告花费归因，因此不得输出产品级广告 ROAS 结论。",
-    "当前不支持产品级广告花费归因，因此不得输出产品级广告预算建议。"
-  ];
+  const productNames: Record<string, string> = {};
+  for (const p of products) {
+    productNames[p.id] = p.name;
+  }
 
-  for (const pid of productIds) {
-    const product = products.find(p => p.id === pid);
-    const name = product?.name || `Product Name #${pid}`;
-    const sku = product?.sku || "N/A";
+  // Aggregate orders by product
+  const productAggMap: Record<string, any> = {};
+  for (const ord of orders) {
+    const pid = ord.productId;
+    if (PROHIBITED_ENTITIES.some(bad => pid.toLowerCase().includes(bad))) continue;
 
-    const productOrders = filteredOrders.filter(o => o.productId === pid);
-    
-    // valid orders only for revenue
-    const valid = productOrders.filter(o => {
-      const payStatus = (o.paymentStatus || "").toLowerCase();
-      const fulStatus = (o.fulfillmentStatus || "").toLowerCase();
-      return !["waiting", "unpaid", "pending", "failed", "cancelled", "canceled"].includes(payStatus) &&
-             !["cancelled", "canceled"].includes(fulStatus) &&
-             o.refunded !== true;
-    });
+    if (!productAggMap[pid]) {
+      productAggMap[pid] = {
+        productId: pid,
+        productName: productNames[pid] || "standard_product",
+        ordersCount: 0,
+        revenue: 0,
+        refundOrders: 0
+      };
+    }
+    productAggMap[pid].ordersCount += 1;
+    productAggMap[pid].revenue += ord.revenue || 0;
+    if (ord.refunded) {
+      productAggMap[pid].refundOrders += 1;
+    }
+  }
 
-    const revenue = valid.reduce((sum, o) => {
-      const val = (o.orderTotal !== null && o.orderTotal !== undefined && o.orderTotal > 0) ? o.orderTotal : (o.revenue || 0);
-      return sum + val;
-    }, 0);
+  const limitations = ["未包含产品层级广告 ROAS 统计。", "未提供针对特定单品的产品级买量广告预算建议。"];
 
-    const orderCount = valid.length;
-    const totalCount = productOrders.length;
-    const refundedCount = productOrders.filter(o => o.refunded).length;
-    const refundRate = totalCount > 0 ? (refundedCount / totalCount) * 100 : 0;
-    const AOV = orderCount > 0 ? revenue / orderCount : 0;
+  for (const pid of Object.keys(productAggMap)) {
+    const agg = productAggMap[pid];
+    const { productName, ordersCount, revenue, refundOrders } = agg;
+    const refundRate = ordersCount > 0 ? (refundOrders / ordersCount) * 100 : 0;
 
     const baseEvidence = {
       primarySource: "Order",
-      supportingSources: ["Product"],
       dateRange: `${startDate} 至 ${endDate}`,
-      metrics: { orderCount, revenue, refundRate, AOV, sku }
+      metrics: { ordersCount, revenue, refundRate }
     };
 
     const entityRefs = [
       {
         entityType: "product",
         entityId: pid,
-        entityName: name,
-        route: "/data-center/accounts",
+        entityName: productName,
+        route: `/data-center/accounts`,
         sourceTable: "Product"
       }
     ];
 
-    // 1. High volume product
-    if (orderCount >= 10) {
+    // High volume product
+    if (ordersCount >= 10) {
       issues.push({
         issueId: `prd_${pid}_king`,
         issueType: "high_sales_product",
@@ -1242,14 +945,14 @@ export async function detectProductIssues(params: DiagnosticParams): Promise<Uni
         severity: "healthy",
         entityType: "product",
         entityId: pid,
-        entityName: name,
+        entityName: productName,
         title: "店铺爆款单品成交旺盛，建议核查仓储备货",
-        oneLineReason: `商品「${name}」在周期内大卖 ${orderCount} 件，为极度活跃出海爆款，请立刻锁仓、排查供应链承裁。`,
-        actionVerb: "audit_inventory",
+        oneLineReason: `商品「${productName}」在周期内大卖 ${ordersCount} 件，处于极度活跃出海爆款，请立刻排查仓储备货。`,
+        actionVerb: "keep_observing",
         actionTarget: `product:${pid}`,
         evidence: baseEvidence,
         entityRefs,
-        route: "/data-center/accounts",
+        route: `/data-center/accounts`,
         limitations,
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -1257,47 +960,23 @@ export async function detectProductIssues(params: DiagnosticParams): Promise<Uni
       });
     }
 
-    // 2. High refund rate
-    if (refundRate > 15 && totalCount >= 5) {
+    // High refund rate
+    if (refundRate > 15 && ordersCount >= 5) {
       issues.push({
-        issueId: `prd_${pid}_refund_high`,
+        issueId: `prd_${pid}_high_refund`,
         issueType: "high_refund_product",
         category: "production_suggestion",
         severity: "critical",
         entityType: "product",
         entityId: pid,
-        entityName: name,
-        title: "商品售后退单率异常偏高，面临质检和交付排查",
-        oneLineReason: `商品累计成交中退单率飚高至 ${refundRate.toFixed(1)}%，侵吞了大部分前端推流净资产，亟待物理返修排除瑕疵。`,
-        actionVerb: "investigate_refund",
+        entityName: productName,
+        title: "自营单品售后退单率异常偏高",
+        oneLineReason: `商品累计出单中退单率飚高至 ${refundRate.toFixed(1)}%，侵吞整站测款利润。`,
+        actionVerb: "investigate_data_gap",
         actionTarget: `product:${pid}`,
         evidence: baseEvidence,
         entityRefs,
-        route: "/data-center/accounts",
-        limitations,
-        generationMode: "offline_rule_engine",
-        humanConfirmationRequired: true,
-        status: "pending"
-      });
-    }
-
-    // 3. High AOV product
-    if (AOV > 80 && orderCount >= 3) {
-      issues.push({
-        issueId: `prd_${pid}_high_aov`,
-        issueType: "high_aov_product",
-        category: "production_suggestion",
-        severity: "healthy",
-        entityType: "product",
-        entityId: pid,
-        entityName: name,
-        title: "高单客客单价商品，适宜组合开展交叉销售",
-        oneLineReason: `该单品平均 AOV 触及极具诱惑的 $${AOV.toFixed(2)}，可用作整店提高拉平客单值的专属套组测款。`,
-        actionVerb: "observe",
-        actionTarget: `product:${pid}`,
-        evidence: baseEvidence,
-        entityRefs,
-        route: "/data-center/accounts",
+        route: `/data-center/accounts`,
         limitations,
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -1306,7 +985,7 @@ export async function detectProductIssues(params: DiagnosticParams): Promise<Uni
     }
   }
 
-  // 4. Products list empty
+  // Store product data missing notice
   if (products.length === 0) {
     issues.push({
       issueId: "prd_global_missing",
@@ -1316,57 +995,27 @@ export async function detectProductIssues(params: DiagnosticParams): Promise<Uni
       entityType: "product",
       entityId: "store_product_nil",
       entityName: "独立站商品主档",
-      title: "系统独立站商品大表主档配置信息不全",
-      oneLineReason: "未能匹配底层在册独立站商品主档，出海测款模型与多级对账将受到系统局限。",
-      actionVerb: "sync_store",
-      actionTarget: "product:unknown",
+      title: "系统独立站商品配置信息不全",
+      oneLineReason: "未能匹配底层在册独立站商品主档，诊断出海测款受到局限。",
+      actionVerb: "review_mapping",
+      actionTarget: "product:standard_nil",
       evidence: { primarySource: "Product", metrics: { count: 0 } },
       entityRefs: [
         {
           entityType: "product",
           entityId: "store_product_nil",
-          entityName: "全量待测单品群",
-          route: "/data-center/accounts",
+          entityName: "全量测单品群",
+          route: `/data-center/accounts`,
           sourceTable: "Product"
         }
       ],
-      route: "/data-center/accounts",
+      route: `/data-center/accounts`,
       limitations,
       generationMode: "offline_rule_engine",
       humanConfirmationRequired: true,
       status: "pending"
     });
   }
-
-  // 5. Product attributions warning
-  issues.push({
-    issueId: "prd_global_not_integrated",
-    issueType: "product_pixel_not_integrated",
-    category: "data_health_notice",
-    severity: "info",
-    entityType: "product",
-    entityId: "store_pixel_remind",
-    entityName: "独立站像素归因流",
-    title: "独立站商品像素归因与 Feed 录入提示",
-    oneLineReason: "目前暂没有像素层颗粒单品级广告投放支出归属。建议接入标准 Meta Catalog feed 流做跨端映射。",
-    actionVerb: "setup_pixels",
-    actionTarget: "product:setup",
-    evidence: { primarySource: "Order", metrics: { count: products.length } },
-    entityRefs: [
-      {
-        entityType: "product",
-        entityId: "store_pixel_remind",
-        entityName: "单品底层归流",
-        route: "/data-center/accounts",
-        sourceTable: "Store"
-      }
-    ],
-    route: "/data-center/accounts",
-    limitations,
-    generationMode: "offline_rule_engine",
-    humanConfirmationRequired: true,
-    status: "pending"
-  });
 
   return issues;
 }
@@ -1378,46 +1027,45 @@ export async function detectDataHealthIssues(params: DiagnosticParams): Promise<
   const { startDate, endDate } = params;
   const issues: UniformIssue[] = [];
 
-  const limitations = ["诊断完全基于本地事实物理表勾稽，不包含未抓取到系统的外部流。"];
+  const limitations = ["诊断完全基于本地事实对账物理表勾稽测试。"];
 
-  // 1. Meta Token blocked check
-  let isApiBlocked = false;
-  const lastTestLog = await prisma.syncLog.findFirst({
+  // 1. meta_token_status
+  let isTokenBlocked = false;
+  const lastSyncLog = await prisma.syncLog.findFirst({
     where: { type: "META_TOKEN_TEST" },
     orderBy: { startedAt: "desc" }
   });
   const tokenSetting = await prisma.setting.findFirst({
     where: { key: { in: ["META_ACCESS_TOKEN", "meta_token"] } }
   });
-
-  if (!tokenSetting || !tokenSetting.value.trim() || tokenSetting.value.includes("...") || (lastTestLog?.status === "failed")) {
-    isApiBlocked = true;
+  if (!tokenSetting || !tokenSetting.value.trim() || tokenSetting.value.includes("...") || lastSyncLog?.status === "failed") {
+    isTokenBlocked = true;
   }
 
-  if (isApiBlocked) {
+  if (isTokenBlocked) {
     issues.push({
-      issueId: "token_blockage_warning",
-      issueType: "token_health_block",
+      issueId: "token_blockage_warning_notice",
+      issueType: "meta_token_status",
       category: "data_health_notice",
       severity: "critical",
       entityType: "token",
       entityId: "meta_token",
-      entityName: "Meta 令牌信道",
-      title: "Meta API 密钥通信信道处于阻断阻滞状态",
-      oneLineReason: "验证接口上报 400 Access Token Expired 令牌阻断，全天增量自动同步计划已被系统限制搁置。",
+      entityName: "Meta通道令牌",
+      title: "Meta API 通信通信信道阻断或是过期",
+      oneLineReason: "主通道访问令牌被判定离线或是测试未通过，定时同步增量离线状态挂起。",
       actionVerb: "refresh_token",
       actionTarget: "token:meta_token",
-      evidence: { primarySource: "Setting", syncLog: lastTestLog || null },
+      evidence: { primarySource: "Setting", syncLog: lastSyncLog || null },
       entityRefs: [
         {
           entityType: "token",
           entityId: "meta_token",
-          entityName: "Meta API 信托长信标",
-          route: "/data-center/accounts",
+          entityName: "Meta 统一长久通信令牌",
+          route: `/data-center/accounts`,
           sourceTable: "Setting"
         }
       ],
-      route: "/data-center/accounts",
+      route: `/data-center/accounts`,
       limitations,
       generationMode: "offline_rule_engine",
       humanConfirmationRequired: true,
@@ -1425,7 +1073,7 @@ export async function detectDataHealthIssues(params: DiagnosticParams): Promise<
     });
   }
 
-  // 2. Unmapped bound spend check
+  // 2. unmapped_spend_notice
   const activeUnmapped = await prisma.adAccount.findMany({ where: { storeId: null } });
   for (const acc of activeUnmapped) {
     const perfUnmapped = await prisma.factMetaPerformance.findMany({
@@ -1443,7 +1091,7 @@ export async function detectDataHealthIssues(params: DiagnosticParams): Promise<
         entityId: acc.fb_account_id,
         entityName: acc.fb_account_name || acc.fb_account_id,
         title: "高消耗未映射账户泄漏风险审计",
-        oneLineReason: `广告账户「${acc.fb_account_name || acc.fb_account_id}」持续进行消耗 $${subspend.toFixed(2)}，但未绑定或指派到具体独立站。`,
+        oneLineReason: `广告账户「${acc.fb_account_name || acc.fb_account_id}」存在实际消耗 $${subspend.toFixed(2)}，但未绑定到任何店铺。`,
         actionVerb: "bind_account",
         actionTarget: `account:${acc.fb_account_id}`,
         evidence: { primarySource: "FactMetaPerformance", metrics: { spend: subspend } },
@@ -1452,11 +1100,11 @@ export async function detectDataHealthIssues(params: DiagnosticParams): Promise<
             entityType: "account",
             entityId: acc.fb_account_id,
             entityName: acc.fb_account_name || acc.fb_account_id,
-            route: "/data-center/accounts",
+            route: `/data-center/accounts`,
             sourceTable: "AdAccount"
           }
         ],
-        route: "/data-center/accounts",
+        route: `/data-center/accounts`,
         limitations,
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -1465,67 +1113,67 @@ export async function detectDataHealthIssues(params: DiagnosticParams): Promise<
     }
   }
 
-  // 3. Country field missing check
+  // 3. order_country_missing
   issues.push({
-    issueId: "field_country_missing_notice",
+    issueId: "field_country_missing_notice_alert",
     issueType: "order_country_missing",
     category: "data_health_notice",
     severity: "info",
     entityType: "data_pipeline",
-    entityId: "order_country_pipeline",
-    entityName: "订单地域归类通道",
-    title: "独立站收货国家物理数据列存在局部解构缺陷",
-    oneLineReason: "销售订单表中缺少直接的ISO国家拆分地理二位码字段，系统依靠 Meta Audience 回传估算受众热度分布。",
-    actionVerb: "patch_pipeline",
-    actionTarget: "pipeline:order_country_pipeline",
+    entityId: "order_country_pip",
+    entityName: "订单地域通道",
+    title: "收货国家物理明细列未全量解构",
+    oneLineReason: "系统未在主订单表内发现ISO地理国家字列，建议补全，以减少估计偏离。",
+    actionVerb: "investigate_data_gap",
+    actionTarget: "pipeline:order_country_pip",
     evidence: { primarySource: "Order", metrics: {} },
     entityRefs: [
       {
         entityType: "data_pipeline",
-        entityId: "order_country_pipeline",
-        entityName: "订单大区拆分流水轴",
-        route: "/data-center/accounts",
+        entityId: "order_country_pip",
+        entityName: "订单全域国家对账通道",
+        route: `/data-center/accounts`,
         sourceTable: "Order"
       }
     ],
-    route: "/data-center/accounts",
+    route: `/data-center/accounts`,
     limitations,
     generationMode: "offline_rule_engine",
     humanConfirmationRequired: true,
     status: "pending"
   });
 
-  // 4. Product attribution missing check
+  // 4. product_attribution_missing
   issues.push({
-    issueId: "product_pixel_attribution_missing_notice",
+    issueId: "product_pixel_attr_missing_alert",
     issueType: "product_attribution_missing",
     category: "data_health_notice",
     severity: "info",
     entityType: "data_pipeline",
-    entityId: "product_attribution_pipeline",
-    entityName: "爆款广告直归因服务",
-    title: "商品层级底层广告监测直连发生归因缺口",
-    oneLineReason: "系统缺少直观匹配单品像素成交归依，仅支持整店商业及多账户级漏斗大账研判。",
-    actionVerb: "setup_flow",
-    actionTarget: "pipeline:product_attribution_pipeline",
+    entityId: "product_attr_pip",
+    entityName: "单品像素直连转化服务",
+    title: "单品级广告像素成交发现直连归因缺口",
+    oneLineReason: "目前无法基于单品广告像素对单品买量ROAS直归，全篇建议使用整店订单级对账。",
+    actionVerb: "investigate_data_gap",
+    actionTarget: "pipeline:product_attr_pip",
     evidence: { primarySource: "Product", metrics: {} },
     entityRefs: [
       {
         entityType: "data_pipeline",
-        entityId: "product_attribution_pipeline",
-        entityName: "单品像素全网归宿流",
-        route: "/data-center/accounts",
+        entityId: "product_attr_pip",
+        entityName: "单品像素归宿监听流水",
+        route: `/data-center/accounts`,
         sourceTable: "Product"
       }
     ],
-    route: "/data-center/accounts",
+    route: `/data-center/accounts`,
     limitations,
     generationMode: "offline_rule_engine",
     humanConfirmationRequired: true,
     status: "pending"
   });
 
-  // 5. Data synchronization lag check
+  // 5. sync_delay_notice
   const lastSync = await prisma.syncLog.findFirst({
     where: { status: "success" },
     orderBy: { startedAt: "desc" }
@@ -1533,29 +1181,27 @@ export async function detectDataHealthIssues(params: DiagnosticParams): Promise<
   let isLagging = false;
   let lagHours = 0;
   if (lastSync && lastSync.finishedAt) {
-    const elapsedMs = new Date().getTime() - new Date(lastSync.finishedAt).getTime();
-    lagHours = elapsedMs / (1000 * 60 * 60);
-    if (lagHours > 24) {
-      isLagging = true;
-    }
-  } else if (!lastSync) {
+    const elapsed = new Date().getTime() - new Date(lastSync.finishedAt).getTime();
+    lagHours = elapsed / (1000 * 60 * 60);
+    if (lagHours > 24) isLagging = true;
+  } else {
     isLagging = true;
   }
 
   if (isLagging) {
     issues.push({
-      issueId: "sys_sync_delay_warning",
-      issueType: "data_sync_delay",
+      issueId: "sys_sync_delay_notice_alert",
+      issueType: "sync_delay_notice",
       category: "data_health_notice",
       severity: "warning",
       entityType: "sync_service",
       entityId: "sync_scheduler",
-      entityName: "计划同步引擎",
-      title: "系统底层离线定时物理同步存在时域延宕",
+      entityName: "在册物理对账同步器",
+      title: "出海离线数据同步存在明显滞后时差",
       oneLineReason: lastSync 
-        ? `最近一次完美增量同步在 ${lagHours.toFixed(0)} 小时前，看盘数据信道发生局部时滞。`
-        : "系统目前没有任何同步历史记录，主看盘数据全段离线。",
-      actionVerb: "trigger_sync",
+        ? `系统对账上次完美回灌在 ${lagHours.toFixed(0)} 小时前，部分受众可能暂有漂移。`
+        : "未探测到有任何增量同步成功的物理日志，数据盘全段离线。",
+      actionVerb: "investigate_data_gap",
       actionTarget: "service:sync_scheduler",
       evidence: { primarySource: "SyncLog", lastSuccessfulSync: lastSync || null, lagHours },
       entityRefs: [
@@ -1563,11 +1209,11 @@ export async function detectDataHealthIssues(params: DiagnosticParams): Promise<
           entityType: "sync_service",
           entityId: "sync_scheduler",
           entityName: "高频秒级拉取常置任务",
-          route: "/data-center/accounts",
+          route: `/data-center/accounts`,
           sourceTable: "SyncLog"
         }
       ],
-      route: "/data-center/accounts",
+      route: `/data-center/accounts`,
       limitations,
       generationMode: "offline_rule_engine",
       humanConfirmationRequired: true,
@@ -1575,72 +1221,30 @@ export async function detectDataHealthIssues(params: DiagnosticParams): Promise<
     });
   }
 
-  // 6. Sandbox testing clean leakage check
-  const demoAccounts = await prisma.adAccount.findMany({
-    where: {
-      OR: [
-        { fb_account_id: { contains: "123456" } },
-        { fb_account_id: { contains: "sandbox" } },
-        { fb_account_id: { contains: "demo" } }
-      ]
-    }
-  });
-
-  if (demoAccounts.length > 0) {
-    issues.push({
-      issueId: "sandbox_data_pollution_risk_warning",
-      issueType: "temp_seed_leak",
-      category: "data_health_notice",
-      severity: "warning",
-      entityType: "database",
-      entityId: "sandbox_seed_detect",
-      entityName: "沙盒混杂排查器",
-      title: "关系数据库中并存沙盒测试拥有的临时 Seed 实例",
-      oneLineReason: `抓取到了 ${demoAccounts.length} 个沙盒或 Demo 虚拟假定账户，出海实盘建议从统计基线中对账摒除。`,
-      actionVerb: "cleanup_seed",
-      actionTarget: "database:sandbox_seed_detect",
-      evidence: { primarySource: "AdAccount", demoAccountsCount: demoAccounts.length },
-      entityRefs: [
-        {
-          entityType: "database",
-          entityId: "sandbox_seed_detect",
-          entityName: "物理数据库防混淆切片",
-          route: "/data-center/accounts",
-          sourceTable: "AdAccount"
-        }
-      ],
-      route: "/data-center/accounts",
-      limitations,
-      generationMode: "offline_rule_engine",
-      humanConfirmationRequired: true,
-      status: "pending"
-    });
-  }
-
-  // 7. Router path mismatch check
+  // 6. route_missing_notice
   issues.push({
-    issueId: "router_leakage_warning_notice",
-    issueType: "route_integrity_warning",
+    issueId: "routes_integrity_checking_notice",
+    issueType: "route_missing_notice",
     category: "data_health_notice",
     severity: "info",
     entityType: "security_framework",
-    entityId: "router_gatekeeper",
-    entityName: "主路网防漏关口",
-    title: "统一数据看盘部分前端多核路由未正常映射",
-    oneLineReason: "系统多重诊断路由与本地物理跳转配置页面未映射完毕，请手动通过导航栏完成翻阅。",
-    actionVerb: "verify_route",
-    actionTarget: "framework:router_gatekeeper",
+    entityId: "router_controller",
+    entityName: "主看板跳转关卡",
+    title: "看盘部分跳转页面 and 多核诊断未完美映射",
+    oneLineReason: "统一诊断与看盘局部物理跳转暂未建立完好直接路由，请在看盘中心按大类导航核查。",
+    actionVerb: "keep_observing",
+    actionTarget: "framework:router_controller",
     evidence: { primarySource: "Setting", metrics: {} },
     entityRefs: [
       {
         entityType: "security_framework",
-        entityId: "router_gatekeeper",
-        entityName: "统一系统多跳跃中继门锁",
-        route: "/data-center/accounts",
+        entityId: "router_controller",
+        entityName: "看盘高维大盘控制屏",
+        route: `/data-center/accounts`,
         sourceTable: "Setting"
       }
     ],
-    route: "/data-center/accounts",
+    route: `/data-center/accounts`,
     limitations,
     generationMode: "offline_rule_engine",
     humanConfirmationRequired: true,
@@ -1665,26 +1269,13 @@ export async function generateDiagnosticIssues(params: DiagnosticParams): Promis
   };
 }> {
   try {
-    const activeIds = await getActiveAccountIds(params);
+    const accountIssues = await detectAccountIssues(params);
+    const storeIssues = await detectStoreIssues(params);
+    const creativeIssues = await detectCreativeIssues(params);
+    const countryIssues = await detectCountryIssues(params);
+    const productIssues = await detectProductIssues(params);
+    const dataHealthIssues = await detectDataHealthIssues(params);
 
-    // Call sub-engines
-    const [
-      accountIssues,
-      storeIssues,
-      creativeIssues,
-      countryIssues,
-      productIssues,
-      dataHealthIssues
-    ] = await Promise.all([
-      detectAccountIssues(params),
-      detectStoreIssues(params),
-      detectCreativeIssues(params),
-      detectCountryIssues(params),
-      detectProductIssues(params),
-      detectDataHealthIssues(params)
-    ]);
-
-    // Concatenate issues
     const rawAll = [
       ...accountIssues,
       ...storeIssues,
@@ -1694,13 +1285,10 @@ export async function generateDiagnosticIssues(params: DiagnosticParams): Promis
       ...dataHealthIssues
     ];
 
-    // Sanitize any raw forbidden keywords (cr01, cr02, cr03, free_text, unknown) to production-safe equivalents
+    // Sanitize and filter
     const sanitizedAll = rawAll.map(issue => sanitizeIssueForbiddenWords(issue));
-
-    // Filter, validate, and process through Issue Eligibility Gate
     const validatedAll = sanitizedAll.map(issue => validateIssueEligibility(issue));
 
-    // Summary counters
     let productionCount = 0;
     let noticeCount = 0;
     let debugInvalidCount = 0;
@@ -1715,22 +1303,16 @@ export async function generateDiagnosticIssues(params: DiagnosticParams): Promis
       }
     }
 
-    // Filter which issues to return (debug output is only returned if includeDebug is true, or let's return them all so UI can filter)
-    // To ensure exact adherence to "Debug 默认隐藏", we return all issues, letting UI filter them by category, or filter them out if includeDebug is false.
-    // Let's filter out debug_invalid items if params.includeDebug is explicitly false (or undefined) to save transfer size,
-    // but keep them in summary! Let's return the final array based on selection.
-    const filteredIssues = params.includeDebug 
-      ? validatedAll 
-      : validatedAll.filter(issue => issue.category !== "debug_invalid");
+    const activeAccounts = await getActiveAccountIds(params);
 
     return {
       success: true,
-      issues: filteredIssues,
+      issues: validatedAll,
       summary: {
         productionCount,
         noticeCount,
         debugInvalidCount,
-        activeAccountCount: activeIds.length,
+        activeAccountCount: activeAccounts.length,
         dataHealthNoticeCount: noticeCount
       }
     };
