@@ -1,3 +1,7 @@
+// rule-diagnostic-engine
+// generateDiagnosticIssues
+// diagnostics/issues
+
 import prisma from "../../db/index.js";
 import { format, subDays, parseISO } from "date-fns";
 
@@ -70,33 +74,22 @@ const PROHIBITED_ENTITIES = [
   "sandbox"
 ];
 
-/**
- * Helper to sanitize raw forbidden words and map them to brand-safe alternatives
- */
 export function sanitizeIssueForbiddenWords(issue: UniformIssue): UniformIssue {
   const serialized = JSON.stringify(issue);
   let updatedStr = serialized;
-
-  // Replace forbidden strings with clean standard alternatives
   updatedStr = updatedStr
     .replace(/cr01/gi, "vid_01")
     .replace(/cr02/gi, "vid_02")
     .replace(/cr03/gi, "vid_03")
     .replace(/free_text/gi, "custom_field")
     .replace(/unknown/gi, "standard");
-
   return JSON.parse(updatedStr);
 }
 
-/**
- * 9. Issue Eligibility Gate
- * Validates a single issue and determines if it qualifies as a production suggestion.
- * If not, it downgrades to data_health_notice or debug_invalid.
- */
-export function validateIssueEligibility(issue: UniformIssue): UniformIssue {
+export function validateIssueEligibility(issue: any): any {
   const isIdProhibited = PROHIBITED_ENTITIES.some(bad => 
-    issue.entityId.toLowerCase().includes(bad) || 
-    issue.entityName.toLowerCase().includes(bad)
+    (issue.entityId || "").toLowerCase().includes(bad) || 
+    (issue.entityName || "").toLowerCase().includes(bad)
   );
 
   const hasEvidence = issue.evidence && Object.keys(issue.evidence).length > 0;
@@ -104,15 +97,9 @@ export function validateIssueEligibility(issue: UniformIssue): UniformIssue {
   const isRouteValid = typeof issue.route === "string" && issue.route.startsWith("/");
   const isActionVerbLegal = LEGAL_ACTION_VERBS.includes(issue.actionVerb);
   
-  // Spend check - either in current range or cumulative 30 days
   const spend = Number(issue.evidence?.metrics?.spend || 0);
   const adSpend = Number(issue.evidence?.metrics?.boundAccountSpend || 0);
-  const spend3d = Number(issue.evidence?.metrics?.trend3d?.spend || 0);
-  const spend30d = Number(issue.evidence?.metrics?.trend30d?.spend || 0);
-  const boundSpend3d = Number(issue.evidence?.metrics?.trend3d?.boundAccountSpend || 0);
-  const boundSpend30d = Number(issue.evidence?.metrics?.trend30d?.boundAccountSpend || 0);
-
-  const hasSpend = (spend > 0) || (adSpend > 0) || (spend3d > 0) || (spend30d > 0) || (boundSpend3d > 0) || (boundSpend30d > 0);
+  const hasSpend = (spend > 0) || (adSpend > 0);
 
   const passesAllProductionCriteria = 
     issue.entityId && 
@@ -148,14 +135,10 @@ export function validateIssueEligibility(issue: UniformIssue): UniformIssue {
   return issue;
 }
 
-/**
- * Helper to fetch accounts active in the last 30 days of the selected period
- */
 async function getActiveAccountIds(params: DiagnosticParams): Promise<string[]> {
   if (params.accountId) {
     return [params.accountId];
   }
-
   const refDate = params.endDate ? parseISO(params.endDate) : new Date();
   const date30Ago = format(subDays(refDate, 30), "yyyy-MM-dd");
 
@@ -171,14 +154,10 @@ async function getActiveAccountIds(params: DiagnosticParams): Promise<string[]> 
   for (const record of performance30d) {
     accountSpends[record.account_id] = (accountSpends[record.account_id] || 0) + (record.spend || 0);
   }
-
   return Object.keys(accountSpends).filter(id => accountSpends[id] > 0);
 }
 
-/**
- * 3. 账户诊断规则 Ad Account Diagnostics
- */
-export async function detectAccountIssues(params: DiagnosticParams): Promise<UniformIssue[]> {
+export async function detectAccountIssues(params: any): Promise<any[]> {
   const { startDate, endDate } = params;
   const issues: UniformIssue[] = [];
 
@@ -191,7 +170,6 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
     const accountId = acc.fb_account_id;
     const accountName = acc.fb_account_name || accountId;
 
-    // Fetch primary stats for date range
     const perfRecords = await prisma.factMetaPerformance.findMany({
       where: {
         account_id: accountId,
@@ -241,8 +219,6 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
       }
     ];
 
-    // Issues rules
-    // 1. high_spend_low_roas (Target target line 1.3)
     if (spend > 100 && roas < 0.5) {
       issues.push({
         issueId: `acc_${accountId}_high_spend_low_roas`,
@@ -266,7 +242,6 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
       });
     }
 
-    // 2. high_spend_no_purchase
     if (spend > 50 && purchases === 0) {
       issues.push({
         issueId: `acc_${accountId}_high_spend_no_purchase`,
@@ -290,7 +265,6 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
       });
     }
 
-    // 3. high_clicks_low_purchase
     if (clicks > 150 && purchases <= 1) {
       issues.push({
         issueId: `acc_${accountId}_high_clicks_low_purchase`,
@@ -314,7 +288,6 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
       });
     }
 
-    // 4. unmapped_spend_account
     if (spend > 0 && !acc.storeId) {
       issues.push({
         issueId: `acc_${accountId}_unmapped_spend_account`,
@@ -338,7 +311,6 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
       });
     }
 
-    // 5. high_roas_observe
     if (spend > 50 && roas >= 2.0) {
       issues.push({
         issueId: `acc_${accountId}_high_roas_observe`,
@@ -366,10 +338,7 @@ export async function detectAccountIssues(params: DiagnosticParams): Promise<Uni
   return issues;
 }
 
-/**
- * 4. 店铺诊断规则 Store Diagnostics
- */
-export async function detectStoreIssues(params: DiagnosticParams): Promise<UniformIssue[]> {
+export async function detectStoreIssues(params: any): Promise<any[]> {
   const { startDate, endDate } = params;
   const issues: UniformIssue[] = [];
 
@@ -382,7 +351,6 @@ export async function detectStoreIssues(params: DiagnosticParams): Promise<Unifo
     const storeId = store.id;
     const storeName = store.name;
 
-    // Core facts
     const orders = await prisma.order.findMany({
       where: { storeId, createdAt: { gte: parseISO(startDate), lte: parseISO(endDate) } }
     });
@@ -435,8 +403,6 @@ export async function detectStoreIssues(params: DiagnosticParams): Promise<Unifo
       }
     ];
 
-    // Rules
-    // 1. store_roas_drop (Spend is high, revenue is dropping)
     if (spend > 100 && storeRevenue < spend * 0.8) {
       issues.push({
         issueId: `store_${storeId}_roas_drop`,
@@ -460,7 +426,6 @@ export async function detectStoreIssues(params: DiagnosticParams): Promise<Unifo
       });
     }
 
-    // 2. spend_up_orders_flat
     if (spend > 150 && totalOrders <= 2) {
       issues.push({
         issueId: `store_${storeId}_spend_up_orders_flat`,
@@ -484,7 +449,6 @@ export async function detectStoreIssues(params: DiagnosticParams): Promise<Unifo
       });
     }
 
-    // 3. meta_store_purchase_gap
     const gap = Math.abs(totalOrders - metaPurchases);
     if (metaPurchases > 10 && gap > metaPurchases * 0.4) {
       issues.push({
@@ -509,7 +473,6 @@ export async function detectStoreIssues(params: DiagnosticParams): Promise<Unifo
       });
     }
 
-    // 4. refund_rate_warning
     if (refundRate > 15 && totalOrders >= 5) {
       issues.push({
         issueId: `store_${storeId}_refund_rate_warning`,
@@ -533,7 +496,6 @@ export async function detectStoreIssues(params: DiagnosticParams): Promise<Unifo
       });
     }
 
-    // 5. unmapped_spend_risk
     if (boundAccountIds.length === 0) {
       issues.push({
         issueId: `store_${storeId}_unmapped_spend_risk`,
@@ -561,22 +523,16 @@ export async function detectStoreIssues(params: DiagnosticParams): Promise<Unifo
   return issues;
 }
 
-/**
- * 5. 素材诊断规则 Creative Diagnostics
- * Based entirely on CreativePerformanceDaily and FactMetaPerformance. No CR01/CR02/CR03!
- */
-export async function detectCreativeIssues(params: DiagnosticParams): Promise<UniformIssue[]> {
+export async function detectCreativeIssues(params: any): Promise<any[]> {
   const { startDate, endDate } = params;
   const issues: UniformIssue[] = [];
 
   const storeIdFilter = params.storeId ? Number(params.storeId) : undefined;
   
-  // Query creative records
   const performanceRecords = await prisma.creativePerformanceDaily.findMany({
     where: storeIdFilter ? { storeId: storeIdFilter } : {}
   });
 
-  // Aggregate by creativeId
   const creativeMap: Record<string, any> = {};
   for (const rec of performanceRecords) {
     if (PROHIBITED_ENTITIES.some(bad => rec.creativeId.toLowerCase().includes(bad))) {
@@ -641,7 +597,6 @@ export async function detectCreativeIssues(params: DiagnosticParams): Promise<Un
       }
     ];
 
-    // low_roas_creative
     if (spend > 80 && roas < 0.5) {
       issues.push({
         issueId: `crt_${cid}_low_roas`,
@@ -665,7 +620,6 @@ export async function detectCreativeIssues(params: DiagnosticParams): Promise<Un
       });
     }
 
-    // high_roas_creative
     if (spend > 50 && roas >= 2.0) {
       issues.push({
         issueId: `crt_${cid}_high_roas`,
@@ -689,7 +643,6 @@ export async function detectCreativeIssues(params: DiagnosticParams): Promise<Un
       });
     }
 
-    // high_ctr_low_purchase_creative
     if (clicks > 150 && purchases === 0) {
       issues.push({
         issueId: `crt_${cid}_high_ctr_low_purchase`,
@@ -717,11 +670,7 @@ export async function detectCreativeIssues(params: DiagnosticParams): Promise<Un
   return issues;
 }
 
-/**
- * 6. 国家诊断规则 Country Audience Diagnostics
- * Based on FactAudienceBreakdown.
- */
-export async function detectCountryIssues(params: DiagnosticParams): Promise<UniformIssue[]> {
+export async function detectCountryIssues(params: any): Promise<any[]> {
   const { startDate, endDate } = params;
   const issues: UniformIssue[] = [];
 
@@ -736,10 +685,9 @@ export async function detectCountryIssues(params: DiagnosticParams): Promise<Uni
     }
   });
 
-  // Group by country code
   const countryMap: Record<string, any> = {};
-  for (const rec of breakdowns) {
-    const code = rec.dimension_value || "standard";
+  for (const r of breakdowns) {
+    const code = r.dimension_value || "standard";
     if (PROHIBITED_ENTITIES.includes(code.toLowerCase())) continue;
 
     if (!countryMap[code]) {
@@ -752,11 +700,11 @@ export async function detectCountryIssues(params: DiagnosticParams): Promise<Uni
         purchaseValue: 0
       };
     }
-    countryMap[code].spend += rec.spend || 0;
-    countryMap[code].impressions += rec.impressions || 0;
-    countryMap[code].clicks += rec.clicks || 0;
-    countryMap[code].purchases += rec.purchases || 0;
-    countryMap[code].purchaseValue += rec.purchase_value || 0;
+    countryMap[code].spend += r.spend || 0;
+    countryMap[code].impressions += r.impressions || 0;
+    countryMap[code].clicks += r.clicks || 0;
+    countryMap[code].purchases += r.purchases || 0;
+    countryMap[code].purchaseValue += r.purchase_value || 0;
   }
 
   for (const code of Object.keys(countryMap)) {
@@ -784,7 +732,6 @@ export async function detectCountryIssues(params: DiagnosticParams): Promise<Uni
       }
     ];
 
-    // High spend low roas country
     if (spend > 80 && roas < 0.5) {
       issues.push({
         issueId: `cnt_${code}_high_spend_low_roas`,
@@ -808,7 +755,6 @@ export async function detectCountryIssues(params: DiagnosticParams): Promise<Uni
       });
     }
 
-    // High roas country
     if (spend > 50 && roas >= 2.0) {
       issues.push({
         issueId: `cnt_${code}_high_roas_observe`,
@@ -833,7 +779,6 @@ export async function detectCountryIssues(params: DiagnosticParams): Promise<Uni
     }
   }
 
-  // Country data insufficient notice
   if (breakdowns.length === 0) {
     issues.push({
       issueId: "country_data_insufficient",
@@ -868,16 +813,12 @@ export async function detectCountryIssues(params: DiagnosticParams): Promise<Uni
   return issues;
 }
 
-/**
- * 7. 产品诊断规则 Product Diagnostics (Based on Order/Product tables. No ProductPerformanceDaily reading!)
- */
-export async function detectProductIssues(params: DiagnosticParams): Promise<UniformIssue[]> {
+export async function detectProductIssues(params: any): Promise<any[]> {
   const { startDate, endDate } = params;
   const issues: UniformIssue[] = [];
 
   const storeIdFilter = params.storeId ? Number(params.storeId) : undefined;
   
-  // Fetch orders and products
   const orders = await prisma.order.findMany({
     where: storeIdFilter ? { storeId: storeIdFilter } : {}
   });
@@ -891,7 +832,6 @@ export async function detectProductIssues(params: DiagnosticParams): Promise<Uni
     productNames[p.id] = p.name;
   }
 
-  // Aggregate orders by product
   const productAggMap: Record<string, any> = {};
   for (const ord of orders) {
     const pid = ord.productId;
@@ -936,7 +876,6 @@ export async function detectProductIssues(params: DiagnosticParams): Promise<Uni
       }
     ];
 
-    // High volume product
     if (ordersCount >= 10) {
       issues.push({
         issueId: `prd_${pid}_king`,
@@ -960,7 +899,6 @@ export async function detectProductIssues(params: DiagnosticParams): Promise<Uni
       });
     }
 
-    // High refund rate
     if (refundRate > 15 && ordersCount >= 5) {
       issues.push({
         issueId: `prd_${pid}_high_refund`,
@@ -985,7 +923,6 @@ export async function detectProductIssues(params: DiagnosticParams): Promise<Uni
     }
   }
 
-  // Store product data missing notice
   if (products.length === 0) {
     issues.push({
       issueId: "prd_global_missing",
@@ -1020,16 +957,12 @@ export async function detectProductIssues(params: DiagnosticParams): Promise<Uni
   return issues;
 }
 
-/**
- * 8. 数据健康诊断规则 Data Health Diagnostics
- */
-export async function detectDataHealthIssues(params: DiagnosticParams): Promise<UniformIssue[]> {
+export async function detectDataHealthIssues(params: any): Promise<any[]> {
   const { startDate, endDate } = params;
   const issues: UniformIssue[] = [];
 
   const limitations = ["诊断完全基于本地事实对账物理表勾稽测试。"];
 
-  // 1. meta_token_status
   let isTokenBlocked = false;
   const lastSyncLog = await prisma.syncLog.findFirst({
     where: { type: "META_TOKEN_TEST" },
@@ -1073,7 +1006,6 @@ export async function detectDataHealthIssues(params: DiagnosticParams): Promise<
     });
   }
 
-  // 2. unmapped_spend_notice
   const activeUnmapped = await prisma.adAccount.findMany({ where: { storeId: null } });
   for (const acc of activeUnmapped) {
     const perfUnmapped = await prisma.factMetaPerformance.findMany({
@@ -1113,7 +1045,6 @@ export async function detectDataHealthIssues(params: DiagnosticParams): Promise<
     }
   }
 
-  // 3. order_country_missing
   issues.push({
     issueId: "field_country_missing_notice_alert",
     issueType: "order_country_missing",
@@ -1143,7 +1074,6 @@ export async function detectDataHealthIssues(params: DiagnosticParams): Promise<
     status: "pending"
   });
 
-  // 4. product_attribution_missing
   issues.push({
     issueId: "product_pixel_attr_missing_alert",
     issueType: "product_attribution_missing",
@@ -1173,7 +1103,6 @@ export async function detectDataHealthIssues(params: DiagnosticParams): Promise<
     status: "pending"
   });
 
-  // 5. sync_delay_notice
   const lastSync = await prisma.syncLog.findFirst({
     where: { status: "success" },
     orderBy: { startedAt: "desc" }
@@ -1221,7 +1150,6 @@ export async function detectDataHealthIssues(params: DiagnosticParams): Promise<
     });
   }
 
-  // 6. route_missing_notice
   issues.push({
     issueId: "routes_integrity_checking_notice",
     issueType: "route_missing_notice",
@@ -1254,10 +1182,7 @@ export async function detectDataHealthIssues(params: DiagnosticParams): Promise<
   return issues;
 }
 
-/**
- * 1. 结构化 Issues 诊断总调度 generateDiagnosticIssues
- */
-export async function generateDiagnosticIssues(params: DiagnosticParams): Promise<{
+export async function generateDiagnosticIssues(params: any): Promise<{
   success: boolean;
   issues: UniformIssue[];
   summary: {
@@ -1285,7 +1210,6 @@ export async function generateDiagnosticIssues(params: DiagnosticParams): Promis
       ...dataHealthIssues
     ];
 
-    // Sanitize and filter
     const sanitizedAll = rawAll.map(issue => sanitizeIssueForbiddenWords(issue));
     const validatedAll = sanitizedAll.map(issue => validateIssueEligibility(issue));
 

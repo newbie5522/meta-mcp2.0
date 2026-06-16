@@ -16,21 +16,21 @@ import diagnosticsRoutes from "./diagnostics.routes.js";
 import dashboardRoutes from "./dashboard.routes.js";
 import dataCenterRoutes from "./data-center.routes.js";
 
-const routes = Router();
+const router = Router();
 
-routes.use("/auth", authRoutes);
-routes.use("/dashboard", dashboardRoutes);
-routes.use("/data-center", dataCenterRoutes);
-routes.use("/users", usersRoutes);
-routes.use("/stores", storesRoutes);
-routes.use("/intelligence", intelligenceRoutes);
-routes.use("/ai-analysis", aiAnalysisRoutes);
-routes.use("/diagnostics", diagnosticsRoutes);
-routes.use("/accounts", accountsRoutes);
-routes.use("/", syncRoutes);
-routes.use("/insights", insightsRoutes);
-routes.use("/settings", settingsRoutes);
-routes.use("/mappings", mappingsRoutes);
-routes.use("/monitoring", monitoringRoutes);
+router.use("/auth", authRoutes);
+router.use("/dashboard", dashboardRoutes);
+router.use("/data-center", dataCenterRoutes);
+router.use("/users", usersRoutes);
+router.use("/stores", storesRoutes);
+router.use("/intelligence", intelligenceRoutes);
+router.use("/ai-analysis", aiAnalysisRoutes);
+router.use("/diagnostics", diagnosticsRoutes);
+router.use("/accounts", accountsRoutes);
+router.use("/", syncRoutes);
+router.use("/insights", insightsRoutes);
+router.use("/settings", settingsRoutes);
+router.use("/mappings", mappingsRoutes);
+router.use("/monitoring", monitoringRoutes);
 
-export default routes;
+export default router;
