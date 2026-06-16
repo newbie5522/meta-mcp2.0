@@ -140,7 +140,7 @@ export function FunnelDiagnosisPage() {
           </div>
           <div className="ml-3">
             <p className="text-xs text-amber-800 font-bold">
-              当前页面为 UI 骨架占位示例，展示数据为占位示例，不代表真实店铺或广告账户表现。下一阶段将接入 /api/diagnostics/issues。
+              当前页面已接入离线规则诊断引擎。若数据库为空或所选日期范围内没有可诊断记录，将显示空状态，不会展示演示数据。
             </p>
           </div>
         </div>
