@@ -42,11 +42,11 @@ export function PrescriptionReviewPage() {
       <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
         <div className="flex">
           <div className="flex-shrink-0">
-            <span className="text-amber-500">⚠️</span>
+            <span className="text-amber-500 font-bold">⚠️</span>
           </div>
           <div className="ml-3">
             <p className="text-xs text-amber-800 font-bold">
-              当前建议卡片为 UI 占位示例，不代表真实 AI 诊断结果。下一阶段将接入后端 /api/diagnostics/issues 接口。
+              当前回测及执行分析面板为示例展示。后续将伴随处方状态流转机制，在 STEP 13-D-Lite 关联真实已被采纳执行的动作与成效率对账。
             </p>
           </div>
         </div>
