@@ -40,11 +40,19 @@ export function PrescriptionReviewPage() {
     const issueId = item.issueId;
 
     // Retrieve corresponding original issue if existing
-    const matchedIssue = issues.find(i => i.issueId === issueId) || {
-      issueId,
-      title: `建议处方：${issueId}`,
-      category: "production_suggestion",
-    };
+    const matchedIssue = issues.find(i => i.issueId === issueId);
+    if (!matchedIssue) {
+      setReviewAiStateByIssueId(prev => ({
+        ...prev,
+        [issueId]: {
+          loading: false,
+          error: "AI 解释功能暂无可用诊断输入。",
+          response: null,
+          expanded: true
+        }
+      }));
+      return;
+    }
 
     setReviewAiStateByIssueId(prev => ({
       ...prev,
@@ -117,7 +125,11 @@ export function PrescriptionReviewPage() {
   const executedCount = statusList.filter(s => s.status === "executed").length;
   const ignoredCount = statusList.filter(s => s.status === "ignored").length;
 
-  const totalActions = statusList.filter(s => ["accepted", "in_progress", "executed", "ignored"].includes(s.status)).length;
+  const reviewableActions = statusList.filter(s =>
+    ["accepted", "in_progress", "executed"].includes(s.status)
+  );
+
+  const totalActions = reviewableActions.length;
 
   // Helper to translate backtest review status to human label/color classes
   const getBacktestBadge = (val: string | undefined) => {
@@ -235,87 +247,95 @@ export function PrescriptionReviewPage() {
             </h3>
 
             <div className="space-y-4">
-              {statusList.map((item) => (
-                <div key={item.issueId} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 hover:shadow-md transition-shadow">
-                  {/* Title and main status details */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-bold rounded">
-                          ID: {item.issueId}
-                        </span>
-                        <span className="text-xs text-slate-400 font-medium">
-                          流转分类: {
-                            item.status === "accepted" ? "已采纳" :
-                            item.status === "in_progress" ? "执行中" :
-                            item.status === "executed" ? "已执行" : "已忽略"
-                          }
-                        </span>
-                      </div>
-                      <h4 className="font-bold text-slate-900 text-sm mt-1">处方建议：{item.issueId}</h4>
-                    </div>
-                  </div>
-
-                  {/* Multi-cycle backtesting display states */}
-                  <div className="bg-slate-50 border border-slate-150/60 rounded-xl p-4 space-y-3">
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
-                      多维度周期回测占位监测：
-                    </span>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-                      <div className="p-3 bg-white rounded-lg border border-slate-100 space-y-1.5 shadow-sm">
-                        <span className="text-[10px] text-slate-400 block font-semibold">📅 3 天效果校验期</span>
-                        <div>{getBacktestBadge(item.review3dStatus)}</div>
-                      </div>
-
-                      <div className="p-3 bg-white rounded-lg border border-slate-100 space-y-1.5 shadow-sm">
-                        <span className="text-[10px] text-slate-400 block font-semibold">📅 7 天效果校验期</span>
-                        <div>{getBacktestBadge(item.review7dStatus)}</div>
-                      </div>
-
-                      <div className="p-3 bg-white rounded-lg border border-slate-100 space-y-1.5 shadow-sm">
-                        <span className="text-[10px] text-slate-400 block font-semibold">📅 14 天效果校验期</span>
-                        <div>{getBacktestBadge(item.review14dStatus)}</div>
+              {reviewableActions.map((item) => {
+                const matchedIssue = issues.find(i => i.issueId === item.issueId);
+                const isMissing = !matchedIssue;
+                return (
+                  <div key={item.issueId} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 hover:shadow-md transition-shadow">
+                    {/* Title and main status details */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-bold rounded">
+                            ID: {item.issueId}
+                          </span>
+                          <span className="text-xs text-slate-400 font-medium">
+                            流转分类: {
+                              item.status === "accepted" ? "已采纳" :
+                              item.status === "in_progress" ? "执行中" :
+                              item.status === "executed" ? "已执行" : "已忽略"
+                            }
+                          </span>
+                        </div>
+                        <h4 className="font-bold text-slate-900 text-sm mt-1">处方建议：{item.issueId}</h4>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Execution detail outputs */}
-                  {item.status === "ignored" && item.ignoreReason && (
-                    <div className="text-xs bg-red-50 text-red-800 p-3 rounded-lg border border-red-100 leading-relaxed">
-                      <strong>忽略原因记录:</strong> {item.ignoreReason}
-                      {item.ignoredAt && <span className="block text-[10px] text-red-500 mt-1">忽略时间: {item.ignoredAt}</span>}
-                    </div>
-                  )}
+                    {/* Multi-cycle backtesting display states */}
+                    <div className="bg-slate-50 border border-slate-150/60 rounded-xl p-4 space-y-3">
+                      <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                        多维度周期回测占位监测：
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                        <div className="p-3 bg-white rounded-lg border border-slate-100 space-y-1.5 shadow-sm">
+                          <span className="text-[10px] text-slate-400 block font-semibold">📅 3 天效果校验期</span>
+                          <div>{getBacktestBadge(item.review3dStatus)}</div>
+                        </div>
 
-                  {item.status === "executed" && item.operatorNotes && (
-                    <div className="text-xs bg-purple-50 text-purple-800 p-3 rounded-lg border border-purple-100 leading-relaxed">
-                      <strong>人工实操执行备注:</strong> {item.operatorNotes}
-                      {item.executedAt && <span className="block text-[10px] text-purple-500 mt-1">执行时间: {item.executedAt}</span>}
-                    </div>
-                  )}
+                        <div className="p-3 bg-white rounded-lg border border-slate-100 space-y-1.5 shadow-sm">
+                          <span className="text-[10px] text-slate-400 block font-semibold">📅 7 天效果校验期</span>
+                          <div>{getBacktestBadge(item.review7dStatus)}</div>
+                        </div>
 
-                  {item.status === "in_progress" && (
-                    <div className="text-xs bg-blue-50 text-blue-800 p-3 rounded-lg border border-blue-100 leading-relaxed flex items-center justify-between">
-                      <div>
-                        <strong>执行状态中：</strong> 建议已被标记为实操跟进，基线对账期启动。
+                        <div className="p-3 bg-white rounded-lg border border-slate-100 space-y-1.5 shadow-sm">
+                          <span className="text-[10px] text-slate-400 block font-semibold">📅 14 天效果校验期</span>
+                          <div>{getBacktestBadge(item.review14dStatus)}</div>
+                        </div>
                       </div>
                     </div>
-                  )}
 
-                  {/* AI Review Template Panel (STEP 13-AI-R1-Review-DryRun) */}
-                  {item.status !== "ignored" && (
-                    <div className="pt-2 border-t border-dashed border-slate-100">
+                    {/* Execution detail outputs */}
+                    {item.status === "ignored" && item.ignoreReason && (
+                      <div className="text-xs bg-red-50 text-red-800 p-3 rounded-lg border border-red-100 leading-relaxed">
+                        <strong>忽略原因记录:</strong> {item.ignoreReason}
+                        {item.ignoredAt && <span className="block text-[10px] text-red-500 mt-1">忽略时间: {item.ignoredAt}</span>}
+                      </div>
+                    )}
+
+                    {item.status === "executed" && item.operatorNotes && (
+                      <div className="text-xs bg-purple-50 text-purple-800 p-3 rounded-lg border border-purple-100 leading-relaxed">
+                        <strong>人工实操执行备注:</strong> {item.operatorNotes}
+                        {item.executedAt && <span className="block text-[10px] text-purple-500 mt-1">执行时间: {item.executedAt}</span>}
+                      </div>
+                    )}
+
+                    {item.status === "in_progress" && (
+                      <div className="text-xs bg-blue-50 text-blue-800 p-3 rounded-lg border border-blue-100 leading-relaxed flex items-center justify-between">
+                        <div>
+                          <strong>执行状态中：</strong> 建议已被标记为实操跟进，基线对账期启动。
+                        </div>
+                      </div>
+                    )}
+
+                    {/* AI Review Template Panel (STEP 13-AI-R1-Review-DryRun) */}
+                    <div className="pt-2 border-t border-dashed border-slate-100 space-y-2">
                       <AiReviewTemplatePanel
                         loading={reviewAiStateByIssueId[item.issueId]?.loading || false}
                         error={reviewAiStateByIssueId[item.issueId]?.error}
                         response={reviewAiStateByIssueId[item.issueId]?.response}
                         onGenerate={() => handleGenerateReviewTemplate(item)}
                         onRetry={() => handleGenerateReviewTemplate(item)}
+                        disabled={isMissing}
                       />
+                      {isMissing && (
+                        <div className="text-[11px] text-amber-600 font-medium font-sans">
+                          AI 解释功能暂无可用诊断输入。
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
