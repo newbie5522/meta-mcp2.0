@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { validateAIExplainOutput } from "../../shared/ai-output-validator";
 import { AIExplainInput } from "../../shared/ai-explain.types";
 import { DEFAULT_AI_PROVIDERS } from "../../shared/ai-provider-config";
+import { buildAiDeepDiagnosisContext } from "../services/ai-deep-diagnosis-context.service.js";
 
 const router = Router();
 
@@ -161,6 +162,126 @@ router.get("/providers", (req: Request, res: Response): void => {
     success: true,
     providers: DEFAULT_AI_PROVIDERS
   });
+});
+
+const VALID_MODES = [
+  "account_overview",
+  "store_overview",
+  "campaign_diagnosis",
+  "adset_diagnosis",
+  "ad_diagnosis",
+  "creative_fatigue",
+  "product_performance",
+  "funnel_breakdown",
+  "data_quality",
+  "cross_channel_attribution"
+];
+
+/**
+ * POST /api/ai/deep-diagnosis/context
+ * Read-only aggregation endpoint that compiles full diagnostics input telemetry.
+ */
+router.post("/deep-diagnosis/context", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const {
+      mode,
+      scope,
+      startDate,
+      endDate,
+      comparisonStartDate,
+      comparisonEndDate,
+      filters,
+      limit
+    } = req.body || {};
+
+    // 1. Mandatory parameter presence checks
+    if (!mode) {
+      res.status(400).json({ success: false, error: "Missing required parameter: mode" });
+      return;
+    }
+    if (!scope) {
+      res.status(400).json({ success: false, error: "Missing required parameter: scope" });
+      return;
+    }
+    if (!startDate) {
+      res.status(400).json({ success: false, error: "Missing required parameter: startDate" });
+      return;
+    }
+    if (!endDate) {
+      res.status(400).json({ success: false, error: "Missing required parameter: endDate" });
+      return;
+    }
+
+    // 2. Validate mode inclusion
+    if (!VALID_MODES.includes(mode)) {
+      res.status(400).json({ success: false, error: `Invalid mode. Allowed values: ${VALID_MODES.join(", ")}` });
+      return;
+    }
+
+    // 3. Date string validation
+    const parsedStart = new Date(startDate);
+    const parsedEnd = new Date(endDate);
+    if (isNaN(parsedStart.getTime())) {
+      res.status(400).json({ success: false, error: "Invalid startDate format" });
+      return;
+    }
+    if (isNaN(parsedEnd.getTime())) {
+      res.status(400).json({ success: false, error: "Invalid endDate format" });
+      return;
+    }
+
+    // 4. Date range inversion validation
+    if (parsedStart > parsedEnd) {
+      res.status(400).json({ success: false, error: "startDate cannot be later than endDate" });
+      return;
+    }
+
+    // 5. Limit range validation
+    let resolvedLimit = limit;
+    if (limit !== undefined) {
+      if (typeof limit !== "number" || limit < 1 || limit > 100) {
+        res.status(400).json({ success: false, error: "limit must be a number between 1 and 100" });
+        return;
+      }
+    } else {
+      resolvedLimit = 50; // default cap of 50
+    }
+
+    // 6. Aggregate context using the reader service
+    const contextResult = await buildAiDeepDiagnosisContext({
+      mode,
+      scope,
+      startDate,
+      endDate,
+      comparisonStartDate,
+      comparisonEndDate,
+      filters,
+      limit: resolvedLimit
+    });
+
+    res.json({
+      success: contextResult.success,
+      mode: contextResult.mode,
+      aiEnabled: contextResult.aiEnabled,
+      explanation: contextResult.explanation,
+      input: contextResult.input,
+      dataQuality: contextResult.dataQuality,
+      limitations: contextResult.limitations,
+      warnings: contextResult.warnings,
+      boundaryNotice: BOUNDARY_NOTICE
+    });
+
+  } catch (err: any) {
+    console.error("[deep-diagnosis/context ERROR]", err);
+    res.status(500).json({
+      success: false,
+      mode: "context_only",
+      aiEnabled: false,
+      explanation: null,
+      error: err.message,
+      boundaryNotice: BOUNDARY_NOTICE
+    });
+  }
 });
 
 export default router;
