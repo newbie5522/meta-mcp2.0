@@ -11,15 +11,11 @@ function SettingsPage() {
   const [metaToken, setMetaToken] = useState("");
   const [hasMetaToken, setHasMetaToken] = useState(false);
   const [metaTokenUpdatedAt, setMetaTokenUpdatedAt] = useState<string | null>(null);
-  const [geminiApiKey, setGeminiApiKey] = useState("");
-  const [geminiModel, setGeminiModel] = useState("gemini-3.5-flash");
   
-  const [loadingAI, setLoadingAI] = useState(false);
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [fetching, setFetching] = useState(true);
 
   // Modal states
-  const [showAIModal, setShowAIModal] = useState(false);
   const [showMetaModal, setShowMetaModal] = useState(false);
   const [showMetaHelpModal, setShowMetaHelpModal] = useState(false);
 
@@ -32,13 +28,6 @@ function SettingsPage() {
         }
         if (settingsRes.data.META_TOKEN_UPDATED_AT) {
           setMetaTokenUpdatedAt(settingsRes.data.META_TOKEN_UPDATED_AT);
-        }
-        const geminiKeyFieldName = ["GEMINI", "API_KEY"].join("_");
-        if (settingsRes.data[geminiKeyFieldName]) {
-          setGeminiApiKey(settingsRes.data[geminiKeyFieldName]);
-        }
-        if (settingsRes.data.GEMINI_MODEL) {
-          setGeminiModel(settingsRes.data.GEMINI_MODEL);
         }
       } catch (err) {
         toast.error("加载设置失败");
@@ -55,21 +44,6 @@ function SettingsPage() {
     } catch (err) {
       console.error(`Save ${key} failed`);
       throw err;
-    }
-  };
-
-  const handleSaveAIConfig = async () => {
-    setLoadingAI(true);
-    try {
-      const geminiKeyFieldName = ["GEMINI", "API_KEY"].join("_");
-      await handleSaveSetting(geminiKeyFieldName, geminiApiKey);
-      await handleSaveSetting("GEMINI_MODEL", geminiModel);
-      toast.success("AI 助手配置已保存");
-      setShowAIModal(false);
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || "保存 AI 配置失败");
-    } finally {
-      setLoadingAI(false);
     }
   };
 
@@ -116,80 +90,23 @@ function SettingsPage() {
           <div className="w-16 h-16 rounded-full bg-blue-50 flex items-center justify-center mb-4 text-meta-blue">
             <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>
           </div>
-          <h3 className="text-[15px] font-medium text-gray-800 mb-2">AI 诊断与助手配置</h3>
-          <p className="text-[12px] text-gray-500 mb-6 flex-1">
-            配置用于广告诊断和策略回答的 AI 模型及 API 密钥
+          <h3 className="text-[15px] font-medium text-gray-800 mb-2">AI 诊断与助手状态</h3>
+          <p className="text-[12px] text-gray-500 mb-4 flex-1">
+            本系统已升级物理安全对账内核，完全通过离线勾稽判定逻辑运行诊断。不存储外部 API 密钥，也不调用在线大模型。
           </p>
-          <Button 
-            className="w-[180px] bg-[#3B82F6] hover:bg-blue-600 font-normal rounded-[4px] h-9"
-            onClick={() => setShowAIModal(true)}
-          >
-            修改 AI 配置
-          </Button>
-
-          {/* AI Config Modal */}
-          <Dialog open={showAIModal} onOpenChange={setShowAIModal}>
-            <DialogContent showCloseButton={false} className="max-w-[450px] p-0 overflow-hidden bg-white rounded-lg border-0 shadow-2xl">
-              <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
-                <h3 className="text-[16px] font-medium text-gray-800">修改 AI 配置</h3>
-                <button onClick={() => setShowAIModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              <div className="px-8 py-6 space-y-5">
-                <div className="flex items-center gap-4">
-                  <label className="text-[13px] text-gray-600 w-24 text-right shrink-0">
-                    * 模型选择:
-                  </label>
-                  <select
-                    value={geminiModel}
-                    onChange={(e) => setGeminiModel(e.target.value)}
-                    className="flex-1 h-9 rounded-[4px] border border-gray-200 bg-white px-3 text-[13px] text-gray-800 outline-none focus:border-blue-500 transition-colors"
-                  >
-                    <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-                    <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
-                    <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1 w-full">
-                  <div className="flex items-center gap-4">
-                    <label className="text-[13px] text-gray-600 w-24 text-right shrink-0">
-                      * API Key:
-                    </label>
-                    <Input
-                      type="password"
-                      placeholder="AI_zaSy..."
-                      value={geminiApiKey}
-                      onChange={(e) => setGeminiApiKey(e.target.value)}
-                      autoComplete="new-password"
-                      className="flex-1 h-9 rounded-[4px] border border-gray-200 text-[13px] focus-visible:ring-0 focus-visible:border-blue-500 placeholder:text-gray-400"
-                    />
-                  </div>
-                  <div className="pl-[112px]">
-                    <p className="text-[12px] text-gray-400 mt-1">
-                      前往 <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">Google AI Studio</a> 获取 API Key。
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <div className="flex justify-center gap-3 px-6 py-5 border-t border-gray-100 bg-gray-50/50">
-                <Button 
-                  variant="outline" 
-                  onClick={() => setShowAIModal(false)}
-                  className="w-[88px] h-9 text-[13px] font-normal border-gray-200 shadow-sm"
-                >
-                  取消
-                </Button>
-                <Button 
-                  onClick={handleSaveAIConfig}
-                  disabled={loadingAI}
-                  className="w-[88px] h-9 text-[13px] font-normal bg-[#3B82F6] hover:bg-blue-600 text-white shadow-sm"
-                >
-                  {loadingAI ? <RefreshCcw className="w-4 h-4 animate-spin" /> : "确定"}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+          <div className="w-full text-left text-[12px] bg-blue-50/50 p-3.5 rounded-md border border-blue-100 mb-2">
+            <div className="flex justify-between items-center mb-1.5">
+              <span className="text-gray-500 font-medium">诊断内核</span>
+              <span className="text-blue-700 font-bold bg-blue-50 px-2 py-0.5 rounded-sm">离线规则引擎</span>
+            </div>
+            <div className="flex justify-between items-center mb-1.5">
+              <span className="text-gray-500">API 秘钥</span>
+              <span className="text-gray-600">不提供密钥输入</span>
+            </div>
+            <p className="text-[11px] text-gray-400 border-t border-blue-100/60 pt-2 mt-1.5 leading-relaxed">
+              安全离线运行模式，保障数据对账的物理安全与数据最高保密等级。
+            </p>
+          </div>
         </div>
 
         {/* Meta Config Card */}
