@@ -579,10 +579,21 @@ router.get("/:id/dashboard-summary", async (req, res) => {
     const orders = await prisma.order.findMany({
       where: {
         storeId: store.id,
-        createdAt: {
-          gte: start,
-          lte: end,
-        },
+        OR: [
+          {
+            store_local_date: {
+              gte: startStr,
+              lte: endStr,
+            },
+          },
+          {
+            store_local_date: null,
+            createdAt: {
+              gte: start,
+              lte: end,
+            },
+          },
+        ],
       },
     });
 

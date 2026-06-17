@@ -42,8 +42,8 @@ export interface StoreSyncResult {
   }>;
 }
 
-export function normalizeTimezone(tz: string | null | undefined): string {
-  if (!tz) return "Asia/Shanghai";
+export function normalizeTimezone(tz: string | null | undefined): string | null {
+  if (!tz) return null;
   const trimmed = tz.trim();
   try {
     Intl.DateTimeFormat(undefined, { timeZone: trimmed });
@@ -80,17 +80,25 @@ export function normalizeTimezone(tz: string | null | undefined): string {
       case 11: return "Pacific/Guadalcanal";
       case 12: return "Pacific/Auckland";
       case 13: return "Pacific/Apia";
-      default: return hours > 0 ? "Asia/Shanghai" : "UTC";
+      default: return null;
     }
   }
-  return "Asia/Shanghai";
+  return null;
+}
+
+export function resolveStoreTimezoneForSync(store: { id: number; name: string; platform: string | null; timezone: string | null }): string {
+  const tz = normalizeTimezone(store.timezone);
+  if (!tz) {
+    throw new Error("STORE_TIMEZONE_MISSING_OR_INVALID");
+  }
+  return tz;
 }
 
 export function getStoreLocalDate(createdAtStr: string | Date, timezoneStr: string | null | undefined): string {
   if (!createdAtStr) return dayjs().format("YYYY-MM-DD");
   const d = typeof createdAtStr === "string" ? createdAtStr : createdAtStr.toISOString();
   try {
-    const tz = normalizeTimezone(timezoneStr);
+    const tz = normalizeTimezone(timezoneStr) || "Asia/Shanghai";
     return dayjs(d).tz(tz).format("YYYY-MM-DD");
   } catch (err) {
     return dayjs(d).format("YYYY-MM-DD");
@@ -101,15 +109,24 @@ export function getStoreLocalDatetime(createdAtStr: string | Date, timezoneStr: 
   if (!createdAtStr) return dayjs().format("YYYY-MM-DDTHH:mm:ss");
   const d = typeof createdAtStr === "string" ? createdAtStr : createdAtStr.toISOString();
   try {
-    const tz = normalizeTimezone(timezoneStr);
+    const tz = normalizeTimezone(timezoneStr) || "Asia/Shanghai";
     return dayjs(d).tz(tz).format("YYYY-MM-DDTHH:mm:ss");
   } catch (err) {
     return dayjs(d).format("YYYY-MM-DDTHH:mm:ss");
   }
 }
 
+export function isStoreLocalDateWithinRange(
+  storeLocalDate: string,
+  localStartDate: string,
+  localEndDate: string
+): boolean {
+  if (!storeLocalDate || !localStartDate || !localEndDate) return false;
+  return storeLocalDate >= localStartDate && storeLocalDate <= localEndDate;
+}
+
 export function getTzOffset(timezoneName: string | null | undefined, dateStr: string): string {
-  const tz = normalizeTimezone(timezoneName);
+  const tz = normalizeTimezone(timezoneName) || "Asia/Shanghai";
   try {
     const d = dayjs.tz(`${dateStr}T12:00:00`, tz);
     return d.format("Z");
@@ -257,6 +274,34 @@ export async function syncStoreData(startDate: string, endDate: string, storeIde
       continue;
     }
     
+    // Validate timezone strictly: Missing/invalid timezone must not fallback silently or sync real orders
+    try {
+      resolveStoreTimezoneForSync(store);
+    } catch (tzErr: any) {
+      console.error(`[Store Sync] Timezone validation failed for store ${store.id} (${store.name}):`, tzErr.message);
+      results[store.id] = {
+        storeId: store.id,
+        storeName: store.name,
+        platform: store.platform || "unknown",
+        timezone: store.timezone || "",
+        localStartDate: startDate,
+        localEndDate: endDate,
+        utcStartDate: "",
+        utcEndDate: "",
+        requestUrlSanitized: "",
+        pageCount: 0,
+        recordsFetched: 0,
+        recordsSaved: 0,
+        recordsSkipped: 0,
+        skippedReasons: [],
+        duplicateCount: 0,
+        failedCount: 0,
+        errorMessage: "STORE_TIMEZONE_MISSING_OR_INVALID",
+        orderItems: []
+      };
+      continue; // Skip synchronizing this store entirely!
+    }
+    
     try {
       if (store.platform === "shoplazza" || (store.shoplazza_token && !store.shopline_token && !store.shopify_token)) {
         console.log(`[Store Sync] Triggering Shoplazza Sync for store ${store.id}...`);
@@ -376,6 +421,28 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
 
       const totalAmount = parseFloat(o.total_price || o.current_total_price || o.total_amount || 0);
       const storeLocalDate = getStoreLocalDate(o.created_at, store.timezone);
+
+      if (!isStoreLocalDateWithinRange(storeLocalDate, startDate, endDate)) {
+        report.recordsSkipped++;
+        report.skippedReasons.push({
+          id: o.id.toString(),
+          order_number: o.order_number || o.name || o.id.toString(),
+          reason: `Order local date ${storeLocalDate} is outside requested store-local range ${startDate} ~ ${endDate}`
+        });
+        report.orderItems.push({
+          id: o.id.toString(),
+          order_number: o.order_number || o.name || o.id.toString(),
+          createdAtRaw: o.created_at,
+          createdAtUtc: new Date(o.created_at).toISOString(),
+          storeLocalDate,
+          totalAmount,
+          paymentStatus: o.financial_status || "unknown",
+          fulfillmentStatus: o.fulfillment_status || "unfulfilled",
+          isSaved: false,
+          skipReason: `Order local date ${storeLocalDate} is outside requested store-local range ${startDate} ~ ${endDate}`
+        });
+        continue;
+      }
 
       report.orderItems.push({
         id: o.id.toString(),
@@ -580,6 +647,28 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
 
       const totalAmount = parseFloat(o.total_price || o.current_total_price || o.total_amount || 0);
       const storeLocalDate = getStoreLocalDate(o.created_at, store.timezone);
+
+      if (!isStoreLocalDateWithinRange(storeLocalDate, startDate, endDate)) {
+        report.recordsSkipped++;
+        report.skippedReasons.push({
+          id: o.id.toString(),
+          order_number: o.order_number || o.name || o.id.toString(),
+          reason: `Order local date ${storeLocalDate} is outside requested store-local range ${startDate} ~ ${endDate}`
+        });
+        report.orderItems.push({
+          id: o.id.toString(),
+          order_number: o.order_number || o.name || o.id.toString(),
+          createdAtRaw: o.created_at,
+          createdAtUtc: new Date(o.created_at).toISOString(),
+          storeLocalDate,
+          totalAmount,
+          paymentStatus: o.financial_status || "unknown",
+          fulfillmentStatus: o.fulfillment_status || "unfulfilled",
+          isSaved: false,
+          skipReason: `Order local date ${storeLocalDate} is outside requested store-local range ${startDate} ~ ${endDate}`
+        });
+        continue;
+      }
 
       report.orderItems.push({
         id: o.id.toString(),
@@ -820,6 +909,28 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
 
       const totalAmount = parseFloat(o.total_price || o.current_total_price || o.total_amount || 0);
       const storeLocalDate = getStoreLocalDate(o.created_at, store.timezone);
+
+      if (!isStoreLocalDateWithinRange(storeLocalDate, startDate, endDate)) {
+        report.recordsSkipped++;
+        report.skippedReasons.push({
+          id: o.id.toString(),
+          order_number: o.order_number || o.name || o.id.toString(),
+          reason: `Order local date ${storeLocalDate} is outside requested store-local range ${startDate} ~ ${endDate}`
+        });
+        report.orderItems.push({
+          id: o.id.toString(),
+          order_number: o.order_number || o.name || o.id.toString(),
+          createdAtRaw: o.created_at,
+          createdAtUtc: new Date(o.created_at).toISOString(),
+          storeLocalDate,
+          totalAmount,
+          paymentStatus: o.financial_status || "unknown",
+          fulfillmentStatus: o.fulfillment_status || "unfulfilled",
+          isSaved: false,
+          skipReason: `Order local date ${storeLocalDate} is outside requested store-local range ${startDate} ~ ${endDate}`
+        });
+        continue;
+      }
 
       report.orderItems.push({
         id: o.id.toString(),

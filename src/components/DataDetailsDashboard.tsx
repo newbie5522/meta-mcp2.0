@@ -93,8 +93,8 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       // 有消耗账户: spend > 0
       list = list.filter(item => (item.spend || 0) > 0);
     } else if (statusFilter === "active") {
-      // 活跃账户: recentActivity90d equals true or 1
-      list = list.filter(item => item.recentActivity90d === true || item.recentActivity90d === 1 || item.activityStatus === 1);
+      // 活跃账户: recentActivity90d equals true
+      list = list.filter(item => item.recentActivity90d === true);
     } else if (statusFilter === "unmapped") {
       // 未绑定店铺账户: isBound is false
       list = list.filter(item => !item.isBound);
@@ -243,7 +243,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
               statusFilter === "active" ? "bg-white text-slate-900 shadow-sm font-bold" : "hover:text-slate-900"
             )}
           >
-            活跃账户 ({data.accounts?.filter(a => a.recentActivity90d === true || a.recentActivity90d === 1 || a.activityStatus === 1).length || 0})
+            活跃账户 ({data.accounts?.filter(a => a.recentActivity90d === true).length || 0})
           </button>
           <button
             onClick={() => setStatusFilter("all")}
