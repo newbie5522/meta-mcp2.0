@@ -15,7 +15,6 @@ import { syncMetaHierarchy, ensureAdAccounts } from "./server/services/meta-hier
 import { aggregateData } from "./server/services/aggregation.service.js";
 import { attributePurchases } from "./server/services/attribution.service.js";
 import { getMetaToken, evaluateActivityStatus, syncSingleAccountAdData } from "./server/utils.js";
-import { seedSandboxData } from "./server/services/seed-sandbox.js";
 import { SyncCenter } from "./server/services/sync-center.service.js";
 
 
@@ -84,28 +83,8 @@ async function checkDb() {
       }
     }
 
-    // Check if sandbox seed data is needed and run builders
-    try {
-      if (process.env.NODE_ENV === "development_sandbox_enable") {
-        await seedSandboxData();
-      } else {
-        console.log("🌱 [checkDb] Sandbox seeding is explicitly disabled in production/main modes.");
-      }
-      
-      const summaryCount = await prisma.dailySummary.count();
-      if (summaryCount === 0 && process.env.NODE_ENV === "development_sandbox_enable") {
-        console.log("🌱 [checkDb] Aggregated summaries empty. Pre-building sandbox totals & AI rule monitor...");
-        const chainId = "init-rebuild-" + Math.random().toString(36).substring(2, 8);
-        const id1 = await SyncCenter.rebuildStoreSummary(chainId, "db_init", null, 90);
-        const id2 = await SyncCenter.rebuildMetaSummary(chainId, "db_init", id1, 90);
-        const id3 = await SyncCenter.rebuildRoasSummary(chainId, "db_init", id2, 90);
-        const id4 = await SyncCenter.rebuildDashboardSummary(chainId, "db_init", id3, 90);
-        await SyncCenter.runAiRuleMonitor(chainId, "db_init", id4);
-        console.log("🌱 [checkDb] Summary construction complete!");
-      }
-    } catch (seedErr) {
-      console.error("❌ Sandbox auto-seed error:", seedErr);
-    }
+    // Sandbox database seeding has been rolled back and disabled.
+    console.log("🌱 [checkDb] Seeding is disabled. Running as empty local production sandbox.");
 
   } catch (err) {
     console.error("❌ Database connection failed:", err);

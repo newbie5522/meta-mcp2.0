@@ -445,73 +445,7 @@ export class SyncCenter {
               });
             }
           } catch(accErr: any) {
-            console.log(`[Sync Center] Account structure info check for ${actId} (network status: ${accErr.message})`);
-            // Resilient Fallback: If no campaigns exist for this account, generate sandbox structure data in DB so the UI remains pristine
-            try {
-              const existingCampaigns = await prisma.campaign.findMany({ where: { accountId: actId } });
-              if (existingCampaigns.length === 0) {
-                console.log(`[Sync Center] Populating active sandbox fallback structure for ${actId}`);
-                
-                // We define custom sandbox campaigns specifically tailored for each sandbox account
-                const nameLabel = account.fb_account_name || "General";
-                const sampleCampaigns = [
-                  { id: `c_${cleanAccountId}_1`, accountId: actId, name: `${nameLabel} - Key Conversions Campaign`, status: "ACTIVE" },
-                  { id: `c_${cleanAccountId}_2`, accountId: actId, name: `${nameLabel} - Dynamic Retargeting Campaign`, status: "ACTIVE" }
-                ];
-                
-                for (const camp of sampleCampaigns) {
-                  await prisma.campaign.upsert({
-                    where: { id: camp.id },
-                    update: camp,
-                    create: camp
-                  });
-                  campaignsTotal++;
-
-                  const sampleAdSet = { id: `s_${cleanAccountId}_${camp.id}`, campaignId: camp.id, accountId: actId, name: `Interest Group - ${camp.name}` };
-                  await prisma.adSet.upsert({
-                    where: { id: sampleAdSet.id },
-                    update: sampleAdSet,
-                    create: sampleAdSet
-                  });
-                  adsetsTotal++;
-
-                  const sampleAd = {
-                    id: `ad_${cleanAccountId}_${camp.id}`,
-                    adsetId: sampleAdSet.id,
-                    campaignId: camp.id,
-                    accountId: actId,
-                    name: `Visual Ad - ${camp.name}`,
-                    creativeId: `synth_cr_${cleanAccountId}_1`
-                  };
-                  await prisma.ad.upsert({
-                    where: { id: sampleAd.id },
-                    update: sampleAd,
-                    create: sampleAd
-                  });
-                  adsTotal++;
-
-                  const creativeExists = await prisma.adCreative.findUnique({ where: { creativeId: sampleAd.creativeId } });
-                  if (!creativeExists) {
-                    await prisma.adCreative.create({
-                      data: {
-                        creativeId: sampleAd.creativeId,
-                        fbAccountId: actId,
-                        mediaType: "IMAGE",
-                        storeId: account.storeId || 1,
-                        name: `${sampleAd.name} Creative Asset`,
-                        imageUrl: "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=400",
-                        previewUrl: "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=400",
-                        hookRate: 0.18,
-                        landingUrl: null
-                      }
-                    }).catch(() => {});
-                    creativeCountTotal++;
-                  }
-                }
-              }
-            } catch (fallbackError: any) {
-              console.log(`[Sync Center] Sandbox fallback generator exception: ${fallbackError.message}`);
-            }
+            console.log(`[Sync Center] Account structure info check for ${actId} failed (network status: ${accErr.message}). No sandbox fallback data will be written.`);
           }
         }
 
