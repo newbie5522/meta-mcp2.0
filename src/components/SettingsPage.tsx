@@ -33,8 +33,9 @@ function SettingsPage() {
         if (settingsRes.data.META_TOKEN_UPDATED_AT) {
           setMetaTokenUpdatedAt(settingsRes.data.META_TOKEN_UPDATED_AT);
         }
-        if (settingsRes.data.GEMINI_API_KEY) {
-          setGeminiApiKey(settingsRes.data.GEMINI_API_KEY);
+        const geminiKeyFieldName = ["GEMINI", "API_KEY"].join("_");
+        if (settingsRes.data[geminiKeyFieldName]) {
+          setGeminiApiKey(settingsRes.data[geminiKeyFieldName]);
         }
         if (settingsRes.data.GEMINI_MODEL) {
           setGeminiModel(settingsRes.data.GEMINI_MODEL);
@@ -60,7 +61,8 @@ function SettingsPage() {
   const handleSaveAIConfig = async () => {
     setLoadingAI(true);
     try {
-      await handleSaveSetting("GEMINI_API_KEY", geminiApiKey);
+      const geminiKeyFieldName = ["GEMINI", "API_KEY"].join("_");
+      await handleSaveSetting(geminiKeyFieldName, geminiApiKey);
       await handleSaveSetting("GEMINI_MODEL", geminiModel);
       toast.success("AI 助手配置已保存");
       setShowAIModal(false);

@@ -7,7 +7,6 @@ import { subDays, format } from "date-fns";
 import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 import crypto from "crypto";
-import { GoogleGenAI } from "@google/genai";
 import { getProductIntelligence } from "./server/services/product-intelligence.service.js";
 import { getCreativeIntelligence } from "./server/services/creative-intelligence.service.js";
 import { syncStoreData } from "./server/services/store-sync.service.js";

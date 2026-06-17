@@ -1,6 +1,5 @@
 import prisma from "../../db/index.js";
 import { format, subDays, parseISO } from "date-fns";
-import { GoogleGenAI, Type } from "@google/genai";
 import { getProductIntelligence } from "./product-intelligence.service.js";
 
 export interface AnalysisCenterParams {
@@ -784,303 +783,83 @@ export async function generateAIAnalysis(params: AnalysisCenterParams): Promise<
   let summary = "";
   let findings = context.findings;
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    // 1. OFFLINE FALLBACK ENGINE
-    const generationMode = "offline_rule_engine";
-    summary = `【离线对账对账单 - Offline Rule Engine】\n\n本地未配置 GEMINI_API_KEY。已启动内置勾稽规则解算模型。\n\n【诊断方案结论】: 已对「${context.title}」运行防跌落关系自检。\n\n【核心事实勾稽发现】:\n${findings.map((f: string, i: number) => `● ${f}`).join("\n")}`;
+  // 1. OFFLINE FALLBACK ENGINE
+  const generationMode = "offline_rule_engine";
+  summary = `【离线对账对账单 - Offline Rule Engine】\n\n已启动内置勾稽规则解算模型。\n\n【诊断方案结论】: 已对「${context.title}」运行防跌落关系自检。\n\n【核心事实勾稽发现】:\n${findings.map((f: string, i: number) => `● ${f}`).join("\n")}`;
 
-    const dbReport = await prisma.aiAnalysisReport.create({
-      data: {
-        type,
-        entityType,
-        entityId,
-        dateRange: `${startDate} 至 ${endDate}`,
-        conclusion: summary,
-        dataBasis: `source=True_Database_Facts;type=${type};metrics=${JSON.stringify(context.metrics)}`,
-        riskPoints: findings.join("; "),
-        priority: severity === "critical" ? 1 : (severity === "warning" ? 2 : 3),
-        model: "offline-rule-engine",
-        metadata: JSON.stringify({
-          isFallback: true,
-          analysisType: type,
-          primarySources: [dataSourceExplain],
-          limitations,
-          metricsSnapshot: context.metrics,
-          generatedBy: "System Offline Rule Engine v2.0",
-          version: "step13-r1",
-          generationMode
-        })
-      }
-    });
-
-    const rawSuggestions = await getRealTraceableSuggestions({ type, startDate, endDate }, context, generationMode);
-
-    const suggestions = await Promise.all(
-      rawSuggestions.map(async rec => {
-        const suggestion = await prisma.aiActionSuggestion.create({
-          data: {
-            reportId: dbReport.id,
-            action: rec.title, // User action is the title!
-            rationale: rec.rationale,
-            priority: rec.priority,
-            status: "pending",
-            metadata: JSON.stringify({
-              title: rec.title,
-              actionVerb: rec.actionVerb,
-              actionTarget: rec.actionTarget,
-              entityRefs: rec.entityRefs,
-              evidence: rec.evidence,
-              humanConfirmationRequired: true,
-              route: rec.route,
-              sourceTables: rec.sourceTables || [rec.evidence.primarySource],
-              generatedBy: "ai-analysis-center",
-              version: "step13-r1",
-              generationMode
-            })
-          }
-        });
-        return {
-          id: suggestion.id,
-          action: suggestion.action,
-          rationale: suggestion.rationale,
-          priority: suggestion.priority,
-          status: suggestion.status,
-          metadata: suggestion.metadata
-        };
-      })
-    );
-
-    return {
+  const dbReport = await prisma.aiAnalysisReport.create({
+    data: {
       type,
       entityType,
       entityId,
-      title: context.title,
-      severity,
-      summary,
-      findings,
-      metrics: context.metrics,
-      recommendations: suggestions,
-      limitations,
-      dataSourceExplain,
-      generatedAt: dbReport.createdAt
-    };
-
-  } else {
-    // 2. FORMAL GEMINI INTEGRATION
-    const generationMode = "ai_model";
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
-    });
-
-    const systemContext = `
-    你是一个专门负责底层数据对账、买量风控和全链条电商运营的顶级 AI 商业分析参谋。
-    你需要针对分析类型：[${type}]（周期 [${startDate} ~ ${endDate}]），结合所得底层核心事实指标，撰写出一份措辞犀利、物理勾稽客观、无任何 mock 数据的诊断结论。
-
-    【底层事实核心指标 snapshot】:
-    ${JSON.stringify(context.metrics, null, 2)}
-
-    【归因限制条件】:
-    ${limitations.map((l, i) => `${i + 1}. ${l}`).join("\n")}
-
-    【规则限制】：
-    1. 切忌建议自动或实时修改任何 Meta 预算或关停广告，所有行动建议表述为“需要人工确认”或“操作指引”。
-    2. 禁止捏造、幻想任何不存在的数据或假定的指标波动！
-    3. 严禁使用 "CR01", "CR02", "CR03", "artificial", "manual_intervention" 等临时测试或低效概念。
-
-    请必须在 outputs 字段中，输出符合 JSON 格式的数据：
-    {
-      "title": "拟定不超过 16 字且富有行业说服力的标题",
-      "severity": "critical" | "warning" | "info" | "healthy" 结合数据评级,
-      "summary": "犀利的中文诊断分析总结 (带Emoji配排，不超过250字；必须细化到账到具体账目，禁止虚词)",
-      "findings": ["核心勾稽发现 1", "核心勾稽发现 2"... 必须完全来自输入数据 facts]
+      dateRange: `${startDate} 至 ${endDate}`,
+      conclusion: summary,
+      dataBasis: `source=True_Database_Facts;type=${type};metrics=${JSON.stringify(context.metrics)}`,
+      riskPoints: findings.join("; "),
+      priority: severity === "critical" ? 1 : (severity === "warning" ? 2 : 3),
+      model: "offline-rule-engine",
+      metadata: JSON.stringify({
+        isFallback: true,
+        analysisType: type,
+        primarySources: [dataSourceExplain],
+        limitations,
+        metricsSnapshot: context.metrics,
+        generatedBy: "System Offline Rule Engine v2.0",
+        version: "step13-r1",
+        generationMode
+      })
     }
-    `;
+  });
 
-    try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: `数据对账：对 [${startDate} 至 ${endDate}] 的实有物理事实指标展开研判。`,
-        config: {
-          systemInstruction: systemContext,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              severity: { type: Type.STRING, enum: ["critical", "warning", "info", "healthy"] },
-              summary: { type: Type.STRING },
-              findings: { type: Type.ARRAY, items: { type: Type.STRING } }
-            },
-            required: ["title", "severity", "summary", "findings"]
-          }
-        }
-      });
+  const rawSuggestions = await getRealTraceableSuggestions({ type, startDate, endDate }, context, generationMode);
 
-      const parsedResponse = JSON.parse(response.text.trim());
-      severity = parsedResponse.severity || severity;
-      summary = parsedResponse.summary || summary;
-      findings = parsedResponse.findings || findings;
-
-      const dbReport = await prisma.aiAnalysisReport.create({
+  const suggestions = await Promise.all(
+    rawSuggestions.map(async rec => {
+      const suggestion = await prisma.aiActionSuggestion.create({
         data: {
-          type,
-          entityType,
-          entityId,
-          dateRange: `${startDate} 至 ${endDate}`,
-          conclusion: parsedResponse.summary,
-          dataBasis: `source=True_Database_Facts;type=${type};metrics=${JSON.stringify(context.metrics)}`,
-          riskPoints: parsedResponse.findings.join("; "),
-          priority: severity === "critical" ? 1 : (severity === "warning" ? 2 : 3),
-          model: "gemini-3.5-flash",
+          reportId: dbReport.id,
+          action: rec.title, // User action is the title!
+          rationale: rec.rationale,
+          priority: rec.priority,
+          status: "pending",
           metadata: JSON.stringify({
-            isFallback: false,
-            analysisType: type,
-            primarySources: [dataSourceExplain],
-            limitations,
-            metricsSnapshot: context.metrics,
-            generatedBy: "Google Gemini 3.5 Flash",
+            title: rec.title,
+            actionVerb: rec.actionVerb,
+            actionTarget: rec.actionTarget,
+            entityRefs: rec.entityRefs,
+            evidence: rec.evidence,
+            humanConfirmationRequired: true,
+            route: rec.route,
+            sourceTables: rec.sourceTables || [rec.evidence.primarySource],
+            generatedBy: "ai-analysis-center",
             version: "step13-r1",
             generationMode
           })
         }
       });
-
-      const rawSuggestions = await getRealTraceableSuggestions({ type, startDate, endDate }, context, generationMode);
-
-      const suggestions = await Promise.all(
-        rawSuggestions.map(async rec => {
-          const suggestion = await prisma.aiActionSuggestion.create({
-            data: {
-              reportId: dbReport.id,
-              action: rec.title,
-              rationale: rec.rationale,
-              priority: rec.priority,
-              status: "pending",
-              metadata: JSON.stringify({
-                title: rec.title,
-                actionVerb: rec.actionVerb,
-                actionTarget: rec.actionTarget,
-                entityRefs: rec.entityRefs,
-                evidence: rec.evidence,
-                humanConfirmationRequired: true,
-                route: rec.route,
-                sourceTables: rec.sourceTables || [rec.evidence.primarySource],
-                generatedBy: "ai-analysis-center",
-                version: "step13-r1",
-                generationMode
-              })
-            }
-          });
-          return {
-            id: suggestion.id,
-            action: suggestion.action,
-            rationale: suggestion.rationale,
-            priority: suggestion.priority,
-            status: suggestion.status,
-            metadata: suggestion.metadata
-          };
-        })
-      );
-
       return {
-        type,
-        entityType,
-        entityId,
-        title: parsedResponse.title || context.title,
-        severity,
-        summary,
-        findings,
-        metrics: context.metrics,
-        recommendations: suggestions,
-        limitations,
-        dataSourceExplain,
-        generatedAt: dbReport.createdAt
+        id: suggestion.id,
+        action: suggestion.action,
+        rationale: suggestion.rationale,
+        priority: suggestion.priority,
+        status: suggestion.status,
+        metadata: suggestion.metadata
       };
+    })
+  );
 
-    } catch (err) {
-      console.error("Gemini API call erred. Reverting securely to offline fallback.", err);
-      const fallbackGenerationMode = "offline_rule_engine";
-      const fallbackReport = await prisma.aiAnalysisReport.create({
-        data: {
-          type,
-          entityType,
-          entityId,
-          dateRange: `${startDate} 至 ${endDate}`,
-          conclusion: `【离线数据对账报表 - Offline Rule Engine (防崩溃退守)】\n\n系统由于网络断开或鉴权过期无法载入在线神经网络模型。当前已切入后台对账矩阵完成核算。\n\n【核心事实勾稽发现】:\n${findings.map((f: string, i: number) => `● ${f}`).join("\n")}`,
-          dataBasis: `source=True_Database_Facts;type=${type};metrics=${JSON.stringify(context.metrics)}`,
-          riskPoints: findings.join("; "),
-          priority: severity === "critical" ? 1 : (severity === "warning" ? 2 : 3),
-          model: "offline-rule-engine-fallback",
-          metadata: JSON.stringify({
-            isFallback: true,
-            analysisType: type,
-            primarySources: [dataSourceExplain],
-            limitations,
-            metricsSnapshot: context.metrics,
-            generatedBy: "System Offline Fallback Engine v2.0",
-            version: "step13-r1",
-            generationMode: fallbackGenerationMode
-          })
-        }
-      });
-
-      const rawSuggestions = await getRealTraceableSuggestions({ type, startDate, endDate }, context, fallbackGenerationMode);
-
-      const suggestions = await Promise.all(
-        rawSuggestions.map(async rec => {
-          const suggestion = await prisma.aiActionSuggestion.create({
-            data: {
-              reportId: fallbackReport.id,
-              action: rec.title,
-              rationale: rec.rationale,
-              priority: rec.priority,
-              status: "pending",
-              metadata: JSON.stringify({
-                title: rec.title,
-                actionVerb: rec.actionVerb,
-                actionTarget: rec.actionTarget,
-                entityRefs: rec.entityRefs,
-                evidence: rec.evidence,
-                humanConfirmationRequired: true,
-                route: rec.route,
-                sourceTables: rec.sourceTables || [rec.evidence.primarySource],
-                generatedBy: "ai-analysis-center",
-                version: "step13-r1",
-                generationMode: fallbackGenerationMode
-              })
-            }
-          });
-          return {
-            id: suggestion.id,
-            action: suggestion.action,
-            rationale: suggestion.rationale,
-            priority: suggestion.priority,
-            status: suggestion.status,
-            metadata: suggestion.metadata
-          };
-        })
-      );
-
-      return {
-        type,
-        entityType,
-        entityId,
-        title: context.title,
-        severity,
-        summary: fallbackReport.conclusion,
-        findings,
-        metrics: context.metrics,
-        recommendations: suggestions,
-        limitations,
-        dataSourceExplain,
-        generatedAt: fallbackReport.createdAt
-      };
-    }
-  }
+  return {
+    type,
+    entityType,
+    entityId,
+    title: context.title,
+    severity,
+    summary,
+    findings,
+    metrics: context.metrics,
+    recommendations: suggestions,
+    limitations,
+    dataSourceExplain,
+    generatedAt: dbReport.createdAt
+  };
 }

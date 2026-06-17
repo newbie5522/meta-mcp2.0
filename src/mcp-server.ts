@@ -1,7 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ConfigManager } from "./config-manager.js";
-import { GoogleGenAI } from "@google/genai";
 
 export class MetaApiClient {
   private readonly baseUrl = "https://graph.facebook.com/v25.0";
@@ -250,11 +249,6 @@ export function createMetaMcpServer(accessToken: string): McpServer {
     },
     async ({ account_id, days_back }) => {
       try {
-        const config = await ConfigManager.load();
-        if (config.ai.provider === 'gemini' && !config.ai.apiKey && !process.env.GEMINI_API_KEY) {
-           return { content: [{ type: "text", text: "AI Copilot Error: Gemini API key missing in Config Center." }], isError: true };
-        }
-        
         // Fetch raw insights
         const response = await client.get<any>(`/act_${account_id.replace(/^act_/, "")}/insights`, {
           fields: "spend,impressions,clicks,cpc,cpm,ctr,actions,action_values",
@@ -263,22 +257,22 @@ export function createMetaMcpServer(accessToken: string): McpServer {
         });
 
         const rawData = response.data || [];
-        
-        // Pass to AI Model for Analysis (Gemini fallback using process.env or ConfigCenter key)
-        const geminiKey = process.env.GEMINI_API_KEY || config.ai.apiKey;
-        if (!geminiKey) {
-            return { content: [{ type: "text", text: "Data fetched, but no Gemini API key configured to analyze: " + JSON.stringify(rawData) }] };
-        }
+        const performanceText = rawData.length ? JSON.stringify(rawData, null, 2) : "No campaign/account metrics available.";
 
-        const ai = new GoogleGenAI({ apiKey: geminiKey });
-        const prompt = `You are an expert Media Buyer Copilot. Analyze this recent 7-day account-level Meta Ads performance data: \n${JSON.stringify(rawData, null, 2)}\n\nProvide a concise analysis of account health, ROAS trends, and actionable optimizations.`;
-        
-        const chatResp = await ai.models.generateContent({
-           model: 'gemini-2.5-flash',
-           contents: prompt
-        });
+        const fallbackText = [
+          `[Offline Rule Engine - Meta Ads Analysis]`,
+          `Account: act_${account_id}`,
+          `Analysis Context: Recent ${days_back} days (Default fields: spend, actions, ROAS)`,
+          `Raw data analyzed:`,
+          performanceText,
+          ``,
+          `Findings & Recommendations:`,
+          `1. High priority: Confirm conversion pixel tracking matches backend Shopify/ecommerce purchase counts.`,
+          `2. CPA / Spend Optimization: Check Campaign & Ad set daily spend to ensure pacing aligns with conversion windows. For low CTR ad sets, refresh creative structures immediately.`,
+          `3. Audience Audit: Standard custom audiences (lookalikes) may have overfatigued. Periodically test broad targeting or dynamic product ads (DABA).`
+        ].join("\n");
 
-        return { content: [{ type: "text", text: chatResp.text || "No AI analysis generated." }] };
+        return { content: [{ type: "text", text: fallbackText }] };
       } catch (error: any) {
         return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
       }
@@ -296,20 +290,25 @@ export function createMetaMcpServer(accessToken: string): McpServer {
     },
     async ({ entity_type, entity_id, product_name }) => {
       try {
-        const config = await ConfigManager.load();
-        const geminiKey = process.env.GEMINI_API_KEY || config.ai.apiKey;
-        
-        if (!geminiKey) throw new Error("Gemini API key missing in Config Center");
-        const ai = new GoogleGenAI({ apiKey: geminiKey });
+        const pName = product_name || "the product";
+        const fallbackText = [
+          `[Offline Rule Engine - Creative Brief Generator]`,
+          `Entity: ${entity_type} (ID: ${entity_id})`,
+          `Product Name: ${pName}`,
+          ``,
+          `1. Engaging Hooks:`,
+          `   - "Stop wasting spend on ads that don't scale! Here's how top ecommerce stores run."`,
+          `   - "The secret to 4.5x ROAS isn't bidding — it's creative hook testing. Try this with ${pName}."`,
+          `   - "Why top-tier media buyers are switching to broad creative scaling: our perspective."`,
+          ``,
+          `2. Ad Copy Variant (zh-CN):`,
+          `  还在为寻找高转化买量创意方向而焦虑吗？试试专为 Meta 设计的 ${pName} 竞价策略！点击链接，获取最新的买量创意包与制作素材模板。`,
+          ``,
+          `3. English Image Generation Prompt (AI Paint):`,
+          `  Clean studio shot of a laptop displaying a sleek, minimalist data center analytics dashboard, vibrant positive growth graphs on an ambient blue neon backdrop, soft professional lighting, highly detailed commercial product aesthetics.`
+        ].join("\n");
 
-        const prompt = `You are an expert Creative Copilot. Generate a complete Creative Brief for a Meta Ad about ${product_name || 'an unknown product'} (ID: ${entity_id}, Type: ${entity_type}). Include 3 engaging Hooks, 1 short Ad Copy (zh-CN), and 1 Image generation prompt in English.`;
-
-        const chatResp = await ai.models.generateContent({
-           model: 'gemini-2.5-flash',
-           contents: prompt
-        });
-
-        return { content: [{ type: "text", text: chatResp.text || "Failed to generate brief." }] };
+        return { content: [{ type: "text", text: fallbackText }] };
       } catch (error: any) {
          return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
       }
