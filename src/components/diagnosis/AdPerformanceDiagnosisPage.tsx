@@ -119,15 +119,15 @@ export function AdPerformanceDiagnosisPage() {
       {loading ? (
         <div className="bg-white border border-slate-200 rounded-2xl p-16 text-center space-y-4">
           <RefreshCw className="w-8 h-8 animate-spin mx-auto text-blue-600" />
-          <h4 className="text-sm font-bold text-slate-700">正在调取广告流诊断结果...</h4>
+          <h4 className="text-sm font-bold text-slate-700">正在加载诊断结果，请稍候...</h4>
         </div>
       ) : error ? (
         <div className="bg-red-50 border border-red-200 rounded-2xl p-8 space-y-4">
           <div className="flex items-start gap-3">
             <AlertCircle className="w-6 h-6 text-red-600 shrink-0 mt-0.5" />
             <div>
-              <h4 className="text-sm font-bold text-red-900">接口诊断加载失败 (API Error)</h4>
-              <p className="text-xs text-red-700 mt-1">{error.message}</p>
+              <h4 className="text-sm font-bold text-red-900">诊断数据加载失败</h4>
+              <p className="text-xs text-red-700 mt-1">数据暂时无法加载，请稍后重试或检查后端服务状态。</p>
             </div>
           </div>
           <button 

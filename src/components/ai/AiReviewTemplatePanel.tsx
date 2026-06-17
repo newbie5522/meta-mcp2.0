@@ -41,7 +41,7 @@ export function AiReviewTemplatePanel({
       {loading && (
         <div className="flex flex-col items-center justify-center py-6 space-y-2">
           <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
-          <p className="text-xs text-slate-500">正在请求 AI 解释网关...</p>
+          <p className="text-xs text-slate-500">正在分析建议特征并辅助构建复盘内容...</p>
         </div>
       )}
 
@@ -82,7 +82,7 @@ export function AiReviewTemplatePanel({
       {!loading && !error && !response && (
         <div className="space-y-3">
           <p className="text-xs text-slate-500 leading-relaxed">
-            基于当前建议、人工状态与 operatorNotes 生成复盘模板。当前阶段为 dry_run，不接入真实模型。
+            基于当前建议流转与实操反馈生成复盘分析模板，自主辅助提炼多周期回测效果。
           </p>
           <button
             id="ai-generate-review-btn"

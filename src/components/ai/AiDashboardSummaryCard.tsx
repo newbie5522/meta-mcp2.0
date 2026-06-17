@@ -51,7 +51,7 @@ export function AiDashboardSummaryCard({
           <div className="flex items-start gap-2 text-rose-800">
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
             <div className="space-y-1">
-              <h5 className="text-xs font-bold">获取 AI 摘要失败 (Request Failed)</h5>
+              <h5 className="text-xs font-bold">获取 AI 摘要失败</h5>
               <p className="text-xs text-rose-600 leading-relaxed">{error}</p>
             </div>
           </div>
@@ -85,7 +85,7 @@ export function AiDashboardSummaryCard({
         <div className="space-y-4">
           <div className="space-y-1">
             <p className="text-xs text-slate-500 leading-relaxed">
-              基于当前诊断 issues 生成管理层摘要。当前阶段为 dry_run，不接入真实模型。
+              基于当前诊断问题生成管理层摘要，提供高级诊断指标综合提炼，辅助快速发现核心运营风险因素。
             </p>
             {disabled && (
               <p className="text-[10px] text-amber-600 font-medium">

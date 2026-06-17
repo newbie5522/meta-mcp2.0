@@ -39,7 +39,7 @@ export function AiExplanationPanel({
           <div className="flex items-start gap-2 text-rose-800">
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
             <div className="space-y-1">
-              <h5 className="text-xs font-bold">请求解释失败 (Request Failed)</h5>
+              <h5 className="text-xs font-bold">请求解释失败</h5>
               <p className="text-xs text-rose-600 leading-relaxed">{error}</p>
             </div>
           </div>
@@ -71,7 +71,7 @@ export function AiExplanationPanel({
       {/* 4. Safeguard fallback logic for null responses or when not triggerred */}
       {!loading && !error && !response && (
         <div className="text-center py-4 text-xs text-slate-400">
-          点击 “AI 解读” 开启数据特征诊断解释 (Dry Run)
+          点击 “AI 解读” 开启数据特征安全诊断与解释
         </div>
       )}
     </div>

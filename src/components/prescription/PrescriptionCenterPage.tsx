@@ -355,7 +355,7 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
           </div>
           <div className="ml-3">
             <p className="text-xs text-amber-800 font-bold">
-              当前页面已接入离线规则诊断引擎并成功连接 [STEP 13-D-Lite] 处方流转与回测机制。
+              建议处方中心已接入规则诊断结果。所有建议仅作为运营决策参考，采纳、执行和复盘均需人工确认。
             </p>
           </div>
         </div>
@@ -433,8 +433,8 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
               <RefreshCw className="w-6 h-6 animate-spin" />
             </div>
             <div>
-              <h4 className="text-sm font-bold text-slate-700">正在加载离线规则诊断结果...</h4>
-              <p className="text-xs text-slate-400 mt-1">正在请求 /api/diagnostics/issues 并读取规则诊断结果...</p>
+              <h4 className="text-sm font-bold text-slate-700">正在加载诊断结果，请稍候。</h4>
+              <p className="text-xs text-slate-400 mt-1">正在读取系统最新诊断规则解析结果...</p>
             </div>
           </div>
         ) : error ? (
@@ -442,9 +442,11 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
             <div className="flex items-start gap-3">
               <AlertCircle className="w-6 h-6 text-red-600 shrink-0 mt-0.5" />
               <div>
-                <h4 className="text-sm font-bold text-red-900">接口加载失败 (HTTP API Error)</h4>
-                <p className="text-xs text-red-700 mt-1">{error.message}</p>
-                {error.details && (
+                <h4 className="text-sm font-bold text-red-900">诊断数据加载失败</h4>
+                <p className="text-xs text-red-700 mt-1">
+                  数据暂时无法加载，请稍后重试或检查后端服务状态。
+                </p>
+                {(import.meta as any).env?.DEV && error.details && (
                   <pre className="text-[10px] font-mono bg-red-100/50 p-2.5 rounded-lg border border-red-200/50 text-red-800 mt-3 overflow-x-auto whitespace-pre-wrap max-h-40">
                     {error.details}
                   </pre>

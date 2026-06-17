@@ -179,7 +179,7 @@ export function PrescriptionReviewPage() {
           </div>
           <div className="ml-3">
             <p className="text-xs text-amber-800 font-bold">
-              当前 STEP 13-D-Lite 仅记录人工执行状态。真实 3 / 7 / 14 天数据回测将在后续版本接入。
+              执行回测用于记录已采纳、执行中和已执行建议的人工跟进状态，并辅助进行 3 / 7 / 14 天周期复盘。
             </p>
           </div>
         </div>
@@ -189,7 +189,7 @@ export function PrescriptionReviewPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">执行回测 (Prescription Backtesting)</h1>
           <p className="text-sm text-slate-500 mt-1">
-            追踪和回溯已被采纳、执行或在执行中建议的实操状态，提供多周期回测效果观察占位。
+            追踪和回溯已被采纳、执行或在执行中建议的实操状态，提供多周期回测效果观察。
           </p>
         </div>
       </div>
@@ -201,7 +201,7 @@ export function PrescriptionReviewPage() {
             <div className="space-y-2">
               <h4 className="text-base font-bold text-slate-700">暂无执行回测记录。请先在建议处方中心采纳或执行建议。</h4>
               <p className="text-xs text-slate-400">
-                一旦您在建议处方中心对处方卡片点击“采纳”、“忽略”、“标记执行中”或“标记已执行”，此处将自动捕获并展示流转进度和轻量级回测控制台。
+                一旦您在建议处方中心采纳建议、标记执行中或标记已执行，此处将展示对应流转进度和周期复盘入口。
               </p>
             </div>
           </div>
@@ -243,7 +243,7 @@ export function PrescriptionReviewPage() {
           <div className="space-y-6">
             <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
               <Layers className="w-4 h-4 text-blue-600" />
-              当前活跃流转的建议与轻量级回测控制台 (3 / 7 / 14 天占位)
+              当前活跃流转的建议与回测控制台 (3 / 7 / 14 天效果监测)
             </h3>
 
             <div className="space-y-4">
@@ -274,7 +274,7 @@ export function PrescriptionReviewPage() {
                     {/* Multi-cycle backtesting display states */}
                     <div className="bg-slate-50 border border-slate-150/60 rounded-xl p-4 space-y-3">
                       <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
-                        多维度周期回测占位监测：
+                        多维度周期回测效果监测：
                       </span>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
                         <div className="p-3 bg-white rounded-lg border border-slate-100 space-y-1.5 shadow-sm">
@@ -317,7 +317,7 @@ export function PrescriptionReviewPage() {
                       </div>
                     )}
 
-                    {/* AI Review Template Panel (STEP 13-AI-R1-Review-DryRun) */}
+                    {/* AI Review Template Panel */}
                     <div className="pt-2 border-t border-dashed border-slate-100 space-y-2">
                       <AiReviewTemplatePanel
                         loading={reviewAiStateByIssueId[item.issueId]?.loading || false}

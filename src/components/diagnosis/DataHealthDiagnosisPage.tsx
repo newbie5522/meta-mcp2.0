@@ -67,7 +67,7 @@ export function DataHealthDiagnosisPage() {
           </div>
           <div className="ml-3">
             <p className="text-xs text-amber-800 font-bold">
-              当前页面已接入离线规则诊断引擎。若数据库为空，将不会展示演示建议。后续 STEP 13-D-Lite 将接入采纳、执行和回测状态。
+              数据健康诊断已接入规则诊断引擎。所有诊断结论仅作为策略决策参考，不进行任何非人工二次授权的操作。
             </p>
           </div>
         </div>

@@ -19,18 +19,18 @@ export function AiExplanationEmptyState({ type, className = "" }: AiExplanationE
       
       <div className="max-w-md space-y-1">
         <h4 className="text-sm font-bold text-slate-800">
-          {type === "no_issues" ? "AI 解释功能暂无可用诊断输入" : "AI 解释层 Schema 空跑中"}
+          {type === "no_issues" ? "AI 解释功能暂无可用诊断输入" : "AI 安全解释辅助未启用"}
         </h4>
         <p className="text-xs text-slate-500 leading-relaxed">
           {type === "no_issues"
             ? "当前数据库可能为空，或选定范围内没有可用诊断记录 (issues)，因此未生成可用输入事实。"
-            : "AI 解释功能尚未启用。当前阶段仅完成 Schema 与安全校验设计。系统坚守人工确认屏障，禁止自动修改 Meta 账户或执行未知指令。"}
+            : "AI 解释功能尚未启用。当前系统已建立安全校验与准入控制，坚守人工确认屏障，禁止自动修改 Meta 账户或执行非经授权的指令。"}
         </p>
       </div>
 
       <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 rounded-full text-[10px] text-slate-500 font-medium">
         <AlertCircle className="w-3.5 h-3.5 text-slate-405 shrink-0" />
-        <span>Schema &amp; Safe Validator Dry Run Enabled</span>
+        <span>AI Safety Protocol Active</span>
       </div>
     </div>
   );
