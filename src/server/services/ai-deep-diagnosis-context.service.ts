@@ -120,13 +120,17 @@ export async function buildAiDeepDiagnosisContext(
   // 2. Resolve ad account ID
   let adAccountIdSelected = scope.adAccountId || undefined;
   if (!adAccountIdSelected && storeIdParsed) {
-    const mapping = await prisma.accountMapping.findFirst({
-      where: { storeId: storeIdParsed }
-    });
-    if (mapping) {
-      adAccountIdSelected = mapping.fbAccountId;
-    } else {
-      mappingWarnings.push(`No AccountMapping row exists for storeId ${storeIdParsed}`);
+    try {
+      const mapping = await prisma.accountMapping.findFirst({
+        where: { storeId: storeIdParsed }
+      });
+      if (mapping) {
+        adAccountIdSelected = mapping.fbAccountId;
+      } else {
+        mappingWarnings.push(`No AccountMapping row exists for storeId ${storeIdParsed}`);
+      }
+    } catch (err: unknown) {
+      mappingWarnings.push(`Failed to query AccountMapping from database: ${getErrorMessage(err)}`);
     }
   }
 
@@ -158,17 +162,21 @@ export async function buildAiDeepDiagnosisContext(
   // 4. Query Store Information
   let storeRow: StoreRowLike | null = null;
   if (storeIdParsed) {
-    const rawStore = await prisma.store.findUnique({
-      where: { id: storeIdParsed }
-    });
-    if (rawStore) {
-      storeRow = {
-        id: rawStore.id,
-        name: rawStore.name
-      };
-    }
-    if (!storeRow) {
-      mappingWarnings.push(`Store ID ${storeIdParsed} not found in database.`);
+    try {
+      const rawStore = await prisma.store.findUnique({
+        where: { id: storeIdParsed }
+      });
+      if (rawStore) {
+        storeRow = {
+          id: rawStore.id,
+          name: rawStore.name
+        };
+      }
+      if (!storeRow) {
+        mappingWarnings.push(`Store ID ${storeIdParsed} not found in database.`);
+      }
+    } catch (err: unknown) {
+      mappingWarnings.push(`Failed to query Store from database: ${getErrorMessage(err)}`);
     }
   } else {
     if (mode === "store_overview" || mode === "product_performance" || mode === "cross_channel_attribution") {
@@ -454,21 +462,25 @@ export async function buildAiDeepDiagnosisContext(
     primaryEntityName = storeRow?.name || "默认独立站";
   } else if (adAccountIdSelected) {
     primaryEntityType = "ad_account";
-    const accRow = await prisma.adAccount.findUnique({ where: { fb_account_id: adAccountIdSelected } });
-    primaryEntityName = accRow?.fb_account_name || adAccountIdSelected;
-    
-    if (scope.campaignId) {
-      primaryEntityType = "campaign";
-      const campRow = await prisma.campaign.findUnique({ where: { id: scope.campaignId } });
-      primaryEntityName = campRow?.name || `广告系列: ${scope.campaignId}`;
-    } else if (scope.adSetId) {
-      primaryEntityType = "adset";
-      const adsetRow = await prisma.adSet.findUnique({ where: { id: scope.adSetId } });
-      primaryEntityName = adsetRow?.name || `广告组: ${scope.adSetId}`;
-    } else if (scope.adId) {
-      primaryEntityType = "ad";
-      const adRow = await prisma.ad.findUnique({ where: { id: scope.adId } });
-      primaryEntityName = adRow?.name || `广告: ${scope.adId}`;
+    try {
+      const accRow = await prisma.adAccount.findUnique({ where: { fb_account_id: adAccountIdSelected } });
+      primaryEntityName = accRow?.fb_account_name || adAccountIdSelected;
+      
+      if (scope.campaignId) {
+        primaryEntityType = "campaign";
+        const campRow = await prisma.campaign.findUnique({ where: { id: scope.campaignId } });
+        primaryEntityName = campRow?.name || `广告系列: ${scope.campaignId}`;
+      } else if (scope.adSetId) {
+        primaryEntityType = "adset";
+        const adsetRow = await prisma.adSet.findUnique({ where: { id: scope.adSetId } });
+        primaryEntityName = adsetRow?.name || `广告组: ${scope.adSetId}`;
+      } else if (scope.adId) {
+        primaryEntityType = "ad";
+        const adRow = await prisma.ad.findUnique({ where: { id: scope.adId } });
+        primaryEntityName = adRow?.name || `广告: ${scope.adId}`;
+      }
+    } catch (err: unknown) {
+      warnings.push(`Failed to query metadata for primary entity from database: ${getErrorMessage(err)}`);
     }
   }
 

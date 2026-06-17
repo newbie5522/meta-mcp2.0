@@ -253,83 +253,165 @@ async function detectStoreTimezone(
   return platform === "shoplazza" ? "America/Los_Angeles" : "Asia/Shanghai";
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function normalizeDomain(domain: string | undefined | null): string {
+  if (!domain) return "";
+  let d = String(domain).trim();
+  d = d.replace(/^(https?:\/\/)?(www\.)?/, "");
+  d = d.replace(/\/admin(\/.*)?$/, "");
+  d = d.replace(/\/+$/, "");
+  return d;
+}
+
+function normalizePlatform(platform: string | undefined | null): "shopline" | "shopify" | "shoplazza" {
+  const p = String(platform || "shopline").trim().toLowerCase();
+  if (p === "shopify") return "shopify";
+  if (p === "shoplazza") return "shoplazza";
+  return "shopline";
+}
+
 router.post("/", async (req, res) => {
   const { id, name, platform, shopline_token, shopify_token, shoplazza_token, domain, visitors, timezone } = req.body;
   try {
-    let resolvedTimezone = "GMT+8";
-    const actualPlatform = platform || "shopline";
+    const normalizedName = String(name || "").trim();
+    if (!normalizedName) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing name",
+        details: "店铺名称为必填项。"
+      });
+    }
+
+    const actualPlatform = normalizePlatform(platform);
+    if (!["shopline", "shopify", "shoplazza"].includes(actualPlatform)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid platform",
+        details: "平台只能选择：shopline, shopify 或 shoplazza"
+      });
+    }
+
+    const normalizedDomain = normalizeDomain(domain);
     const token = actualPlatform === "shopify" ? shopify_token : (actualPlatform === "shoplazza" ? shoplazza_token : shopline_token);
 
-    if (token && domain) {
-      let existingTz = "GMT+8";
-      if (id) {
-        const existing = await prisma.store.findUnique({ where: { id: parseInt(id, 10) } });
-        existingTz = existing?.timezone || "GMT+8";
-      }
-      resolvedTimezone = await detectStoreTimezone(actualPlatform, domain, token, existingTz);
-    } else if (timezone) {
-      resolvedTimezone = timezone;
-    } else if (id) {
-      const existing = await prisma.store.findUnique({ where: { id: parseInt(id, 10) } });
-      resolvedTimezone = existing?.timezone || "GMT+8";
-    }
-
+    let existingStore: any = null;
     if (id) {
-      const updatedStore = await prisma.store.update({
-        where: { id: parseInt(id, 10) },
-        data: { 
-          name, 
-          platform: actualPlatform,
-          shopline_token, 
-          shopify_token, 
-          shoplazza_token,
-          domain,
-          timezone: resolvedTimezone,
-          visitors: visitors !== undefined ? parseInt(visitors, 10) : undefined
-        },
+      existingStore = await prisma.store.findUnique({
+        where: { id: parseInt(id, 10) }
       });
-      
-      // Store Token configuration success -> auto trigger Sync Center
-      if (shopline_token || shopify_token || shoplazza_token) {
-        try {
-          const { SyncCenter } = await import("../services/sync-center.service.js");
-          await SyncCenter.triggerStoreConfigChain(updatedStore.id, "auto_store_change");
-        } catch (syncErr) {
-          console.error("[Stores Route] Failed to trigger store background sync:", syncErr);
-        }
+      if (!existingStore) {
+        return res.status(404).json({
+          success: false,
+          error: "Store not found",
+          details: `找不到对应 id 的店铺: ${id}`
+        });
       }
-
-      res.json(updatedStore);
     } else {
-      const newStore = await prisma.store.create({
-        data: { 
-          name, 
-          platform: actualPlatform,
-          shopline_token, 
-          shopify_token, 
-          shoplazza_token,
-          domain,
-          timezone: resolvedTimezone,
-          visitors: visitors !== undefined ? parseInt(visitors, 10) : 0
-        },
+      existingStore = await prisma.store.findFirst({
+        where: { name: normalizedName }
       });
-
-      // Store Token configuration success -> auto trigger Sync Center
-      if (shopline_token || shopify_token || shoplazza_token) {
-        try {
-          const { SyncCenter } = await import("../services/sync-center.service.js");
-          await SyncCenter.triggerStoreConfigChain(newStore.id, "auto_store_change");
-        } catch (syncErr) {
-          console.error("[Stores Route] Failed to trigger store background sync:", syncErr);
-        }
-      }
-
-      res.json(newStore);
     }
+
+    // Best-effort Timezone detection
+    let resolvedTimezone = "GMT+8";
+    const warnings: string[] = [];
+    try {
+      if (token && normalizedDomain) {
+        resolvedTimezone = await detectStoreTimezone(
+          actualPlatform,
+          normalizedDomain,
+          token,
+          timezone || existingStore?.timezone || "GMT+8"
+        );
+      } else {
+        resolvedTimezone = timezone || existingStore?.timezone || "GMT+8";
+      }
+    } catch (tzErr) {
+      warnings.push("Timezone detection failed, store was saved with fallback timezone.");
+      resolvedTimezone = timezone || existingStore?.timezone || "GMT+8";
+      console.error("[Stores Route] Timezone detection error:", tzErr);
+    }
+
+    let savedStore: any = null;
+    let mode: "created" | "updated_by_id" | "updated_existing_by_name" = "created";
+    let message = "";
+
+    const dataToSave = {
+      name: normalizedName,
+      platform: actualPlatform,
+      shopline_token: actualPlatform === "shopline" ? (shopline_token || null) : null,
+      shopify_token: actualPlatform === "shopify" ? (shopify_token || null) : null,
+      shoplazza_token: actualPlatform === "shoplazza" ? (shoplazza_token || null) : null,
+      domain: normalizedDomain || null,
+      timezone: resolvedTimezone,
+      visitors: visitors !== undefined ? parseInt(visitors, 10) : undefined
+    };
+
+    if (existingStore) {
+      savedStore = await prisma.store.update({
+        where: { id: existingStore.id },
+        data: dataToSave
+      });
+      mode = id ? "updated_by_id" : "updated_existing_by_name";
+      message = id ? "店铺配置已保存" : "已检测到同名店铺，已更新已有配置";
+    } else {
+      savedStore = await prisma.store.create({
+        data: {
+          ...dataToSave,
+          visitors: visitors !== undefined ? parseInt(visitors, 10) : 0
+        }
+      });
+      mode = "created";
+      message = "店铺配置已创建";
+    }
+
+    // Best-effort non-blocking sync trigger
+    const finalToken = actualPlatform === "shopify" ? shopify_token : (actualPlatform === "shoplazza" ? shoplazza_token : shopline_token);
+    let syncTriggered: boolean | string = false;
+    if (finalToken) {
+      syncTriggered = "queued";
+      void import("../services/sync-center.service.js")
+        .then(({ SyncCenter }) => SyncCenter.triggerStoreConfigChain(savedStore.id, "auto_store_change"))
+        .catch((syncErr) => console.error("[Stores Route] Failed to trigger background sync:", syncErr));
+    }
+
+    return res.json({
+      success: true,
+      mode,
+      store: savedStore,
+      id: savedStore.id,
+      message,
+      syncTriggered,
+      warnings
+    });
+
   } catch (error: any) {
-    res
-      .status(500)
-      .json({ error: "Failed to save store", details: error.message });
+    // Check for Prisma P2002 unique constraint fail
+    const isP2002 = error && typeof error === "object" && (
+      error.code === "P2002" || 
+      error.message?.includes("P2002") || 
+      error.message?.toLowerCase().includes("unique constraint") ||
+      error.message?.toLowerCase().includes("unique failed")
+    );
+
+    if (isP2002) {
+      return res.status(409).json({
+        success: false,
+        error: "STORE_NAME_ALREADY_EXISTS",
+        details: "店铺名称已存在，请打开已有店铺编辑，或系统将自动按名称更新。",
+        field: "name"
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      error: "Failed to save store",
+      details: getErrorMessage(error)
+    });
   }
 });
 

@@ -165,15 +165,43 @@ export function StoreDetailsPage({
     if (!storeData.name) return toast.error("请输入店铺名称");
     setSaving(true);
     try {
-      const res = await axios.post("/api/stores", { ...storeData });
-      toast.success("店铺保存成功");
-      if (isNew) {
-        navigate(`/store/${res.data.id}`);
+      const payload = {
+        ...storeData,
+        name: storeData.name?.trim(),
+        domain: storeData.domain?.trim()
+      };
+      
+      const res = await axios.post("/api/stores", payload);
+      
+      const mode = res.data.mode;
+      let successMsg = "店铺保存成功";
+      if (mode === "created") {
+        successMsg = "店铺配置已创建";
+      } else if (mode === "updated_by_id") {
+        successMsg = "店铺配置已保存";
+      } else if (mode === "updated_existing_by_name") {
+        successMsg = "已检测到同名店铺，已更新已有配置";
+      }
+      
+      toast.success(successMsg);
+      
+      const savedStore = res.data.store || res.data;
+      const savedId = res.data.id || savedStore.id;
+      
+      if (isNew && savedId) {
+        navigate(`/store/${savedId}`);
       } else {
         fetchStore();
       }
-    } catch (err) {
-      toast.error("保存失败");
+    } catch (err: unknown) {
+      const message =
+        axios.isAxiosError(err)
+          ? err.response?.data?.details || err.response?.data?.error || err.message
+          : err instanceof Error
+            ? err.message
+            : "保存失败";
+
+      toast.error(`保存失败：${message}`);
     } finally {
       setSaving(false);
     }
