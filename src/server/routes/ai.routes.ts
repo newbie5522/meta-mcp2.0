@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { validateAIExplainOutput } from "../../shared/ai-output-validator";
 import { AIExplainInput } from "../../shared/ai-explain.types";
+import { DEFAULT_AI_PROVIDERS } from "../../shared/ai-provider-config";
 
 const router = Router();
 
@@ -148,6 +149,17 @@ router.post("/explain-review", (req: Request, res: Response): void => {
     explanation: null,
     error: "AI 辅助解读服务未启用。",
     boundaryNotice: BOUNDARY_NOTICE
+  });
+});
+
+/**
+ * GET /api/ai/providers
+ * Returns the placeholder static providers configuration list.
+ */
+router.get("/providers", (req: Request, res: Response): void => {
+  res.json({
+    success: true,
+    providers: DEFAULT_AI_PROVIDERS
   });
 });
 
