@@ -656,7 +656,7 @@ async function runAudit() {
               children: [
                 createCell("7. rebuild_roas_summary"),
                 createCell("rebuildRoasSummary()\nsync-center.service.ts"),
-                createCell("SUCCESS\nFetched: 270"),
+                createCell("SUCCESS\nFetched: record_count"),
                 createCell("否\n(计算本地多维度ROAS)"),
                 createCell("【100% 底层真实计算】\n依据店铺订单营收与广告总花费进行对账重置并落地，不刷假 ROAS 数据。"),
               ],
@@ -703,9 +703,8 @@ async function runAudit() {
           { size: 20 }
         ),
         createParagraph(
-          "1. 演示用 Sandbox 数据源落入本地 dev.db (低中风险)：\n" +
-          "系统具有完整的 seedSandboxData() 服务（src/server/services/seed-sandbox.ts）。" +
-          "该服务在本地没有 Meta 账户有效 live 凭证且未绑定正式 API 时，会自动初始化。这虽然极大提高了单机预览演示的完整度（包括 6107 条 insight 和 350 个账户），但对于刚部署的新租户若不知晓此逻辑，会误以为是生产数据已被同步。建议在最终极商业模式部署时，在 .env 显式加入 ENABLE_SANDBOX_SEED=false 以防污染物理生产库。",
+          "1. 演示用沙箱调试数据自动同步已禁用 (合规改进)：\n" +
+          "为了保障生产对账绝对物理安全，沙箱数据生成能力已全面禁用，当前审计不允许使用任何 seed / demo / sandbox 数据。系统现在纯粹依靠来自店铺/媒体渠道已授权拉取的真实事实表进行对接勾稽，杜绝任何历史假事实。",
           { size: 20 }
         ),
         createParagraph(

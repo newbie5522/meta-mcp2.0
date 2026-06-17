@@ -65,7 +65,7 @@ export function AiConfigPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-6 space-y-4">
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 bg-white">
                 <label className="text-xs font-semibold text-slate-700 block">选择提供商</label>
                 <select
                   value={selectedProvider}
@@ -73,13 +73,11 @@ export function AiConfigPage() {
                   className="w-full h-9 px-3 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-white hover:border-slate-300"
                   id="ai-provider-select"
                 >
-                  <option value="gemini">Google Gemini (推荐)</option>
-                  <option value="openai">OpenAI ChatGPT</option>
-                  <option value="claude">Anthropic Claude</option>
-                  <option value="deepseek">DeepSeek</option>
-                  <option value="qwen">阿里云通义千问 (Qwen)</option>
-                  <option value="local">本地隔离模型 (Local)</option>
-                  <option value="auto">智能链路调度 (Auto)</option>
+                  {providers.map((p) => (
+                    <option key={p.provider} value={p.provider}>
+                      {p.displayName}
+                    </option>
+                  ))}
                 </select>
               </div>
 

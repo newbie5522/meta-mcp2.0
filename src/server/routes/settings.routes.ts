@@ -1,49 +1,7 @@
-// @ts-nocheck
 import { Router } from "express";
 import prisma from "../../db/index.js";
 
 const router = Router();
-
-router.get("/ai-models", async (req, res) => {
-  const { provider } = req.query;
-  try {
-    // Simulated model version fetcher component to select recent API iterations.
-    if (provider === "gemini") {
-      res.json({
-        models: [
-          { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
-          { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
-          { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-          { id: "gemini-2.0-pro-exp-02-05", name: "Gemini 2.0 Pro Experimental" },
-          { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
-          { id: "gemini-2.0-flash-lite-preview-02-05", name: "Gemini 2.0 Flash Lite" },
-          { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro" },
-          { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash" },
-        ],
-      });
-    } else if (provider === "chatgpt") {
-      res.json({
-        models: [
-          { id: "gpt-5.5", name: "GPT-5.5" },
-          { id: "gpt-5.5-pro", name: "GPT-5.5 Pro" },
-          { id: "gpt-5.4", name: "GPT-5.4" },
-          { id: "gpt-5.4-pro", name: "GPT-5.4 Pro" },
-          { id: "gpt-5.4-mini", name: "GPT-5.4 mini" },
-          { id: "gpt-5.4-nano", name: "GPT-5.4 nano" },
-          { id: "o3-mini", name: "o3-mini" },
-          { id: "o1", name: "o1" },
-          { id: "o1-mini", name: "o1-mini" },
-          { id: "gpt-4o", name: "GPT-4o" },
-          { id: "gpt-4o-mini", name: "GPT-4o Mini" },
-        ],
-      });
-    } else {
-      res.status(400).json({ error: "Invalid provider" });
-    }
-  } catch (err) {
-    res.status(500).json({ error: "Failed to fetch AI models" });
-  }
-});
 
 router.get("/", async (req, res) => {
   try {

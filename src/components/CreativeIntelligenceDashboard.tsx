@@ -317,7 +317,7 @@ export function CreativeIntelligenceDashboard({
     fetchCreatives();
   }, [startStrKey, endStrKey, localStoreFilter]);
 
-  // Load cached or trigger new on-demand Gemini AI performance audit report
+  // Load cached or trigger offline rule-based performance analysis report
   const handleTriggerAiAnalysis = async (creativeId: string) => {
     setAiLoading(true);
     try {
@@ -330,11 +330,11 @@ export function CreativeIntelligenceDashboard({
       });
       if (res.data) {
         setAiReport(res.data);
-        toast.success("✨ Gemini AI 智能分析完成！系统已完美缓存诊断结论。");
+        toast.success("✨ 离线规则诊断已生成。");
       }
     } catch (err: any) {
-      console.error("Failed to run Gemini audit on creative", err);
-      toast.error(err.response?.data?.error || "AI 诊断失败，可能 API 密钥尚未配置，请检查 Settings 面板。");
+      console.error("Failed to run offline rule audit on creative", err);
+      toast.error("离线规则诊断暂时无法生成，请稍后重试。");
     } finally {
       setAiLoading(false);
     }
@@ -1785,12 +1785,12 @@ export function CreativeIntelligenceDashboard({
                 </div>
               </div>
 
-              {/* Gemini AI Deep Intelligence Expert Audit Card */}
+              {/* Offline Rule Deep Intelligence Expert Audit Card */}
               <div className="bg-slate-50 border border-indigo-150 p-4 rounded-xl space-y-3 shadow-sm">
                 <div className="flex items-center justify-between border-b pb-2">
                   <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-indigo-600 animate-pulse" />
-                    Gemini AI 智能素材深度审计 (On-Demand)
+                    离线规则素材深度诊断
                   </span>
                   {aiReport && (
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -1805,20 +1805,20 @@ export function CreativeIntelligenceDashboard({
                 {aiLoading ? (
                   <div className="py-6 flex flex-col items-center justify-center text-center">
                     <RefreshCw className="w-6 h-6 animate-spin text-indigo-600 mb-2" />
-                    <p className="text-xs font-semibold text-slate-600">正在传输底层成效与属性特征，进行多维推理审计...</p>
+                    <p className="text-xs font-semibold text-slate-600">正在评估底层成效与属性特征，进行离线规则审计...</p>
                     <p className="text-[10px] text-slate-400 mt-1">耗时大约需要 3-5 秒，请稍候...</p>
                   </div>
                 ) : aiReport ? (
                   <div className="space-y-4 text-xs">
                     {/* Conclusion */}
                     <div className="space-y-1 bg-white p-3 rounded-lg border border-indigo-50 leading-relaxed text-slate-700">
-                      <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">🌟 深度诊断结论 CONCLUSION</p>
+                      <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">🌟 离线诊断结论 CONCLUSION</p>
                       <p className="font-medium text-[11.5px] text-slate-800">{aiReport.conclusion}</p>
                     </div>
 
                     {/* Data basis */}
                     <div className="space-y-1 bg-white p-3 rounded-lg border border-slate-100 leading-relaxed text-slate-600">
-                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">📊 核心推理数据 BASIS & METRICS</p>
+                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">📊 核心诊断指标 BASIS & METRICS</p>
                       <p className="text-[11px] leading-relaxed">{aiReport.dataBasis}</p>
                     </div>
 
@@ -1861,14 +1861,14 @@ export function CreativeIntelligenceDashboard({
                 ) : (
                   <div className="p-3 bg-white border border-dashed border-slate-200 rounded-lg text-center space-y-2.5">
                     <p className="text-xs text-slate-500 font-medium leading-relaxed">
-                      本素材当前尚未进行 AI 深度性能诊断。点击下方按钮即可一键调配底表成效模型，对转化漏斗、文案痛点、视觉衰减进行精准审计。
+                      本素材当前尚未生成离线规则深度性能诊断。点击下方按钮即可一键调配底层转化数据，对转化漏斗、文案痛点、视觉衰减进行智能规则审计。
                     </p>
                     <Button
                       onClick={() => handleTriggerAiAnalysis(selectedPreviewCreative.id)}
                       className="w-full h-9 bg-indigo-600 text-white hover:bg-slate-900 text-xs font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5"
                     >
                       <Sparkles className="w-4 h-4" />
-                      一键启动 Gemini AI 深度性能诊断
+                      生成离线规则诊断
                     </Button>
                   </div>
                 )}
