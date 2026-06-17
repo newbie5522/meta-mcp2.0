@@ -108,7 +108,7 @@ export function PrescriptionReviewPage() {
         ...prev,
         [issueId]: {
           loading: false,
-          error: err.message || "请求 AI 解释网关失败",
+          error: err.message || "生成 AI 辅助解读失败",
           response: null,
           expanded: true
         }

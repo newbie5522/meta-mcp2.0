@@ -23,14 +23,14 @@ export function AiExplanationEmptyState({ type, className = "" }: AiExplanationE
         </h4>
         <p className="text-xs text-slate-500 leading-relaxed">
           {type === "no_issues"
-            ? "当前数据库可能为空，或选定范围内没有可用诊断记录 (issues)，因此未生成可用输入事实。"
+            ? "当前筛选范围内暂无可用诊断记录，因此暂时无法生成辅助解读。"
             : "AI 解释功能尚未启用。当前系统已建立安全校验与准入控制，坚守人工确认屏障，禁止自动修改 Meta 账户或执行非经授权的指令。"}
         </p>
       </div>
 
       <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 rounded-full text-[10px] text-slate-500 font-medium">
         <AlertCircle className="w-3.5 h-3.5 text-slate-405 shrink-0" />
-        <span>AI Safety Protocol Active</span>
+        <span>人工确认保护已开启</span>
       </div>
     </div>
   );

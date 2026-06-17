@@ -124,7 +124,7 @@ export function ProductDiagnosisPage() {
         <div className="space-y-1">
           <span className="font-bold">产品归置限度申明：</span>
           <p>
-            当前产品分析基于规则诊断 issues 展示，不输出产品级广告 ROAS 或产品级广告预算建议，除非后续打通产品广告归因链。
+            当前产品分析基于规则诊断结论展示，不输出产品级广告 ROAS 或产品级广告预算建议，除非后续打通产品广告归因链。
           </p>
         </div>
       </div>

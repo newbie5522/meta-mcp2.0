@@ -90,7 +90,7 @@ export function DiagnosisOverviewPage() {
       console.error("[AI EXPLAIN DASHBOARD ERROR]", err);
       setDashboardAiState({
         loading: false,
-        error: err.message || "请求 AI 解释网关失败",
+        error: err.message || "生成 AI 辅助解读失败",
         response: null,
       });
     }
@@ -280,7 +280,7 @@ export function DiagnosisOverviewPage() {
 
           </div>
 
-          {/* AI dashboard summary section (STEP 13-AI-R1-Dashboard-DryRun) */}
+          {/* AI dashboard summary section */}
           <AiDashboardSummaryCard
             loading={dashboardAiState.loading}
             error={dashboardAiState.error}

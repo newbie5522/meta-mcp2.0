@@ -100,7 +100,7 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
     { type: "unmapped_spend_risk", label: "漏油失控花费审计", desc: "自检未绑定账号的静默消耗", icon: ShieldAlert, severity: "critical" },
     { type: "token_api_health", label: "Meta API 信道侦测", desc: "探照授权凭证及同步时限", icon: Settings, severity: "healthy" },
     { type: "data_health_summary", label: "数据底层健康勾稽", desc: "汇总订单对账、像素抓单行一致性", icon: Database, severity: "healthy" },
-    { type: "system_rule_diagnostics", label: "规则诊断引擎大盘", desc: "不依赖 AI，一键物理逻辑审计生成 issues", icon: ShieldAlert, severity: "critical" }
+    { type: "system_rule_diagnostics", label: "规则诊断引擎大盘", desc: "不依赖 AI，一键物理逻辑审计并进行诊断分析", icon: ShieldAlert, severity: "critical" }
   ];
 
   const handleRunDiagnostic = async () => {

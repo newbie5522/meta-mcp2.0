@@ -29,7 +29,7 @@ export function AiExplanationPanel({
       {loading && (
         <div className="flex flex-col items-center justify-center py-8 space-y-2">
           <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
-          <p className="text-xs text-slate-500 animate-pulse">正在请求 AI 解释网关...</p>
+          <p className="text-xs text-slate-500 animate-pulse">正在生成 AI 辅助解读，请稍候...</p>
         </div>
       )}
 

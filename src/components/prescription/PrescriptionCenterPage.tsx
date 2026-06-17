@@ -670,12 +670,12 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
                   </div>
                 </div>
 
-                {/* AI Explanation Interface (STEP 13-AI-R1-UI-DryRun) */}
+                {/* AI Explanation Interface */}
                 <div id={`ai-explain-area-${item.issueId}`} className="border-t border-dashed border-slate-200 pt-4 space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
                       <Sparkles className="w-4 h-4 text-indigo-500" />
-                      <span>AI 安全解释辅助 (Offline Boundary Monitor)</span>
+                      <span>AI 安全解释辅助</span>
                     </div>
 
                     <AiExplainButton 

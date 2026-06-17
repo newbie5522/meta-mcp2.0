@@ -86,7 +86,7 @@ export function StoreDiagnosisPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">店铺经营诊断</h1>
           <p className="text-sm text-slate-500 mt-1">
-            连接真实独立站店铺数据的账面经营表现，深度评估全盘变现合理性。店铺经营诊断基于规则诊断引擎 issues 和 funnelSnapshot 展示，不直接生成经营结论。
+            连接真实独立站店铺数据的账面经营表现，深度评估全盘变现合理性。店铺经营诊断基于规则诊断与漏斗快照数据展示，不直接生成经营结论。
           </p>
         </div>
 

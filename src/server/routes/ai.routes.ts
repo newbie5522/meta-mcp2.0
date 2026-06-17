@@ -63,7 +63,7 @@ router.post("/explain-issue", (req: Request, res: Response): void => {
     mode: "dry_run",
     enabled: false,
     explanation: null,
-    error: "AI explanation gateway is not enabled in STEP 13-AI-R1-Backend-Gateway.",
+    error: "AI 辅助解读服务未启用。",
     boundaryNotice: BOUNDARY_NOTICE
   });
 });
@@ -100,7 +100,7 @@ router.post("/explain-dashboard", (req: Request, res: Response): void => {
     mode: "dry_run",
     enabled: false,
     explanation: null,
-    error: "AI explanation gateway is not enabled in STEP 13-AI-R1-Backend-Gateway.",
+    error: "AI 辅助解读服务未启用。",
     boundaryNotice: BOUNDARY_NOTICE
   });
 });
@@ -146,7 +146,7 @@ router.post("/explain-review", (req: Request, res: Response): void => {
     mode: "dry_run",
     enabled: false,
     explanation: null,
-    error: "AI explanation gateway is not enabled in STEP 13-AI-R1-Backend-Gateway.",
+    error: "AI 辅助解读服务未启用。",
     boundaryNotice: BOUNDARY_NOTICE
   });
 });
