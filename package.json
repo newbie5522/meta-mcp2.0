@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "audit:ai-safety": "bash scripts/audit-ai-safety.sh"
+    "audit:ai-safety": "bash scripts/audit-ai-safety.sh",
+    "audit:data-pipeline": "tsx src/server/scripts/run-pipeline-audit.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

@@ -9,6 +9,10 @@ import { getAggregatedCreativeInsights } from "../services/creative-insights.ser
 import { syncStoreData } from "../services/store-sync.service.js";
 import { normalizeMetaAccountId, isDemoDataEnabled } from "../utils.js";
 import { getCountryAnalytics } from "../services/country-analytics.service.js";
+import { getStoreOrderFacts, getStoreOrderSummary } from "../services/order-fact.service.js";
+import { getMetaAccountPerformanceFacts, getMetaPerformanceSummary } from "../services/meta-performance-fact.service.js";
+import { getAccountMappingFacts } from "../services/mapping-fact.service.js";
+import { runDataPipelineAudit } from "../services/data-pipeline-audit.service.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -55,17 +59,11 @@ router.get("/detail", async (req, res) => {
       where: { status: "running" }
     }) > 0;
 
-    // 3. Query Real Meta Daily Insights from fact_meta_performance
-    const perfWhereClause: any = {
-      date: { gte: startStr, lte: endStr },
-      level: "account"
-    };
-    if (accountId && accountId !== "all" && accountId !== "undefined") {
-      perfWhereClause.account_id = normalizeMetaAccountId(accountId);
-    }
-    const rawPerf = await prisma.factMetaPerformance.findMany({
-      where: perfWhereClause,
-      orderBy: { date: "desc" }
+    // 3. Query through MetaPerformanceFactService
+    const rawPerf = await getMetaAccountPerformanceFacts({
+      startDate: startStr,
+      endDate: endStr,
+      accountId: accountId ? String(accountId) : undefined,
     });
 
     const rawInsights = rawPerf.map(p => ({
@@ -83,33 +81,16 @@ router.get("/detail", async (req, res) => {
       roas: p.roas
     }));
 
-    // 4. Query Real Store Orders
-    const ordersWhereClause: any = {
-      OR: [
-        {
-          store_local_date: {
-            gte: startStr,
-            lte: endStr
-          }
-        },
-        {
-          store_local_date: null,
-          createdAt: {
-            gte: dayjs(startStr).startOf("day").toDate(),
-            lte: dayjs(endStr).endOf("day").toDate()
-          }
-        }
-      ]
-    };
-    if (storeId && storeId !== "all" && storeId !== "undefined") {
-      ordersWhereClause.storeId = Number(storeId);
-    }
-    const rawOrders = await prisma.order.findMany({
-      where: ordersWhereClause,
-      orderBy: { createdAt: "desc" }
+    // 4. Query through OrderFactService
+    const orderSummary = await getStoreOrderSummary({
+      startDate: startStr,
+      endDate: endStr,
+      storeId: storeId ? String(storeId) : undefined,
+      includeLegacyCreatedAtFallback: true,
     });
+    const rawOrders = orderSummary.orders;
 
-    // 5. Evaluate Data Health
+    // 5. Evaluate Data Health using facts
     let dataHealth = "EXCELLENT";
     let missingReason = "";
 
@@ -129,7 +110,7 @@ router.get("/detail", async (req, res) => {
       include: { store: true }
     });
 
-    const detailedAccounts = accountsWithStore.map((acc) => {
+    const detailedAccounts = await Promise.all(accountsWithStore.map(async (acc) => {
       const normAccId = normalizeMetaAccountId(acc.fb_account_id);
       const matchedInsights = rawInsights.filter(ins => {
         return normalizeMetaAccountId(ins.accountId) === normAccId;
@@ -137,7 +118,7 @@ router.get("/detail", async (req, res) => {
 
       const spend = matchedInsights.reduce((s, item) => s + (item.spend || 0), 0);
       const impressions = matchedInsights.reduce((s, item) => s + (item.impressions || 0), 0);
-      const reach = spend / 0.15; // fallback estimate since reach is not on level account
+      const reach = spend / 0.15; // fallback estimate
       const clicks = matchedInsights.reduce((s, item) => s + (item.clicks || 0), 0);
       const addToCart = 0; // Removed from schema, keeping 0 for API contract
       const purchases = matchedInsights.reduce((s, item) => s + (item.purchases || 0), 0);
@@ -172,7 +153,7 @@ router.get("/detail", async (req, res) => {
         lastSyncTime: acc.updatedAt || null,
         healthStatus: matchedInsights.length > 0 ? "EXCELLENT" : "WARNING"
       };
-    });
+    }));
 
     // Apply store filter on aggregated accounts if requested
     let filteredDetailedAccounts = detailedAccounts;
@@ -200,9 +181,10 @@ router.get("/detail", async (req, res) => {
         isSyncActive
       },
       dataSourceExplain: {
-        primarySource: "FactMetaPerformance",
-        legacySource: "AdInsight",
-        legacyUsed: false
+        orderSource: "Order.store_local_date",
+        metaSource: "FactMetaPerformance",
+        mappingSource: "AccountMapping + AdAccount",
+        legacyCreatedAtFallbackUsed: orderSummary.legacyFallbackUsed
       }
     });
 
@@ -840,138 +822,39 @@ router.get("/stores", async (req, res) => {
     const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
 
-    let stores = await prisma.store.findMany({
+    // Start of SOT Refactored Stores Endpoint
+    let storesToAggregate = await prisma.store.findMany({
       include: { accounts: true, accountMappings: true }
     });
 
     if (!isDemoDataEnabled()) {
-      stores = stores.filter(store => 
+      storesToAggregate = storesToAggregate.filter(store => 
         store.mode !== "sandbox" &&
         !["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"].includes(store.name) &&
         !["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"].includes(store.domain)
       );
     }
 
-    const getStoreLocalDateHelper = (order: any, timezoneStr: string | null | undefined): string => {
-      if (order.store_local_date) return order.store_local_date;
-      const date = order.createdAt;
-      if (!date) return dayjs().format("YYYY-MM-DD");
-      const d = typeof date === "string" ? date : date.toISOString();
-      try {
-        let tz = timezoneStr || "Asia/Shanghai";
-        const trimmed = tz.trim();
-        let normalized = "Asia/Shanghai";
-        try {
-          Intl.DateTimeFormat(undefined, { timeZone: trimmed });
-          normalized = trimmed;
-        } catch (e) {
-          const match = trimmed.match(/([+-])(\d{1,2})/);
-          if (match) {
-            const sign = match[1] === '-' ? -1 : 1;
-            const hours = parseInt(match[2], 10);
-            switch (hours) {
-              case -11: normalized = "Pacific/Midway"; break;
-              case -10: normalized = "Pacific/Honolulu"; break;
-              case -9: normalized = "America/Anchorage"; break;
-              case -8: normalized = "America/Los_Angeles"; break;
-              case -7: normalized = "America/Los_Angeles"; break;
-              case -6: normalized = "America/Chicago"; break;
-              case -5: normalized = "America/New_York"; break;
-              case -4: normalized = "America/Halifax"; break;
-              case -3: normalized = "America/Argentina/Buenos_Aires"; break;
-              case -2: normalized = "America/Noronha"; break;
-              case -1: normalized = "Atlantic/Cape_Verde"; break;
-              case 0: normalized = "UTC"; break;
-              case 1: normalized = "Europe/London"; break;
-              case 2: normalized = "Europe/Paris"; break;
-              case 3: normalized = "Europe/Moscow"; break;
-              case 4: normalized = "Asia/Dubai"; break;
-              case 5: normalized = "Asia/Karachi"; break;
-              case 6: normalized = "Asia/Almaty"; break;
-              case 7: normalized = "Asia/Bangkok"; break;
-              case 8: normalized = "Asia/Shanghai"; break;
-              case 9: normalized = "Asia/Tokyo"; break;
-              case 10: normalized = "Australia/Sydney"; break;
-              case 11: normalized = "Pacific/Guadalcanal"; break;
-              case 12: normalized = "Pacific/Auckland"; break;
-              case 13: normalized = "Pacific/Apia"; break;
-              default: normalized = hours > 0 ? "Asia/Shanghai" : "UTC";
-            }
-          }
-        }
-        return dayjs(d).tz(normalized).format("YYYY-MM-DD");
-      } catch (err) {
-        return dayjs(d).format("YYYY-MM-DD");
-      }
-    };
-
-    // Calculate processed stores
-    const processedList = await Promise.all(stores.map(async (store) => {
-      // 1. Calculate orders inside date range using store timezone aware date
-      const rawOrders = await prisma.order.findMany({
-        where: { storeId: store.id }
+    const processedList = await Promise.all(storesToAggregate.map(async (store) => {
+      const orderSummary = await getStoreOrderSummary({
+        startDate: startStr,
+        endDate: endStr,
+        storeId: store.id,
+        includeLegacyCreatedAtFallback: true
       });
 
-      const storeTimezone = store.timezone || "America/Los_Angeles";
-      const ordersInDateRange = rawOrders.filter(order => {
-        const localDate = getStoreLocalDateHelper(order, storeTimezone);
-        if (localDate < startStr || localDate > endStr) return false;
+      const ordersCount = orderSummary.ordersCount;
+      const totalSales = orderSummary.totalSales;
+      const totalRefunded = orderSummary.refundAmount;
 
-        // Exclude unpaid, pending, cancelled, or waiting orders from KPI calculations
-        const paymentStatus = order.paymentStatus ? String(order.paymentStatus).toLowerCase() : "";
-        if (paymentStatus && ["waiting", "unpaid", "pending", "cancelled", "voided"].includes(paymentStatus)) {
-          return false;
-        }
-
-        return true;
-      });
-
-      // Group by orderId to calculate actual unique orders and their totals once, avoiding duplicates
-      const uniqueOrdersMap = new Map<string, { orderTotal: number; refunded: boolean; createdAt: Date }>();
-      ordersInDateRange.forEach(o => {
-        const oId = o.orderId || o.id;
-        if (!uniqueOrdersMap.has(oId)) {
-          uniqueOrdersMap.set(oId, {
-            orderTotal: o.orderTotal != null && o.orderTotal > 0 ? o.orderTotal : (o.revenue || 0),
-            refunded: o.refunded || false,
-            createdAt: o.createdAt
-          });
-        } else {
-          const existing = uniqueOrdersMap.get(oId)!;
-          if (o.orderTotal == null || o.orderTotal === 0) {
-            existing.orderTotal += (o.revenue || 0);
-          }
-        }
-      });
-
-      const ordersCount = uniqueOrdersMap.size;
-      let totalSales = 0;
-      let totalRefunded = 0;
-      uniqueOrdersMap.forEach(uo => {
-        totalSales += uo.orderTotal;
-        if (uo.refunded) {
-          totalRefunded += uo.orderTotal;
-        }
-      });
-
-      // Determine product metrics
-      const uniqueProductIds = new Set(ordersInDateRange.map(o => o.productId).filter(Boolean));
+      const uniqueProductIds = new Set(orderSummary.orders.map(o => o.productId).filter(Boolean));
       const productCount = uniqueProductIds.size;
-
-      // Order country fields are unavailable; countryCount is not derived from orders.
       const countryCount = null;
 
-      // 2. Fetch spend from mapped accounts
       const mappedFbAccountIds = new Set<string>();
-      // accounts relation
-      store.accounts.forEach(acc => {
-        mappedFbAccountIds.add(acc.fb_account_id);
-      });
-      // mapping table
-      store.accountMappings.forEach(m => {
-        if (m.fbAccountId) {
-          mappedFbAccountIds.add(m.fbAccountId);
-        }
+      store.accounts?.forEach(acc => mappedFbAccountIds.add(acc.fb_account_id));
+      store.accountMappings?.forEach(m => {
+        if (m.fbAccountId) mappedFbAccountIds.add(m.fbAccountId);
       });
 
       const uniqueMappedIds = Array.from(mappedFbAccountIds);
@@ -990,9 +873,8 @@ router.get("/stores", async (req, res) => {
       }
 
       const roas = adSpend > 0 ? totalSales / adSpend : 0;
-      const aov = ordersCount > 0 ? totalSales / ordersCount : 0;
+      const aov = orderSummary.aov;
 
-      // 3. Last sync check
       const lastSync = await prisma.syncLog.findFirst({
         where: { storeId: String(store.id) },
         orderBy: { startedAt: "desc" }
@@ -1003,8 +885,6 @@ router.get("/stores", async (req, res) => {
         name: store.name,
         platform: store.platform,
         domain: store.domain,
-        timezone: storeTimezone,
-        status: store.status || "active",
         currency: "USD",
         accountsCount: uniqueMappedIds.length,
         mappedAccountCount: uniqueMappedIds.length,
@@ -1026,40 +906,18 @@ router.get("/stores", async (req, res) => {
       };
     }));
 
-    // 4. Calculate unmapped accounts total count and total spend
+    const mappingFacts = await getAccountMappingFacts({ startDate: startStr, endDate: endStr });
     const allAdAccounts = await prisma.adAccount.findMany();
     const allMappedFbAccountIds = new Set<string>();
-    stores.forEach(s => {
-      s.accounts.forEach(acc => {
-        allMappedFbAccountIds.add(normalizeMetaAccountId(acc.fb_account_id));
-      });
+    storesToAggregate.forEach(s => {
+      s.accounts.forEach(acc => allMappedFbAccountIds.add(normalizeMetaAccountId(acc.fb_account_id)));
       s.accountMappings.forEach(m => {
-        if (m.fbAccountId) {
-          allMappedFbAccountIds.add(normalizeMetaAccountId(m.fbAccountId));
-        }
+        if (m.fbAccountId) allMappedFbAccountIds.add(normalizeMetaAccountId(m.fbAccountId));
       });
     });
 
-    const unmappedAccounts = allAdAccounts.filter(acc => {
-      const isMapped = allMappedFbAccountIds.has(normalizeMetaAccountId(acc.fb_account_id));
-      return !isMapped;
-    });
+    const unmappedAccounts = allAdAccounts.filter(acc => !allMappedFbAccountIds.has(normalizeMetaAccountId(acc.fb_account_id)));
 
-    const unmappedFbAccountIds = unmappedAccounts.map(acc => acc.fb_account_id);
-    let unmappedSpend = 0;
-
-    if (unmappedFbAccountIds.length > 0) {
-      const unmappedPerf = await prisma.factMetaPerformance.findMany({
-        where: {
-          account_id: { in: unmappedFbAccountIds },
-          date: { gte: startStr, lte: endStr },
-          level: "account"
-        }
-      });
-      unmappedSpend = unmappedPerf.reduce((sum, item) => sum + (item.spend || 0), 0);
-    }
-
-    // data health card definition
     let dataStatus = "EXCELLENT";
     let missingReason = "所有店铺数据已实时对齐，未映射广告支出安全过滤中，数据流健康运行中。";
 
@@ -1081,23 +939,24 @@ router.get("/stores", async (req, res) => {
     res.json({
       stores: processedList,
       unmappedAccountsSummary: {
-        count: unmappedAccounts.length,
-        spend: unmappedSpend,
-        message: `当前有 ${unmappedAccounts.length} 个广告账户尚未绑定店铺，这些账户的花费不会计入任何店铺真实 ROAS。请前往店铺账户映射页面处理。`
+        count: mappingFacts.unmappedSpendAccountsInRange,
+        spend: mappingFacts.unmappedSpendAmount,
+        message: `当前有 ${mappingFacts.unmappedSpendAccountsInRange} 个广告账户尚未绑定店铺且产生消耗，这些账户的花费 $${mappingFacts.unmappedSpendAmount.toFixed(2)} 不会计入任何店铺真实 ROAS。请前往店铺账户映射页面处理。`
       },
       dataHealth: {
         status: dataStatus,
         message: missingReason
       },
       dataSourceExplain: {
-        primarySource: "FactMetaPerformance",
-        legacySource: "AdInsight",
-        legacyUsed: false
+        orderSource: "Order.store_local_date",
+        metaSource: "FactMetaPerformance",
+        mappingSource: "AccountMapping + AdAccount",
+        legacyCreatedAtFallbackUsed: false
       }
     });
 
+    return; // Fast return to skip legacy evaluation blocks below
   } catch (error: any) {
-    console.error("[Data Center API] Stores error:", error);
     res.status(500).json({ error: "Failed to load stores dashboard", details: error.message });
   }
 });
@@ -1220,16 +1079,25 @@ router.get("/max-date", async (req, res) => {
       select: { date: true }
     });
     const maxOrder = await prisma.order.findFirst({
-      orderBy: { createdAt: "desc" },
-      select: { store_local_date: true, createdAt: true }
+      orderBy: { store_local_date: "desc" },
+      where: { store_local_date: { not: null } },
+      select: { store_local_date: true }
     });
 
-    let maxDateStr = "2026-06-11"; // Standard fallback matching the seeded data
+    let maxDateStr: string | null = null;
     if (maxInsight?.date) {
       maxDateStr = maxInsight.date;
     }
-    if (maxOrder?.store_local_date && maxOrder.store_local_date > maxDateStr) {
+    if (maxOrder?.store_local_date && (!maxDateStr || maxOrder.store_local_date > maxDateStr)) {
       maxDateStr = maxOrder.store_local_date;
+    }
+
+    if (!maxDateStr) {
+      return res.json({
+        maxDate: null,
+        status: "EMPTY",
+        message: "暂无同步数据"
+      });
     }
 
     res.json({
@@ -1241,7 +1109,11 @@ router.get("/max-date", async (req, res) => {
       }
     });
   } catch (err) {
-    res.json({ maxDate: "2026-06-11" });
+    res.json({
+      maxDate: null,
+      status: "EMPTY",
+      message: "暂无同步数据"
+    });
   }
 });
 
@@ -1256,18 +1128,15 @@ router.get("/accounts-performance", async (req, res) => {
     const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
 
-    // 1. Fetch performance rows from fact_meta_performance
+    // 1. Fetch performance rows from SOT fact table
     let performanceRows = await prisma.factMetaPerformance.findMany({
       where: {
         level: "account",
-        date: {
-          gte: startStr,
-          lte: endStr
-        }
+        date: { gte: startStr, lte: endStr }
       }
     });
 
-    // 2. Fetch AdAccount, AccountMapping, Store info
+    // 2. Fetch AdAccount, AccountMapping, Store info using SOT mapping service
     let [adAccounts, accountMappings, stores] = await Promise.all([
       prisma.adAccount.findMany({ include: { store: true } }),
       prisma.accountMapping.findMany({ include: { store: true } }),
@@ -1285,16 +1154,11 @@ router.get("/accounts-performance", async (req, res) => {
       accountMappings = accountMappings.filter(m => !m.storeId || productionStoreIds.has(m.storeId));
     }
 
-    // 3. Setup indexing maps for LEFT JOIN behavior
     const adAccountsMap = new Map<string, any>();
-    adAccounts.forEach(a => {
-      adAccountsMap.set(normalizeMetaAccountId(a.fb_account_id), a);
-    });
+    adAccounts.forEach(a => adAccountsMap.set(normalizeMetaAccountId(a.fb_account_id), a));
 
     const mappingsMap = new Map<string, any>();
-    accountMappings.forEach(m => {
-      mappingsMap.set(normalizeMetaAccountId(m.fbAccountId), m);
-    });
+    accountMappings.forEach(m => mappingsMap.set(normalizeMetaAccountId(m.fbAccountId), m));
 
     if (!isDemoDataEnabled()) {
       performanceRows = performanceRows.filter(r => {
@@ -1304,7 +1168,7 @@ router.get("/accounts-performance", async (req, res) => {
       });
     }
 
-    // 4. Group and aggregate daily performance
+    // 3. Group and aggregate daily performance
     const performanceMap = new Map<string, any>();
     for (const row of performanceRows) {
       const normId = normalizeMetaAccountId(row.account_id);
@@ -1329,12 +1193,15 @@ router.get("/accounts-performance", async (req, res) => {
       }
     }
 
-    // 5. Build union of all possible accounts to support "All accounts" view toggling
+    // 4. Build union of all accounts to support "All accounts" view toggling
     const allAccountIds = new Set<string>([
       ...performanceMap.keys(),
       ...adAccountsMap.keys(),
       ...mappingsMap.keys()
     ]);
+
+    // Use MappingFactService helper
+    const mappingFacts = await getAccountMappingFacts({ startDate: startStr, endDate: endStr });
 
     let results: any[] = [];
     for (const rawId of allAccountIds) {
@@ -1352,20 +1219,13 @@ router.get("/accounts-performance", async (req, res) => {
       const adAcc = adAccountsMap.get(normId);
       const mapping = mappingsMap.get(normId);
 
-      // Determine bound store info
-      let storeIdVal: number | null = null;
-      let storeName = "未关联店铺";
-      let isBound = false;
+      // Resolve store binding via resolveAccountStoreBinding to avoid conflicting mappings
+      const binding = await resolveAccountStoreBinding(normId);
 
-      if (adAcc && adAcc.storeId) {
-        storeIdVal = adAcc.storeId;
-        storeName = adAcc.store?.name || "未关联店铺";
-        isBound = true;
-      } else if (mapping && mapping.storeId) {
-        storeIdVal = mapping.storeId;
-        storeName = mapping.store?.name || "未关联店铺";
-        isBound = true;
-      }
+      const isBound = binding.storeId !== null;
+      const storeIdVal = binding.storeId;
+      const boundStore = stores.find(s => s.id === storeIdVal);
+      const storeName = boundStore ? boundStore.name : "未关联店铺";
 
       const name = adAcc?.fb_account_name || mapping?.name || `Meta Account ${normId}`;
       const currency = adAcc?.currency || "USD";
@@ -1412,12 +1272,11 @@ router.get("/accounts-performance", async (req, res) => {
         meta_roas,
         roas: meta_roas,
         lastSyncedAt: maxSyncedAtSec,
-        // Requested properties for STEP 12.4 + STEP 12.5
         accountId: normId,
         accountName: name,
         hasSpend: agg.spend > 0,
         mappingStatus: isBound ? "BOUND" : "UNBOUND",
-        dataSourceExplain: "FactMetaPerformance Joined with AdAccount, AccountMapping, and Store. No AdInsight or DailySummary."
+        dataSourceExplain: "FactMetaPerformance Joined with AdAccount, AccountMapping, and Store."
       });
     }
 
@@ -1430,7 +1289,7 @@ router.get("/accounts-performance", async (req, res) => {
     // Default sorting by spend DESC
     results.sort((a, b) => b.spend - a.spend);
 
-    // Latest overall sync times in fact_meta_performance
+    // Latest overall sync times
     const accountRowsWithSync = performanceRows.filter(r => r.synced_at);
     let maxPerformanceSyncTime: Date | null = null;
     if (accountRowsWithSync.length > 0) {
@@ -1447,16 +1306,16 @@ router.get("/accounts-performance", async (req, res) => {
 
     const lastSyncTimeVal = maxPerformanceSyncTime || lastSyncLog?.finishedAt || lastSyncLog?.startedAt || null;
 
-    // Calculate requested summary indicators
-    const totalAccounts = results.length;
-    const activeAccounts = results.filter(r => r.recentActivity90d === true).length;
-    const spendAccounts = results.filter(r => r.spend > 0).length;
+    // Use correct inventory SOT for indicators:
+    const totalAccounts = adAccounts.length; // source for inventory count
+    const activeAccounts = mappingFacts.spendAccountsInRange; // Spend accounts count as active
+    const spendAccounts = mappingFacts.spendAccountsInRange;
     const zeroSpendAccounts = results.filter(r => r.spend === 0).length;
     const boundAccounts = results.filter(r => r.isBound).length;
     const unboundAccounts = results.filter(r => !r.isBound).length;
-    const unboundSpendAccounts = results.filter(r => !r.isBound && r.spend > 0).length;
+    const unboundSpendAccounts = mappingFacts.unmappedSpendAccountsInRange;
     const totalSpend = results.reduce((acc, r) => acc + r.spend, 0);
-    const unboundSpend = results.filter(r => !r.isBound).reduce((acc, r) => acc + r.spend, 0);
+    const unboundSpend = mappingFacts.unmappedSpendAmount;
     const unboundSpendRate = totalSpend > 0 ? unboundSpend / totalSpend : 0;
 
     res.json({
@@ -1488,10 +1347,13 @@ router.get("/accounts-performance", async (req, res) => {
       accounts: results,
       dataSourceExplain: {
         primarySource: "FactMetaPerformance",
+        inventorySource: "AdAccount",
         legacySource: "AdInsight",
         legacyUsed: false
       }
     });
+
+    return; // Fast return to skip legacy duplicate code below safely
   } catch (error: any) {
     res.status(500).json({ error: "Failed to load accounts performance", details: error.message });
   }
@@ -2199,60 +2061,16 @@ router.get("/store-orders", async (req, res) => {
 // 6. Pipeline audit endpoint returning diagnostic facts and metrics
 router.get("/pipeline-audit", async (req, res) => {
   try {
-    const [
-      totalStoreOrders,
-      ordersWithLocalDateCount,
-      ordersMissingLocalDateCount,
-      factMetaPerformanceRows,
-      mappedAdAccountsCount,
-      unmappedAdAccountsCount,
-      totalSyncLogs
-    ] = await Promise.all([
-      prisma.order.count(),
-      prisma.order.count({ where: { store_local_date: { not: null } } }),
-      prisma.order.count({ where: { store_local_date: null } }),
-      prisma.factMetaPerformance.count(),
-      prisma.adAccount.count({ where: { storeId: { not: null } } }),
-      prisma.adAccount.count({ where: { storeId: null } }),
-      prisma.syncLog.count()
-    ]);
+    const { startDate, endDate } = req.query;
+    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
+    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
 
-    let violations: any[] = [];
-    if (ordersMissingLocalDateCount > 0) {
-      const badOrders = await prisma.order.findMany({
-        where: { store_local_date: null },
-        take: 10,
-        include: { store: true }
-      });
-      violations = badOrders.map(o => ({
-        id: o.id,
-        orderId: o.orderId,
-        storeName: o.store?.name || "Unknown Store",
-        createdAt: o.createdAt
-      }));
-    }
-
-    const orderLocalDateCompleteness = ordersMissingLocalDateCount === 0;
-
-    res.json({
-      status: orderLocalDateCompleteness ? "PASS" : "FAIL",
-      auditTimestamp: new Date().toISOString(),
-      metrics: {
-        totalStoreOrders,
-        ordersWithLocalDateCount,
-        ordersMissingLocalDateCount,
-        factMetaPerformanceRows,
-        mappedAdAccountsCount,
-        unmappedAdAccountsCount,
-        totalSyncLogs
-      },
-      invariants: {
-        orderLocalDateCompleteness,
-        factMetaSolePerformaceUsed: true, // FactMetaPerformance verified manually
-        noDefaultStoreAutoBinding: true   // AdAccount automatic binding disabled manually
-      },
-      violations
+    const auditResult = await runDataPipelineAudit({
+      startDate: startStr,
+      endDate: endStr
     });
+
+    res.json(auditResult);
   } catch (err: any) {
     res.status(500).json({ error: "Pipeline audit failed", details: err.message });
   }
