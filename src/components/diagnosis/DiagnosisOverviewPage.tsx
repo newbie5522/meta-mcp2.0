@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { 
   AlertCircle, 
   TrendingDown, 
@@ -20,6 +20,7 @@ import {
   Calendar
 } from "lucide-react";
 import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
+import { AiDashboardSummaryCard } from "../ai/AiDashboardSummaryCard";
 
 export function DiagnosisOverviewPage() {
   const {
@@ -33,6 +34,67 @@ export function DiagnosisOverviewPage() {
     setStartDate,
     setEndDate
   } = useDiagnosticsIssues();
+
+  // Dashboard-level AI dry-run state
+  const [dashboardAiState, setDashboardAiState] = useState<{
+    loading: boolean;
+    error: string | null;
+    response: any | null;
+  }>({
+    loading: false,
+    error: null,
+    response: null,
+  });
+
+  const handleGenerateDashboardSummary = async () => {
+    setDashboardAiState({
+      loading: true,
+      error: null,
+      response: null,
+    });
+
+    try {
+      const res = await fetch("/api/ai/explain-dashboard", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          provider: "auto",
+          model: "",
+          issues: issues,
+          context: {
+            dateRange: {
+              startDate,
+              endDate,
+            },
+            currentPage: "diagnosis_overview",
+            userRole: "admin",
+            targetLanguage: "zh-CN",
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `HTTP error ${res.status}`);
+      }
+
+      const data = await res.json();
+      setDashboardAiState({
+        loading: false,
+        error: null,
+        response: data,
+      });
+    } catch (err: any) {
+      console.error("[AI EXPLAIN DASHBOARD ERROR]", err);
+      setDashboardAiState({
+        loading: false,
+        error: err.message || "请求 AI 解释网关失败",
+        response: null,
+      });
+    }
+  };
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
@@ -217,6 +279,16 @@ export function DiagnosisOverviewPage() {
             </div>
 
           </div>
+
+          {/* AI dashboard summary section (STEP 13-AI-R1-Dashboard-DryRun) */}
+          <AiDashboardSummaryCard
+            loading={dashboardAiState.loading}
+            error={dashboardAiState.error}
+            response={dashboardAiState.response}
+            onGenerate={handleGenerateDashboardSummary}
+            onRetry={handleGenerateDashboardSummary}
+            disabled={issues.length === 0}
+          />
 
           {/* Core breakdowns and lists */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
