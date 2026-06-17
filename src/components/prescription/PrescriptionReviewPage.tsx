@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { 
   History, 
   TrendingUp, 
@@ -18,9 +18,95 @@ import {
   Sparkles
 } from "lucide-react";
 import { useSuggestionStatus } from "./useSuggestionStatus";
+import { useDiagnosticsIssues } from "../diagnosis/useDiagnosticsIssues";
+import { AiReviewTemplatePanel } from "../ai/AiReviewTemplatePanel";
+import { AiExplanationEmptyState } from "../ai/AiExplanationEmptyState";
 
 export function PrescriptionReviewPage() {
   const { statusMap } = useSuggestionStatus();
+  const { issues, startDate, endDate } = useDiagnosticsIssues();
+
+  // AI review template generation state
+  const [reviewAiStateByIssueId, setReviewAiStateByIssueId] = useState<{
+    [issueId: string]: {
+      loading: boolean;
+      error: string | null;
+      response: any | null;
+      expanded: boolean;
+    }
+  }>({});
+
+  const handleGenerateReviewTemplate = async (item: any) => {
+    const issueId = item.issueId;
+
+    // Retrieve corresponding original issue if existing
+    const matchedIssue = issues.find(i => i.issueId === issueId) || {
+      issueId,
+      title: `建议处方：${issueId}`,
+      category: "production_suggestion",
+    };
+
+    setReviewAiStateByIssueId(prev => ({
+      ...prev,
+      [issueId]: {
+        loading: true,
+        error: null,
+        response: null,
+        expanded: true
+      }
+    }));
+
+    try {
+      const res = await fetch("/api/ai/explain-review", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          provider: "auto",
+          model: "",
+          issue: matchedIssue,
+          statusDetail: item,
+          context: {
+            dateRange: {
+              startDate,
+              endDate
+            },
+            currentPage: "prescription_review",
+            userRole: "admin",
+            targetLanguage: "zh-CN"
+          }
+        })
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `HTTP error ${res.status}`);
+      }
+
+      const data = await res.json();
+      setReviewAiStateByIssueId(prev => ({
+        ...prev,
+        [issueId]: {
+          loading: false,
+          error: null,
+          response: data,
+          expanded: true
+        }
+      }));
+    } catch (err: any) {
+      console.error("[AI EXPLAIN REVIEW ERROR]", err);
+      setReviewAiStateByIssueId(prev => ({
+        ...prev,
+        [issueId]: {
+          loading: false,
+          error: err.message || "请求 AI 解释网关失败",
+          response: null,
+          expanded: true
+        }
+      }));
+    }
+  };
   
   // Convert our storage status map into an array
   const statusList = Object.values(statusMap);
@@ -97,13 +183,19 @@ export function PrescriptionReviewPage() {
       </div>
 
       {totalActions === 0 ? (
-        <div className="bg-white border border-slate-200 border-dashed rounded-2xl p-16 text-center space-y-4 max-w-2xl mx-auto">
-          <Clock className="w-12 h-12 text-slate-300 mx-auto" />
-          <div className="space-y-2">
-            <h4 className="text-base font-bold text-slate-700">暂无执行回测记录。请先在建议处方中心采纳或执行建议。</h4>
-            <p className="text-xs text-slate-400">
-              一旦您在建议处方中心对处方卡片点击“采纳”、“忽略”、“标记执行中”或“标记已执行”，此处将自动捕获并展示流转进度和轻量级回测控制台。
-            </p>
+        <div className="space-y-6 max-w-2xl mx-auto">
+          <div className="bg-white border border-slate-200 border-dashed rounded-2xl p-16 text-center space-y-4 shadow-sm">
+            <Clock className="w-12 h-12 text-slate-300 mx-auto" />
+            <div className="space-y-2">
+              <h4 className="text-base font-bold text-slate-700">暂无执行回测记录。请先在建议处方中心采纳或执行建议。</h4>
+              <p className="text-xs text-slate-400">
+                一旦您在建议处方中心对处方卡片点击“采纳”、“忽略”、“标记执行中”或“标记已执行”，此处将自动捕获并展示流转进度和轻量级回测控制台。
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm text-center">
+            <AiExplanationEmptyState type="no_issues" />
           </div>
         </div>
       ) : (
@@ -207,6 +299,19 @@ export function PrescriptionReviewPage() {
                       <div>
                         <strong>执行状态中：</strong> 建议已被标记为实操跟进，基线对账期启动。
                       </div>
+                    </div>
+                  )}
+
+                  {/* AI Review Template Panel (STEP 13-AI-R1-Review-DryRun) */}
+                  {item.status !== "ignored" && (
+                    <div className="pt-2 border-t border-dashed border-slate-100">
+                      <AiReviewTemplatePanel
+                        loading={reviewAiStateByIssueId[item.issueId]?.loading || false}
+                        error={reviewAiStateByIssueId[item.issueId]?.error}
+                        response={reviewAiStateByIssueId[item.issueId]?.response}
+                        onGenerate={() => handleGenerateReviewTemplate(item)}
+                        onRetry={() => handleGenerateReviewTemplate(item)}
+                      />
                     </div>
                   )}
                 </div>
