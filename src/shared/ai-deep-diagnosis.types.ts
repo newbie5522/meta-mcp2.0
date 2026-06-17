@@ -10,12 +10,56 @@ export type AiDeepDiagnosisMode =
   | "data_quality"
   | "cross_channel_attribution";
 
+export type AiMetricTrend = "up" | "down" | "flat" | "unknown";
+
+export type AiConfidenceLevel = "high" | "medium" | "low" | "unknown";
+
+export type AiEntityType =
+  | "store"
+  | "ad_account"
+  | "campaign"
+  | "adset"
+  | "ad"
+  | "creative"
+  | "product";
+
+export type AiAllowedAnalysisTask =
+  | "summarize_performance"
+  | "compare_time_windows"
+  | "identify_metric_shift"
+  | "rank_possible_causes"
+  | "explain_funnel_dropoff"
+  | "identify_creative_fatigue"
+  | "identify_data_quality_issue"
+  | "suggest_manual_validation_steps"
+  | "prioritize_operator_attention";
+
+export type AiForbiddenAnalysisTask =
+  | "invent_missing_metrics"
+  | "claim_budget_changed"
+  | "claim_ad_paused"
+  | "claim_meta_written"
+  | "auto_optimize_campaign"
+  | "write_database"
+  | "call_external_api"
+  | "override_rule_engine"
+  | "ignore_data_quality_limits"
+  | "generate_fake_orders"
+  | "generate_fake_roas";
+
+export interface AiDiagnosisComparisonWindow {
+  label: string;
+  startDate: string;
+  endDate: string;
+  days: number;
+}
+
 export interface AiDiagnosisTimeWindow {
   label: string;
   startDate: string;
   endDate: string;
   days: number;
-  comparisonWindow: string | null;
+  comparisonWindow?: AiDiagnosisComparisonWindow | null;
 }
 
 export interface AiDiagnosisScope {
@@ -64,17 +108,23 @@ export interface AiMetricComparison {
   previous: number | null;
   delta: number | null;
   deltaPercent: number | null;
-  trend: "up" | "down" | "flat" | "unknown";
+  trend: AiMetricTrend;
 }
 
-export type AiEntityType =
-  | "store"
-  | "ad_account"
-  | "campaign"
-  | "adset"
-  | "ad"
-  | "creative"
-  | "product";
+export interface AiRuleIssueInput {
+  id: string;
+  category: string;
+  severity: string;
+  priorityScore: number | null;
+  confidenceScore: number | null;
+  oneLineReason: string;
+  diagnosisReason: string;
+  evidence: Record<string, unknown>;
+  suggestedActions: string[];
+  humanConfirmationRequired: boolean;
+  limitations: string[];
+  entityRefs: Record<string, unknown>[];
+}
 
 export interface AiEntityPerformanceNode {
   entityType: AiEntityType;
@@ -82,9 +132,9 @@ export interface AiEntityPerformanceNode {
   entityName: string;
   parentEntityId?: string | null;
   metrics: AiMetricSnapshot;
-  comparisons?: Record<string, AiMetricComparison> | null;
-  issues?: string[] | null;
-  dataQualityNotes?: string[] | null;
+  comparisons: Record<string, AiMetricComparison>;
+  issues: AiRuleIssueInput[];
+  dataQualityNotes: string[];
 }
 
 export interface AiFunnelBreakdown {
@@ -117,10 +167,16 @@ export interface AiCreativeSignal {
 }
 
 export interface AiTopProductNode {
-  productId: string;
+  productId?: string | null;
   productName: string;
-  orders: number;
-  revenue: number;
+  orders: number | null;
+  revenue: number | null;
+}
+
+export interface AiCountryOrderBreakdownNode {
+  country: string;
+  orders: number | null;
+  revenue: number | null;
 }
 
 export interface AiOrderSignal {
@@ -128,27 +184,10 @@ export interface AiOrderSignal {
   revenue: number | null;
   aov: number | null;
   topProducts: AiTopProductNode[];
-  countryBreakdown: Record<string, number>;
+  countryBreakdown: AiCountryOrderBreakdownNode[];
   refundSignals: string[];
   delayedAttributionNotes: string[];
 }
-
-export interface AiRuleIssueInput {
-  id: string;
-  category: string;
-  severity: string;
-  priorityScore: number;
-  confidenceScore: number;
-  oneLineReason: string;
-  diagnosisReason: string;
-  evidence: string;
-  suggestedActions: string[];
-  humanConfirmationRequired: boolean;
-  limitations: string[];
-  entityRefs: string[];
-}
-
-export type AiConfidenceLevel = "high" | "medium" | "low" | "unknown";
 
 export interface AiDataQualityReport {
   missingFields: string[];
@@ -159,39 +198,15 @@ export interface AiDataQualityReport {
   confidenceLevel: AiConfidenceLevel;
 }
 
-export type AiAllowedAnalysisTask =
-  | "summarize_performance"
-  | "compare_time_windows"
-  | "identify_metric_shift"
-  | "rank_possible_causes"
-  | "explain_funnel_dropoff"
-  | "identify_creative_fatigue"
-  | "identify_data_quality_issue"
-  | "suggest_manual_validation_steps"
-  | "prioritize_operator_attention";
-
-export type AiForbiddenAnalysisTask =
-  | "invent_missing_metrics"
-  | "claim_budget_changed"
-  | "claim_ad_paused"
-  | "claim_meta_written"
-  | "auto_optimize_campaign"
-  | "write_database"
-  | "call_external_api"
-  | "override_rule_engine"
-  | "ignore_data_quality_limits"
-  | "generate_fake_orders"
-  | "generate_fake_roas";
-
 export interface AiDeepDiagnosisInput {
   mode: AiDeepDiagnosisMode;
   scope: AiDiagnosisScope;
   timeWindow: AiDiagnosisTimeWindow;
-  primaryEntity: AiEntityPerformanceNode | null;
+  primaryEntity: AiEntityPerformanceNode;
   relatedEntities: AiEntityPerformanceNode[];
-  funnel: AiFunnelBreakdown | null;
+  funnel: AiFunnelBreakdown;
   creativeSignals: AiCreativeSignal[];
-  orderSignals: AiOrderSignal | null;
+  orderSignals: AiOrderSignal;
   ruleIssues: AiRuleIssueInput[];
   dataQuality: AiDataQualityReport;
   limitations: string[];
