@@ -10,12 +10,19 @@ export type AiDeepDiagnosisMode =
   | "data_quality"
   | "cross_channel_attribution";
 
+export interface AiDiagnosisComparisonWindow {
+  label: string;
+  startDate: string;
+  endDate: string;
+  days: number;
+}
+
 export interface AiDiagnosisTimeWindow {
   label: string;
   startDate: string;
   endDate: string;
   days: number;
-  comparisonWindow: string | null;
+  comparisonWindow: AiDiagnosisComparisonWindow | null;
 }
 
 export interface AiDiagnosisScope {
@@ -82,9 +89,9 @@ export interface AiEntityPerformanceNode {
   entityName: string;
   parentEntityId?: string | null;
   metrics: AiMetricSnapshot;
-  comparisons?: Record<string, AiMetricComparison> | null;
-  issues?: string[] | null;
-  dataQualityNotes?: string[] | null;
+  comparisons: Record<string, AiMetricComparison>;
+  issues: AiRuleIssueInput[];
+  dataQualityNotes: string[];
 }
 
 export interface AiFunnelBreakdown {
@@ -123,12 +130,18 @@ export interface AiTopProductNode {
   revenue: number;
 }
 
+export interface AiCountryOrderBreakdownNode {
+  countryCode: string;
+  orderCount: number;
+  revenue: number;
+}
+
 export interface AiOrderSignal {
   orderCount: number | null;
   revenue: number | null;
   aov: number | null;
   topProducts: AiTopProductNode[];
-  countryBreakdown: Record<string, number>;
+  countryBreakdown: AiCountryOrderBreakdownNode[];
   refundSignals: string[];
   delayedAttributionNotes: string[];
 }
@@ -137,15 +150,15 @@ export interface AiRuleIssueInput {
   id: string;
   category: string;
   severity: string;
-  priorityScore: number;
-  confidenceScore: number;
+  priorityScore: number | null;
+  confidenceScore: number | null;
   oneLineReason: string;
   diagnosisReason: string;
-  evidence: string;
+  evidence: Record<string, unknown>;
   suggestedActions: string[];
   humanConfirmationRequired: boolean;
   limitations: string[];
-  entityRefs: string[];
+  entityRefs: Record<string, unknown>[];
 }
 
 export type AiConfidenceLevel = "high" | "medium" | "low" | "unknown";

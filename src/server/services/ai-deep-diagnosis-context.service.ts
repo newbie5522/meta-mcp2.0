@@ -11,7 +11,10 @@ import {
   AiOrderSignal,
   AiRuleIssueInput,
   AiEntityPerformanceNode,
-  AiMetricComparison
+  AiMetricComparison,
+  AiEntityType,
+  AiAllowedAnalysisTask,
+  AiForbiddenAnalysisTask
 } from "../../shared/ai-deep-diagnosis.types.js";
 import {
   buildTimeWindow,
@@ -32,6 +35,59 @@ import {
   AiDeepDiagnosisContextBuildResult
 } from "./ai-deep-diagnosis-context.types.js";
 import { generateDiagnosticIssues } from "./rule-diagnostic-engine.service.js";
+
+interface StoreRowLike {
+  id: number;
+  name: string;
+}
+
+interface OrderRowLike {
+  id: string;
+  storeId: number;
+  createdAt: Date;
+  revenue?: number | null;
+  orderTotal?: number | null;
+  refunded?: boolean | null;
+  refundedAt?: Date | null;
+  productId?: string | null;
+}
+
+interface ProductRowLike {
+  id: string;
+  name: string;
+}
+
+interface CreativePerformanceDailyRowLike {
+  creativeId: string;
+  creativeName?: string | null;
+  purchases?: number | null;
+  spend?: number | null;
+  impressions?: number | null;
+  clicks?: number | null;
+  revenue?: number | null;
+  type?: string | null;
+  date: string;
+  frequency?: number | null;
+}
+
+interface MetaPerformanceRowLike {
+  spend?: number | null;
+  impressions?: number | null;
+  clicks?: number | null;
+  purchases?: number | null;
+  purchase_value?: number | null;
+  purchaseValue?: number | null;
+  campaign_id?: string | null;
+  adset_id?: string | null;
+  ad_id?: string | null;
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error || "Unknown error");
+}
 
 /**
  * Main service responsible for read-only aggregation of real business data
@@ -100,11 +156,17 @@ export async function buildAiDeepDiagnosisContext(
   }
 
   // 4. Query Store Information
-  let storeRow: any = null;
+  let storeRow: StoreRowLike | null = null;
   if (storeIdParsed) {
-    storeRow = await prisma.store.findUnique({
+    const rawStore = await prisma.store.findUnique({
       where: { id: storeIdParsed }
     });
+    if (rawStore) {
+      storeRow = {
+        id: rawStore.id,
+        name: rawStore.name
+      };
+    }
     if (!storeRow) {
       mappingWarnings.push(`Store ID ${storeIdParsed} not found in database.`);
     }
@@ -133,19 +195,41 @@ export async function buildAiDeepDiagnosisContext(
       const prevStartDateTime = parseISO(prevStart + "T00:00:00Z");
       const prevEndDateTime = parseISO(prevEnd + "T23:59:59.999Z");
 
-      const ordersList = await prisma.order.findMany({
+      const rawOrders = await prisma.order.findMany({
         where: {
           storeId: storeIdParsed,
           createdAt: { gte: startDateTime, lte: endDateTime }
         }
       });
 
-      const ordersListPrev = await prisma.order.findMany({
+      const rawOrdersPrev = await prisma.order.findMany({
         where: {
           storeId: storeIdParsed,
           createdAt: { gte: prevStartDateTime, lte: prevEndDateTime }
         }
       });
+
+      const ordersList: OrderRowLike[] = rawOrders.map(o => ({
+        id: o.id,
+        storeId: o.storeId,
+        createdAt: o.createdAt,
+        revenue: o.revenue,
+        orderTotal: o.orderTotal,
+        refunded: o.refunded,
+        refundedAt: o.refundedAt,
+        productId: o.productId
+      }));
+
+      const ordersListPrev: OrderRowLike[] = rawOrdersPrev.map(o => ({
+        id: o.id,
+        storeId: o.storeId,
+        createdAt: o.createdAt,
+        revenue: o.revenue,
+        orderTotal: o.orderTotal,
+        refunded: o.refunded,
+        refundedAt: o.refundedAt,
+        productId: o.productId
+      }));
 
       const ordersCount = ordersList.length;
       const totalRevenue = ordersList.reduce((sum, o) => sum + (o.revenue || o.orderTotal || 0), 0);
@@ -180,7 +264,11 @@ export async function buildAiDeepDiagnosisContext(
         const productsDb = await prisma.product.findMany({
           where: { id: { in: productIds } }
         });
-        for (const p of productsDb) {
+        const typedProducts: ProductRowLike[] = productsDb.map(p => ({
+          id: p.id,
+          name: p.name
+        }));
+        for (const p of typedProducts) {
           if (productCounts[p.id]) {
             productCounts[p.id].name = p.name;
           }
@@ -202,7 +290,7 @@ export async function buildAiDeepDiagnosisContext(
         revenue: Number(totalRevenue.toFixed(2)),
         aov: Number(aov.toFixed(2)),
         topProducts,
-        countryBreakdown: {}, // we can keep it empty if not breakdown
+        countryBreakdown: [],
         refundSignals: refundOrders.length > 0 ? [`本期内发生客户退款事件 ${refundOrders.length} 笔完成。`] : [],
         delayedAttributionNotes: ["由于在站一侧直接通过创建时间记录，而媒体侧可能发生 1-7 天归因滞后。"]
       };
@@ -223,8 +311,9 @@ export async function buildAiDeepDiagnosisContext(
         refundRate: refundRatePrev
       });
 
-    } catch (err: any) {
-      warnings.push(`Failed to calculate Store and Order metrics: ${err.message}`);
+    } catch (err: unknown) {
+      const errMsg = getErrorMessage(err);
+      warnings.push(`Failed to calculate Store and Order metrics: ${errMsg}`);
       orderSignals = createEmptyOrderSignal();
     }
   } else {
@@ -232,15 +321,15 @@ export async function buildAiDeepDiagnosisContext(
   }
 
   // 7. Aggregate Meta/Ad Performance Nodes
-  let currentMetaPerformance: DbMetaAggregate = { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0 };
-  let prevMetaPerformance: DbMetaAggregate = { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0 };
+  let currentMetaPerformance: DbMetaAggregate = { spend: null, impressions: null, clicks: null, purchases: null, purchaseValue: null };
+  let prevMetaPerformance: DbMetaAggregate = { spend: null, impressions: null, clicks: null, purchases: null, purchaseValue: null };
 
   interface DbMetaAggregate {
-    spend: number;
-    impressions: number;
-    clicks: number;
-    purchases: number;
-    purchaseValue: number;
+    spend: number | null;
+    impressions: number | null;
+    clicks: number | null;
+    purchases: number | null;
+    purchaseValue: number | null;
   }
 
   if (adAccountIdSelected) {
@@ -262,16 +351,17 @@ export async function buildAiDeepDiagnosisContext(
         }
       });
       prevMetaPerformance = aggregatePerformanceRows(prevRows, scope);
-    } catch (err: any) {
-      warnings.push(`Exception querying FactMetaPerformance: ${err.message}`);
+    } catch (err: unknown) {
+      const errMsg = getErrorMessage(err);
+      warnings.push(`Exception querying FactMetaPerformance: ${errMsg}`);
     }
   }
 
   // Fetch addToCart and initiateCheckout from AdInsight for exact accountId
-  let currentAddToCart = 0;
-  let currentInitiateCheckout = 0;
-  let prevAddToCart = 0;
-  let prevInitiateCheckout = 0;
+  let currentAddToCart: number | null = null;
+  let currentInitiateCheckout: number | null = null;
+  let prevAddToCart: number | null = null;
+  let prevInitiateCheckout: number | null = null;
 
   if (adAccountIdSelected) {
     try {
@@ -281,8 +371,10 @@ export async function buildAiDeepDiagnosisContext(
           date: { gte: startDate, lte: endDate }
         }
       });
-      currentAddToCart = currentInsights.reduce((sum, r) => sum + (r.addToCart || 0), 0);
-      currentInitiateCheckout = currentInsights.reduce((sum, r) => sum + (r.initiateCheckout || 0), 0);
+      if (currentInsights.length > 0) {
+        currentAddToCart = currentInsights.reduce((sum, r) => sum + (r.addToCart || 0), 0);
+        currentInitiateCheckout = currentInsights.reduce((sum, r) => sum + (r.initiateCheckout || 0), 0);
+      }
 
       const prevInsights = await prisma.adInsight.findMany({
         where: {
@@ -290,21 +382,31 @@ export async function buildAiDeepDiagnosisContext(
           date: { gte: prevStart, lte: prevEnd }
         }
       });
-      prevAddToCart = prevInsights.reduce((sum, r) => sum + (r.addToCart || 0), 0);
-      prevInitiateCheckout = prevInsights.reduce((sum, r) => sum + (r.initiateCheckout || 0), 0);
-    } catch (err: any) {
-      warnings.push(`Exception querying AdInsight: ${err.message}`);
+      if (prevInsights.length > 0) {
+        prevAddToCart = prevInsights.reduce((sum, r) => sum + (r.addToCart || 0), 0);
+        prevInitiateCheckout = prevInsights.reduce((sum, r) => sum + (r.initiateCheckout || 0), 0);
+      }
+    } catch (err: unknown) {
+      const errMsg = getErrorMessage(err);
+      warnings.push(`Exception querying AdInsight: ${errMsg}`);
     }
   }
 
   // Map to complete snapshots
-  const toCompleteSnapshot = (p: DbMetaAggregate, s: AiMetricSnapshot, atc: number, init: number): AiMetricSnapshot => {
-    const ctr = p.impressions > 0 ? (p.clicks / p.impressions) * 100 : null;
-    const cpc = p.clicks > 0 ? p.spend / p.clicks : null;
-    const cpm = p.impressions > 0 ? (p.spend / p.impressions) * 1000 : null;
-    const roas = p.spend > 0 ? p.purchaseValue / p.spend : null;
-    const cpa = p.purchases > 0 ? p.spend / p.purchases : null;
-    const conversionRate = p.clicks > 0 ? (p.purchases / p.clicks) * 100 : null;
+  const toCompleteSnapshot = (
+    p: DbMetaAggregate,
+    s: AiMetricSnapshot,
+    atc: number | null,
+    init: number | null
+  ): AiMetricSnapshot => {
+    const hasMeta = p.spend !== null || p.impressions !== null || p.clicks !== null;
+
+    const ctr = (hasMeta && p.impressions && p.impressions > 0 && p.clicks !== null) ? (p.clicks / p.impressions) * 100 : null;
+    const cpc = (hasMeta && p.clicks && p.clicks > 0 && p.spend !== null) ? p.spend / p.clicks : null;
+    const cpm = (hasMeta && p.impressions && p.impressions > 0 && p.spend !== null) ? (p.spend / p.impressions) * 1000 : null;
+    const roas = (hasMeta && p.spend && p.spend > 0 && p.purchaseValue !== null) ? p.purchaseValue / p.spend : null;
+    const cpa = (hasMeta && p.purchases && p.purchases > 0 && p.spend !== null) ? p.spend / p.purchases : null;
+    const conversionRate = (hasMeta && p.clicks && p.clicks > 0 && p.purchases !== null) ? (p.purchases / p.clicks) * 100 : null;
 
     return {
       spend: p.spend,
@@ -314,11 +416,11 @@ export async function buildAiDeepDiagnosisContext(
       cpc: cpc !== null ? Number(cpc.toFixed(4)) : null,
       cpm: cpm !== null ? Number(cpm.toFixed(4)) : null,
       purchases: p.purchases,
-      purchaseValue: Number(p.purchaseValue.toFixed(2)),
+      purchaseValue: p.purchaseValue !== null ? Number(p.purchaseValue.toFixed(2)) : null,
       roas: roas !== null ? Number(roas.toFixed(4)) : null,
       cpa: cpa !== null ? Number(cpa.toFixed(4)) : null,
-      addToCart: atc || null,
-      initiateCheckout: init || null,
+      addToCart: atc !== null ? atc : null,
+      initiateCheckout: init !== null ? init : null,
       conversionRate: conversionRate !== null ? Number(conversionRate.toFixed(4)) : null,
       // Merge shop一端的数据
       orders: s.orders,
@@ -335,7 +437,7 @@ export async function buildAiDeepDiagnosisContext(
   // Identify Missing Fields from Current Snapshot
   const standardFieldsToCheck: Array<keyof AiMetricSnapshot> = ["spend", "impressions", "clicks", "purchases", "purchaseValue", "orders", "revenue"];
   for (const f of standardFieldsToCheck) {
-    if (primarySnapshot[f] === null || primarySnapshot[f] === 0) {
+    if (primarySnapshot[f] === null) {
       missingFields.push(f);
     }
   }
@@ -345,7 +447,7 @@ export async function buildAiDeepDiagnosisContext(
 
   // Try parsing entity identification for title
   let primaryEntityName = "Global Node";
-  let primaryEntityType: any = "store";
+  let primaryEntityType: AiEntityType = "store";
 
   if (mode === "store_overview") {
     primaryEntityType = "store";
@@ -415,8 +517,8 @@ export async function buildAiDeepDiagnosisContext(
           const aggCur = aggregatePerformanceRows(campCurrent);
           const aggPrev = aggregatePerformanceRows(campPrev);
 
-          const snapCur = toCompleteSnapshot(aggCur, createEmptyMetricSnapshot(), 0, 0);
-          const snapPrev = toCompleteSnapshot(aggPrev, createEmptyMetricSnapshot(), 0, 0);
+          const snapCur = toCompleteSnapshot(aggCur, createEmptyMetricSnapshot(), null, null);
+          const snapPrev = toCompleteSnapshot(aggPrev, createEmptyMetricSnapshot(), null, null);
 
           relatedEntities.push(
             buildEntityPerformanceNode(
@@ -448,7 +550,7 @@ export async function buildAiDeepDiagnosisContext(
         for (const adset of adsets) {
           const adsetCurrent = relativeRows.filter(r => r.adset_id === adset.id);
           const aggCur = aggregatePerformanceRows(adsetCurrent);
-          const snapCur = toCompleteSnapshot(aggCur, createEmptyMetricSnapshot(), 0, 0);
+          const snapCur = toCompleteSnapshot(aggCur, createEmptyMetricSnapshot(), null, null);
 
           relatedEntities.push(
             buildEntityPerformanceNode(
@@ -457,15 +559,16 @@ export async function buildAiDeepDiagnosisContext(
               adset.name,
               scope.campaignId,
               snapCur,
-              null,
+              undefined,
               [],
               []
             )
           );
         }
       }
-    } catch (err: any) {
-      warnings.push(`Failed to construct related entities: ${err.message}`);
+    } catch (err: unknown) {
+      const errMsg = getErrorMessage(err);
+      warnings.push(`Failed to construct related entities: ${errMsg}`);
     }
   }
 
@@ -476,20 +579,44 @@ export async function buildAiDeepDiagnosisContext(
     const endCompareDate = endDate;
 
     // Filter by storeId or adAccountId if available
-    let creativeDailyRows: any[] = [];
+    let creativeDailyRows: CreativePerformanceDailyRowLike[] = [];
     if (storeIdParsed) {
-      creativeDailyRows = await prisma.creativePerformanceDaily.findMany({
+      const rawRows = await prisma.creativePerformanceDaily.findMany({
         where: {
           storeId: storeIdParsed,
           date: { gte: startCompareDate, lte: endCompareDate }
         }
       });
+      creativeDailyRows = rawRows.map(r => ({
+        creativeId: r.creativeId,
+        creativeName: r.creativeName,
+        purchases: r.purchases,
+        spend: r.spend,
+        impressions: r.impressions,
+        clicks: r.clicks,
+        revenue: r.revenue,
+        type: r.type,
+        date: r.date,
+        frequency: r.frequency
+      }));
     } else {
-      creativeDailyRows = await prisma.creativePerformanceDaily.findMany({
+      const rawRows = await prisma.creativePerformanceDaily.findMany({
         where: {
           date: { gte: startCompareDate, lte: endCompareDate }
         }
       });
+      creativeDailyRows = rawRows.map(r => ({
+        creativeId: r.creativeId,
+        creativeName: r.creativeName,
+        purchases: r.purchases,
+        spend: r.spend,
+        impressions: r.impressions,
+        clicks: r.clicks,
+        revenue: r.revenue,
+        type: r.type,
+        date: r.date,
+        frequency: r.frequency
+      }));
     }
 
     // Group by creativeId and aggregate
@@ -508,6 +635,7 @@ export async function buildAiDeepDiagnosisContext(
 
     for (const row of creativeDailyRows) {
       const cid = row.creativeId;
+      if (!cid) continue;
       if (!creativeGroups[cid]) {
         creativeGroups[cid] = {
           creativeId: cid,
@@ -561,13 +689,13 @@ export async function buildAiDeepDiagnosisContext(
           fatigueSignals.push(`素材点击率（CTR）处于异常低位 (${ctr.toFixed(2)}%)，吸引力可能枯竭。`);
         }
         if (cpm > 25.0) {
-          fatigueSignals.push(`素材CPM处于高位 ($${cpm.toFixed(2)})，竞价严重虚高。`);
+          fatigueSignals.push(`素材CPM处于高位 ($${cpm.toFixed(2)})，竞价处于较高位，需要人工复核是否存在素材空耗风险。`);
         }
 
         if (roas > 1.8) {
-          performanceNotes.push("在诊断周期内回报正常，维持高优先级投放。");
+          performanceNotes.push("在诊断周期内回报正常，该信号仅作为素材疲劳候选，不代表系统已建议执行操作。");
         } else if (group.spend > 50 && group.purchases === 0) {
-          performanceNotes.push("素材空耗，已达赔本爆裂边缘，建议果断收缩或关停。");
+          performanceNotes.push("需要人工复核是否存在素材空耗风险。需要人工查看该素材在相同窗口内的转化质量。");
         }
 
         creativeSignals.push(
@@ -593,8 +721,9 @@ export async function buildAiDeepDiagnosisContext(
       }
     }
 
-  } catch (err: any) {
-    warnings.push(`Failed to calculate creative signals: ${err.message}`);
+  } catch (err: unknown) {
+    const errMsg = getErrorMessage(err);
+    warnings.push(`Failed to calculate creative signals: ${errMsg}`);
   }
 
   // 10. Construct conversion funnel
@@ -613,7 +742,7 @@ export async function buildAiDeepDiagnosisContext(
     if (impressions && clicks) {
       const ctr = clicks / impressions;
       if (ctr < 0.01) {
-        suspectedBottlenecks.push("展示至点击流失率过高 (CTR < 1%)，表明创意吸睛度可能严重不足或受众配重偏差。");
+        suspectedBottlenecks.push("展示至点击流失过高 (CTR < 1%)，表明创意吸引力可能不足，需由运营人员在 Meta 后台和店铺订单侧交叉确认。");
       }
       dropOffNotes.push(`展示到点击转化率 (CTR): ${(ctr * 100).toFixed(2)}%`);
     } else {
@@ -631,7 +760,7 @@ export async function buildAiDeepDiagnosisContext(
     if (addToCart && initiateCheckout) {
       const ckRate = initiateCheckout / addToCart;
       if (ckRate < 0.3) {
-        suspectedBottlenecks.push("发起结账极高阻滞 (加购到结账率 < 30%)，多由附加物流费或付款合规时效敏感导致。");
+        suspectedBottlenecks.push("发起结账阻滞极高 (加购到结账率 < 30%)，多由附加物流费或付款时效敏感导致。");
       }
       dropOffNotes.push(`加购到发起结账率: ${(ckRate * 100).toFixed(2)}%`);
     }
@@ -639,7 +768,7 @@ export async function buildAiDeepDiagnosisContext(
     if (initiateCheckout && purchases) {
       const buyRate = purchases / initiateCheckout;
       if (buyRate < 0.2) {
-        suspectedBottlenecks.push("结账转购买极其低下 (< 20%)，极大概率存在支付网关抛错或地址配送表单过于臃肿。");
+        suspectedBottlenecks.push("结账转购买低下 (< 20%)，推荐运营人员进行人工核查确认。");
       }
       dropOffNotes.push(`发起结账至完成购买率: ${(buyRate * 100).toFixed(2)}%`);
     }
@@ -649,7 +778,7 @@ export async function buildAiDeepDiagnosisContext(
       const ratio = purchases / orders;
       if (ratio > 1.3 || ratio < 0.7) {
         attributionWarnings.push(`多通道数据偏差大：Meta上报成效 Purchases (${purchases} 笔) 与 运营一侧 Shopify/Shopline 实际接收 Orders (${orders} 笔) 差异率达 ${Math.abs((1 - ratio) * 100).toFixed(2)}%。`);
-        suspectedBottlenecks.push("双向归因对账在数值上存在物理严重不对称差。");
+        suspectedBottlenecks.push("双向归因对账在数值上存在偏差。");
       }
     }
 
@@ -665,8 +794,9 @@ export async function buildAiDeepDiagnosisContext(
       dropOffNotes,
       suspectedBottlenecks
     );
-  } catch (err: any) {
-    warnings.push(`Failed to calculate funnel breakdown: ${err.message}`);
+  } catch (err: unknown) {
+    const errMsg = getErrorMessage(err);
+    warnings.push(`Failed to calculate funnel breakdown: ${errMsg}`);
     funnelBreakdown = createEmptyFunnelBreakdown();
   }
 
@@ -691,8 +821,9 @@ export async function buildAiDeepDiagnosisContext(
       missingFields.push("ruleIssues");
       limitations.push("当前未发现可读取的规则诊断 issue 来源，因此 AI 上下文仅包含原始业务指标，不包含规则引擎结论。");
     }
-  } catch (err: any) {
-    warnings.push(`Failed to execute rule diagnostic engine: ${err.message}`);
+  } catch (err: unknown) {
+    const errMsg = getErrorMessage(err);
+    warnings.push(`Failed to execute rule diagnostic engine: ${errMsg}`);
     missingFields.push("ruleIssues");
     limitations.push("规则诊断引擎暂不可用或查询返回空集。");
   }
@@ -714,8 +845,9 @@ export async function buildAiDeepDiagnosisContext(
     } else {
       staleDataWarnings.push("系统内无任何历史同账号物理同步记录。");
     }
-  } catch (err: any) {
-    warnings.push(`Failed to check sync log status: ${err.message}`);
+  } catch (err: unknown) {
+    const errMsg = getErrorMessage(err);
+    warnings.push(`Failed to check sync log status: ${errMsg}`);
   }
 
   // 13. Create Data Quality Report
@@ -728,8 +860,8 @@ export async function buildAiDeepDiagnosisContext(
   });
 
   // Allowed Task Tasks mapping based on mode
-  const allowedAnalysisTasks: any[] = [];
-  const forbiddenAnalysisTasks: any[] = [
+  const allowedAnalysisTasks: AiAllowedAnalysisTask[] = [];
+  const forbiddenAnalysisTasks: AiForbiddenAnalysisTask[] = [
     "invent_missing_metrics",
     "claim_budget_changed",
     "claim_ad_paused",
@@ -797,12 +929,15 @@ export async function buildAiDeepDiagnosisContext(
 /**
  * Filter performance rows and aggregate sum values based on optional scope filters
  */
-function aggregatePerformanceRows(rows: any[], scope?: AiDiagnosisScope): {
-  spend: number;
-  impressions: number;
-  clicks: number;
-  purchases: number;
-  purchaseValue: number;
+function aggregatePerformanceRows(
+  rows: MetaPerformanceRowLike[],
+  scope?: AiDiagnosisScope
+): {
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  purchases: number | null;
+  purchaseValue: number | null;
 } {
   let filtered = rows;
   if (scope) {
@@ -815,6 +950,16 @@ function aggregatePerformanceRows(rows: any[], scope?: AiDiagnosisScope): {
     if (scope.adId) {
       filtered = filtered.filter(r => r.ad_id === scope.adId);
     }
+  }
+
+  if (filtered.length === 0) {
+    return {
+      spend: null,
+      impressions: null,
+      clicks: null,
+      purchases: null,
+      purchaseValue: null
+    };
   }
 
   let spend = 0;

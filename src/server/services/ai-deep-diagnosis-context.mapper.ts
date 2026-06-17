@@ -56,7 +56,7 @@ export function createEmptyOrderSignal(): AiOrderSignal {
     revenue: null,
     aov: null,
     topProducts: [],
-    countryBreakdown: {},
+    countryBreakdown: [],
     refundSignals: [],
     delayedAttributionNotes: []
   };
@@ -108,9 +108,27 @@ export function buildTimeWindow(request: AiDeepDiagnosisContextRequest): AiDiagn
     days = Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24))) + 1;
   }
 
-  let comparisonWindow: string | null = null;
+  let comparisonWindow: {
+    label: string;
+    startDate: string;
+    endDate: string;
+    days: number;
+  } | null = null;
+
   if (comparisonStartDate && comparisonEndDate) {
-    comparisonWindow = `${comparisonStartDate} 至 ${comparisonEndDate}`;
+    const cs = new Date(comparisonStartDate);
+    const ce = new Date(comparisonEndDate);
+    let cDays = 0;
+    if (!isNaN(cs.getTime()) && !isNaN(ce.getTime())) {
+      const diffC = ce.getTime() - cs.getTime();
+      cDays = Math.max(0, Math.floor(diffC / (1000 * 60 * 60 * 24))) + 1;
+    }
+    comparisonWindow = {
+      label: `${comparisonStartDate} 至 ${comparisonEndDate}`,
+      startDate: comparisonStartDate,
+      endDate: comparisonEndDate,
+      days: cDays
+    };
   }
 
   return {
@@ -122,17 +140,38 @@ export function buildTimeWindow(request: AiDeepDiagnosisContextRequest): AiDiagn
   };
 }
 
-export function mapRuleIssueToAiRuleIssueInput(issue: any): AiRuleIssueInput {
+export interface RuleIssueLike {
+  id?: string | number;
+  category?: string;
+  type?: string;
+  severity?: string;
+  priorityScore?: number | null;
+  confidenceScore?: number | null;
+  oneLineReason?: string;
+  reason?: string;
+  title?: string;
+  diagnosisReason?: string;
+  description?: string;
+  content?: string;
+  evidence?: unknown;
+  payload?: unknown;
+  suggestedActions?: string[] | unknown;
+  humanConfirmationRequired?: boolean;
+  limitations?: string[] | unknown;
+  entityRefs?: unknown;
+}
+
+export function mapRuleIssueToAiRuleIssueInput(issue: RuleIssueLike | null | undefined): AiRuleIssueInput {
   if (!issue) {
     return {
-      id: "unknwon-issue",
+      id: "unknown-issue",
       category: "general",
       severity: "warning",
-      priorityScore: 0,
-      confidenceScore: 0,
+      priorityScore: null,
+      confidenceScore: null,
       oneLineReason: "",
       diagnosisReason: "",
-      evidence: "",
+      evidence: {},
       suggestedActions: [],
       humanConfirmationRequired: true,
       limitations: [],
@@ -140,19 +179,50 @@ export function mapRuleIssueToAiRuleIssueInput(issue: any): AiRuleIssueInput {
     };
   }
 
+  let resolvedEvidence: Record<string, unknown> = {};
+  if (issue.evidence !== undefined && issue.evidence !== null) {
+    if (typeof issue.evidence === "object" && !Array.isArray(issue.evidence)) {
+      resolvedEvidence = issue.evidence as Record<string, unknown>;
+    } else if (typeof issue.evidence === "string") {
+      resolvedEvidence = { text: issue.evidence };
+    }
+  } else if (issue.payload !== undefined && issue.payload !== null) {
+    if (typeof issue.payload === "object" && !Array.isArray(issue.payload)) {
+      resolvedEvidence = issue.payload as Record<string, unknown>;
+    } else if (typeof issue.payload === "string") {
+      resolvedEvidence = { text: issue.payload };
+    }
+  }
+
+  let resolvedEntityRefs: Record<string, unknown>[] = [];
+  const rawRefs = issue.entityRefs;
+  if (Array.isArray(rawRefs)) {
+    resolvedEntityRefs = rawRefs.map((ref: unknown) => {
+      if (ref && typeof ref === "object") {
+        return ref as Record<string, unknown>;
+      } else if (typeof ref === "string") {
+        return { id: ref };
+      }
+      return {};
+    });
+  }
+
+  const priorityScore = typeof issue.priorityScore === "number" ? issue.priorityScore : null;
+  const confidenceScore = typeof issue.confidenceScore === "number" ? issue.confidenceScore : null;
+
   return {
     id: String(issue.id || ""),
     category: String(issue.category || issue.type || "general"),
     severity: String(issue.severity || "warning"),
-    priorityScore: typeof issue.priorityScore === "number" ? issue.priorityScore : 0,
-    confidenceScore: typeof issue.confidenceScore === "number" ? issue.confidenceScore : 100,
+    priorityScore,
+    confidenceScore,
     oneLineReason: String(issue.oneLineReason || issue.reason || issue.title || ""),
     diagnosisReason: String(issue.diagnosisReason || issue.description || issue.content || ""),
-    evidence: String(issue.evidence || issue.payload || ""),
-    suggestedActions: Array.isArray(issue.suggestedActions) ? issue.suggestedActions.map(String) : [],
+    evidence: resolvedEvidence,
+    suggestedActions: Array.isArray(issue.suggestedActions) ? (issue.suggestedActions as unknown[]).map(String) : [],
     humanConfirmationRequired: typeof issue.humanConfirmationRequired === "boolean" ? issue.humanConfirmationRequired : true,
-    limitations: Array.isArray(issue.limitations) ? issue.limitations.map(String) : [],
-    entityRefs: Array.isArray(issue.entityRefs) ? issue.entityRefs.map(String) : []
+    limitations: Array.isArray(issue.limitations) ? (issue.limitations as unknown[]).map(String) : [],
+    entityRefs: resolvedEntityRefs
   };
 }
 
@@ -228,9 +298,9 @@ export function buildEntityPerformanceNode(
   entityName: string,
   parentEntityId: string | null | undefined,
   metrics: AiMetricSnapshot,
-  comparisons?: Record<string, AiMetricComparison> | null,
-  issues?: string[] | null,
-  dataQualityNotes?: string[] | null
+  comparisons?: Record<string, AiMetricComparison>,
+  issues?: AiRuleIssueInput[],
+  dataQualityNotes?: string[]
 ): AiEntityPerformanceNode {
   return {
     entityType,
@@ -238,9 +308,9 @@ export function buildEntityPerformanceNode(
     entityName,
     parentEntityId: parentEntityId || null,
     metrics,
-    comparisons: comparisons || null,
-    issues: issues || null,
-    dataQualityNotes: dataQualityNotes || null
+    comparisons: comparisons || {},
+    issues: issues || [],
+    dataQualityNotes: dataQualityNotes || []
   };
 }
 

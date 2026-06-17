@@ -196,25 +196,60 @@ router.post("/deep-diagnosis/context", async (req: Request, res: Response): Prom
 
     // 1. Mandatory parameter presence checks
     if (!mode) {
-      res.status(400).json({ success: false, error: "Missing required parameter: mode" });
+      res.status(400).json({
+        success: false,
+        mode: "context_only",
+        aiEnabled: false,
+        explanation: null,
+        boundaryNotice: BOUNDARY_NOTICE,
+        error: "Missing required parameter: mode"
+      });
       return;
     }
     if (!scope) {
-      res.status(400).json({ success: false, error: "Missing required parameter: scope" });
+      res.status(400).json({
+        success: false,
+        mode: "context_only",
+        aiEnabled: false,
+        explanation: null,
+        boundaryNotice: BOUNDARY_NOTICE,
+        error: "Missing required parameter: scope"
+      });
       return;
     }
     if (!startDate) {
-      res.status(400).json({ success: false, error: "Missing required parameter: startDate" });
+      res.status(400).json({
+        success: false,
+        mode: "context_only",
+        aiEnabled: false,
+        explanation: null,
+        boundaryNotice: BOUNDARY_NOTICE,
+        error: "Missing required parameter: startDate"
+      });
       return;
     }
     if (!endDate) {
-      res.status(400).json({ success: false, error: "Missing required parameter: endDate" });
+      res.status(400).json({
+        success: false,
+        mode: "context_only",
+        aiEnabled: false,
+        explanation: null,
+        boundaryNotice: BOUNDARY_NOTICE,
+        error: "Missing required parameter: endDate"
+      });
       return;
     }
 
     // 2. Validate mode inclusion
     if (!VALID_MODES.includes(mode)) {
-      res.status(400).json({ success: false, error: `Invalid mode. Allowed values: ${VALID_MODES.join(", ")}` });
+      res.status(400).json({
+        success: false,
+        mode: "context_only",
+        aiEnabled: false,
+        explanation: null,
+        boundaryNotice: BOUNDARY_NOTICE,
+        error: `Invalid mode. Allowed values: ${VALID_MODES.join(", ")}`
+      });
       return;
     }
 
@@ -222,17 +257,38 @@ router.post("/deep-diagnosis/context", async (req: Request, res: Response): Prom
     const parsedStart = new Date(startDate);
     const parsedEnd = new Date(endDate);
     if (isNaN(parsedStart.getTime())) {
-      res.status(400).json({ success: false, error: "Invalid startDate format" });
+      res.status(400).json({
+        success: false,
+        mode: "context_only",
+        aiEnabled: false,
+        explanation: null,
+        boundaryNotice: BOUNDARY_NOTICE,
+        error: "Invalid startDate format"
+      });
       return;
     }
     if (isNaN(parsedEnd.getTime())) {
-      res.status(400).json({ success: false, error: "Invalid endDate format" });
+      res.status(400).json({
+        success: false,
+        mode: "context_only",
+        aiEnabled: false,
+        explanation: null,
+        boundaryNotice: BOUNDARY_NOTICE,
+        error: "Invalid endDate format"
+      });
       return;
     }
 
     // 4. Date range inversion validation
     if (parsedStart > parsedEnd) {
-      res.status(400).json({ success: false, error: "startDate cannot be later than endDate" });
+      res.status(400).json({
+        success: false,
+        mode: "context_only",
+        aiEnabled: false,
+        explanation: null,
+        boundaryNotice: BOUNDARY_NOTICE,
+        error: "startDate cannot be later than endDate"
+      });
       return;
     }
 
@@ -240,7 +296,14 @@ router.post("/deep-diagnosis/context", async (req: Request, res: Response): Prom
     let resolvedLimit = limit;
     if (limit !== undefined) {
       if (typeof limit !== "number" || limit < 1 || limit > 100) {
-        res.status(400).json({ success: false, error: "limit must be a number between 1 and 100" });
+        res.status(400).json({
+          success: false,
+          mode: "context_only",
+          aiEnabled: false,
+          explanation: null,
+          boundaryNotice: BOUNDARY_NOTICE,
+          error: "limit must be a number between 1 and 100"
+        });
         return;
       }
     } else {
@@ -271,14 +334,15 @@ router.post("/deep-diagnosis/context", async (req: Request, res: Response): Prom
       boundaryNotice: BOUNDARY_NOTICE
     });
 
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("[deep-diagnosis/context ERROR]", err);
+    const errMsg = err instanceof Error ? err.message : String(err || "Unknown error");
     res.status(500).json({
       success: false,
       mode: "context_only",
       aiEnabled: false,
       explanation: null,
-      error: err.message,
+      error: errMsg,
       boundaryNotice: BOUNDARY_NOTICE
     });
   }
