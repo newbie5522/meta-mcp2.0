@@ -11,7 +11,7 @@ datasource db {
 model AdInsight {
   id               Int      @id @default(autoincrement())
   accountId        String
-  level            String   @default("account") // "account" | "campaign" | "adset" | "ad"
+  level            String   @default("account")
   campaignId       String   @default("")
   adsetId          String   @default("")
   adId             String   @default("")
@@ -50,7 +50,7 @@ model AccountMapping {
   project     String?
   owner       String?
   name        String?
-  mode        String?
+  mode        String?  @default("automatic")
   store       Store?   @relation(fields: [storeId], references: [id], onDelete: Cascade)
   updatedAt   DateTime @updatedAt
 }
@@ -83,8 +83,7 @@ model Store {
   domain          String?
   visitors        Int              @default(0)
   timezone        String?          @default("GMT+8")
-  status          String?          @default("active")
-  mode            String?
+  mode            String?          @default("sandbox")
   accounts        AdAccount[]
   accountMappings AccountMapping[]
   createdAt       DateTime         @default(now())
@@ -108,14 +107,14 @@ model AdAccount {
   fb_account_id   String   @unique
   fb_account_name String?
   fb_access_token String?
-  currency        String?
-  timezone        String?
-  status          String?
-  storeId         Int?
+  storeId         Int
   activityStatus  Int      @default(2)
-  recentActivity90d Boolean @default(false)
+  status            String?   @default("1")
+  recentActivity90d Boolean   @default(false)
+  currency          String?   @default("USD")
+  timezone          String?   @default("GMT+8")
   lastActivityCheckedAt DateTime?
-  store           Store?    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   campaigns       Campaign[]
@@ -144,12 +143,8 @@ model Order {
   orderTotal      Float?
   createdAt       DateTime @default(now())
   store_local_date String?
-  paymentStatus    String?
-  fulfillmentStatus String?
-
-  created_at_utc      DateTime?
-  store_timezone      String?
-  store_local_datetime String?
+  paymentStatus     String?   @default("paid")
+  fulfillmentStatus String?   @default("fulfilled")
 }
 
 model Campaign {
@@ -198,36 +193,7 @@ model AdCreative {
   metaAssetId  String?
   hookRate     Float                      @default(0)
   ads          Ad[]
-  performances CreativePerformanceDaily[]
-}
-
-model CreativePerformanceDaily {
-  id               Int        @id @default(autoincrement())
-  creativeId       String
-  date             String
-  spend            Float      @default(0)
-  impressions      Int        @default(0)
-  clicks           Int        @default(0)
-  revenue          Float      @default(0)
-  storeId          Int?
-  creativeName     String?
-  type             String?
-  purchases        Int        @default(0)
-  roas             Float      @default(0)
-  ctr              Float      @default(0)
-  cpc              Float      @default(0)
-  cpm              Float      @default(0)
-  frequency        Float      @default(0)
-  hookRate         Float      @default(0)
-  aiRiskStatus     String?
-  trendStatus      String?
-  aiSuggestion     String?
-  createdAt        DateTime   @default(now())
-  updatedAt        DateTime   @updatedAt
-
-  creative         AdCreative @relation(fields: [creativeId], references: [creativeId], onDelete: Cascade)
-
-  @@unique([creativeId, date])
+  creativePerformanceDaily CreativePerformanceDaily[]
 }
 
 model ProductPerformanceDaily {
@@ -262,162 +228,193 @@ model ProductPerformanceDaily {
   @@unique([storeId, productId, date])
 }
 
-model AiProvider {
-  id                   String   @id @default(uuid())
-  provider             String   @unique
-  displayName          String
-  apiKeyEncrypted      String?
-  defaultChatModel     String?
+
+model FactMetaPerformance {
+  id             Int       @id @default(autoincrement())
+  date           String
+  level          String
+  account_id     String
+  campaign_id    String    @default("")
+  adset_id       String    @default("")
+  ad_id          String    @default("")
+  creative_id    String    @default("")
+  entity_id      String
+  spend          Float     @default(0)
+  impressions    Int       @default(0)
+  clicks         Int       @default(0)
+  ctr            Float     @default(0)
+  cpc            Float     @default(0)
+  cpm            Float     @default(0)
+  purchases      Int       @default(0)
+  purchase_value Float     @default(0)
+  roas           Float     @default(0)
+  currency       String?   @default("USD")
+  synced_at      DateTime? @default(now())
+  raw_payload    String?
+
+  @@unique([date, level, account_id, entity_id], name: "date_level_account_id_entity_id")
+  @@index([account_id])
+  @@index([date])
+}
+
+model DailySummary {
+  id        String   @id @default(cuid())
+  scope     String
+  scopeId   String
+  date      String
+  metrics   String
+  spend     Float    @default(0)
+  impressions Int    @default(0)
+  clicks    Int    @default(0)
+  revenue   Float    @default(0)
+  orders    Int    @default(0)
+  roas      Float    @default(0)
+  metaRoas  Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([scope, scopeId, date])
+}
+
+model SyncLog {
+  id             String    @id @default(cuid())
+  type           String
+  status         String    @default("pending")
+  storeId        Int?
+  adAccountId    String?
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  rangeStart     DateTime?
+  rangeEnd       DateTime?
+  recordsFetched Int       @default(0)
+  recordsSaved   Int       @default(0)
+  errorMessage   String?
+  metadata       String?
+  taskType       String?
+  sourceType     String?
+  fbtraceId      String?
+  triggeredBy    String?
+  taskChainId    String?
+  error          String?
+}
+
+model AiProviderSetting {
+  id              Int     @id @default(autoincrement())
+  provider        String
+  displayName     String
+  apiKeyEncrypted String
+  defaultChatModel String?
   defaultAnalysisModel String?
   defaultCreativeModel String?
-  enabled              Boolean  @default(true)
-  priority             Int      @default(100)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  enabled         Boolean @default(true)
+  priority        Int     @default(100)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([provider, displayName])
 }
 
 model AiConversation {
-  id        String   @id @default(uuid())
-  title     String
+  id        String   @id @default(cuid())
+  title     String?
   context   String?
+  createdBy String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   messages  AiMessage[]
 }
 
 model AiMessage {
-  id             String          @id @default(uuid())
+  id             String         @id @default(cuid())
   conversationId String
   role           String
   content        String
   metadata       String?
-  createdAt      DateTime        @default(now())
-  conversation   AiConversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-}
-
-model SyncLog {
-  id             String   @id @default(uuid())
-  type           String
-  status         String
-  startedAt      DateTime @default(now())
-  finishedAt     DateTime?
-  recordsFetched Int?
-  recordsSaved   Int?
-  adAccountId    String?
-  storeId        String?
-  rangeStart     String?
-  rangeEnd       String?
-  metadata       String?
-  error          String?
-
-  taskType       String?
-  sourceType     String?
-  errorCode      String?
-  errorMessage   String?
-  fbtraceId      String?
-  triggeredBy    String?
-  parentTaskId   String?
-  taskChainId    String?
-}
-
-model DailySummary {
-  id           Int      @id @default(autoincrement())
-  scope        String   // "dashboard" | "store" | "ad_account" | "campaign" | "adset" | "ad" | "country" | "product"
-  scopeId      String   // target ID (e.g. store_id or account_id or "all")
-  date         String   // YYYY-MM-DD or timeframe (e.g. "7d", "30d")
-  revenue      Float    @default(0)
-  spend        Float    @default(0)
-  orders       Int      @default(0)
-  clicks       Int      @default(0)
-  impressions  Int      @default(0)
-  roas         Float    @default(0)
-  metaRoas     Float    @default(0)
-  metadata     String?  // JSON context if needed
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@unique([scope, scopeId, date])
+  createdAt      DateTime       @default(now())
+  conversation   AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 }
 
 model AiAnalysisReport {
-  id                String               @id @default(uuid())
-  type              String               // "media_buyer" | "creative" | "anomaly" | "chat_followup"
+  id                String               @id @default(cuid())
+  type              String
   entityType        String
   entityId          String
   dateRange         String?
   conclusion        String
-  dataBasis         String?
-  riskPoints        String?
+  dataBasis         String
+  riskPoints        String
   priority          Int                  @default(3)
   observationWindow String?
   model             String?
   metadata          String?
   createdAt         DateTime             @default(now())
-
   suggestions       AiActionSuggestion[]
 }
 
 model AiActionSuggestion {
-  id                 String             @id @default(uuid())
+  id                 String           @id @default(cuid())
   reportId           String
   action             String
   rationale          String
-  priority           Int                @default(3)
-  status             String             @default("pending") // "pending" | "accepted" | "rejected" | "done"
+  priority           Int              @default(3)
+  status             String           @default("pending")
   executionChecklist String?
   metadata           String?
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
-
-  report             AiAnalysisReport   @relation(fields: [reportId], references: [id], onDelete: Cascade)
-}
-
-model FactMetaPerformance {
-  id             Int      @id @default(autoincrement())
-  date           String
-  level          String   // "account" | "campaign" | "adset" | "ad"
-  account_id     String
-  campaign_id    String   @default("")
-  adset_id       String   @default("")
-  ad_id          String   @default("")
-  creative_id    String   @default("")
-  entity_id      String
-  spend          Float    @default(0)
-  impressions    Int      @default(0)
-  clicks         Int      @default(0)
-  ctr            Float    @default(0)
-  cpc            Float    @default(0)
-  cpm            Float    @default(0)
-  purchases      Int      @default(0)
-  purchase_value Float    @default(0)
-  roas           Float    @default(0)
-  currency       String   @default("USD")
-  synced_at      DateTime @default(now())
-  raw_payload    String?
-
-  @@unique([date, level, account_id, entity_id])
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  report             AiAnalysisReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
 }
 
 model FactAudienceBreakdown {
-  id                        Int      @id @default(autoincrement())
-  date                      String   // YYYY-MM-DD
-  level                     String   @default("account")   // "account" | "campaign" | "adset" | "ad"
-  account_id                String
-  campaign_id               String   @default("")
-  adset_id                  String   @default("")
-  ad_id                     String   @default("")
-  dimension_type            String   // "country" | "region" | "age" | "gender" | "publisher_platform" | "impression_device"
-  dimension_value           String   // e.g., "US", "California", "18-24", "female", "instagram", "android_smartphone"
-  dimension_value_secondary String   @default("")          // For any combination dimensions if needed
-  spend                     Float    @default(0)
-  impressions               Int      @default(0)
-  clicks                    Int      @default(0)
-  purchases                 Int      @default(0)
-  purchase_value            Float    @default(0)
-  synced_at                 DateTime @default(now())
-  raw_payload               String?
+  id                         Int      @id @default(autoincrement())
+  date                       String
+  level                      String
+  account_id                 String
+  dimension_type             String
+  dimension_value            String
+  dimension_value_secondary   String   @default("")
+  campaign_id                String   @default("")
+  adset_id                   String   @default("")
+  ad_id                      String   @default("")
+  spend                      Float    @default(0)
+  impressions                Int      @default(0)
+  clicks                     Int      @default(0)
+  purchases                  Int      @default(0)
+  purchase_value             Float    @default(0)
+  synced_at                  DateTime @default(now())
+  raw_payload                String?
 
-  @@unique([date, level, account_id, dimension_type, dimension_value, dimension_value_secondary, campaign_id, adset_id, ad_id])
+  @@unique([date, level, account_id, dimension_type, dimension_value, dimension_value_secondary, campaign_id, adset_id, ad_id], name: "date_level_account_id_dimension_type_dimension_value_dimension_value_secondary_campaign_id_adset_id_ad_id")
+  @@index([account_id])
+  @@index([date])
 }
 
+model CreativePerformanceDaily {
+  id               Int        @id @default(autoincrement())
+  creativeId       String
+  date             String
+  spend            Float      @default(0)
+  impressions      Int        @default(0)
+  clicks           Int        @default(0)
+  revenue          Float      @default(0)
+  storeId          Int?
+  creativeName     String?
+  type             String?
+  purchases        Int        @default(0)
+  roas             Float      @default(0)
+  ctr              Float      @default(0)
+  cpc              Float      @default(0)
+  cpm              Float      @default(0)
+  frequency        Float      @default(0)
+  hookRate         Float      @default(0)
+  aiRiskStatus     String?
+  trendStatus      String?
+  aiSuggestion     String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
 
+  creative         AdCreative @relation(fields: [creativeId], references: [creativeId], onDelete: Cascade)
+
+  @@unique([creativeId, date])
+  @@index([creativeId, date])
+}
