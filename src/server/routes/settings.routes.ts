@@ -26,8 +26,11 @@ router.post("/", async (req, res) => {
       create: { key, value },
     });
     
-    // Automatically trigger Sync Center Meta Pipeline on Meta Token configuration success
-    if (key.toUpperCase() === "META_ACCESS_TOKEN" || key.toUpperCase() === "META_TOKEN" || key === "meta_token") {
+    const uppercaseKey = String(key).toUpperCase();
+    const isMetaToken = uppercaseKey === "META_ACCESS_TOKEN" || uppercaseKey === "META_TOKEN" || key === "meta_token";
+
+    if (isMetaToken) {
+      // Background async trigger Meta config chain
       void import("../services/sync-center.service.js")
         .then(({ SyncCenter }) => {
           void SyncCenter.triggerMetaConfigChain("auto_config_change")
@@ -41,9 +44,15 @@ router.post("/", async (req, res) => {
         .catch((importErr) => {
           console.error("[Settings Route] Failed to import sync-center backend service:", importErr);
         });
+
+      return res.json({
+        success: true,
+        key: key,
+        syncTriggered: "queued"
+      });
     }
 
-    res.json({ success: true });
+    return res.json({ success: true });
   } catch (err: any) {
     console.error("[Save Token Error]:", err);
     if (

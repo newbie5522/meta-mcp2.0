@@ -410,14 +410,11 @@ router.post("/", async (req, res) => {
       warnings
     });
 
-  } catch (error: any) {
-    // Check for Prisma P2002 unique constraint fail
-    const isP2002 = error && typeof error === "object" && (
-      error.code === "P2002" || 
-      error.message?.includes("P2002") || 
-      error.message?.toLowerCase().includes("unique constraint") ||
-      error.message?.toLowerCase().includes("unique failed")
-    );
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errCode = (error && typeof error === "object" && "code" in error) ? (error as any).code : undefined;
+    
+    const isP2002 = errCode === "P2002" || errMsg.includes("P2002") || errMsg.toLowerCase().includes("unique constraint") || errMsg.toLowerCase().includes("unique failed");
 
     if (isP2002) {
       return res.status(409).json({
@@ -431,7 +428,7 @@ router.post("/", async (req, res) => {
     return res.status(500).json({
       success: false,
       error: "Failed to save store",
-      details: getErrorMessage(error)
+      details: errMsg
     });
   }
 });

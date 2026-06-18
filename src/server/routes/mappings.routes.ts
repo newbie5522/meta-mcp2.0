@@ -61,6 +61,14 @@ router.post("/batch", async (req, res) => {
     // Filter out invalid mappings before updating DB
     const validMappings = mappings.filter((m: any) => m && m.accountId != null);
 
+    if (validMappings.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "NO_VALID_MAPPINGS",
+        details: "未包含任何有效的广告账户映射"
+      });
+    }
+
     // 1. Validate target stores exist - Strictly DO NOT automatically create store!
     const storeNamesToCheck = Array.from(new Set(
       validMappings
