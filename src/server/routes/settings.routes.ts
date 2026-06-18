@@ -27,7 +27,7 @@ router.post("/", async (req, res) => {
     });
     
     // Automatically trigger Sync Center Meta Pipeline on Meta Token configuration success
-    if (key === "META_ACCESS_TOKEN" || key === "META_TOKEN") {
+    if (key.toUpperCase() === "META_ACCESS_TOKEN" || key.toUpperCase() === "META_TOKEN" || key === "meta_token") {
       void import("../services/sync-center.service.js")
         .then(({ SyncCenter }) => {
           void SyncCenter.triggerMetaConfigChain("auto_config_change")

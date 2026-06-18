@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
@@ -443,6 +442,9 @@ router.get("/all-dashboard-summary", async (req, res) => {
     const stores = await prisma.store.findMany();
     const result: Record<string, any> = {};
 
+    const strStart = (startDate && typeof startDate === "string") ? startDate : "";
+    const strEnd = (endDate && typeof endDate === "string") ? endDate : "";
+
     for (const store of stores) {
       const isConfigured = !!(store.shopify_token || store.shopline_token || store.shoplazza_token);
       
@@ -450,13 +452,13 @@ router.get("/all-dashboard-summary", async (req, res) => {
 
       let storeStart = new Date();
       storeStart.setDate(storeStart.getDate() - 30);
-      if (startDate && typeof startDate === "string") {
-        storeStart = new Date(`${startDate}T00:00:00${tzOffset}`);
+      if (strStart) {
+        storeStart = new Date(`${strStart}T00:00:00${tzOffset}`);
       }
 
       let storeEnd = new Date();
-      if (endDate && typeof endDate === "string") {
-        storeEnd = new Date(`${endDate}T23:59:59.999${tzOffset}`);
+      if (strEnd) {
+        storeEnd = new Date(`${strEnd}T23:59:59.999${tzOffset}`);
       }
 
       const orders = await prisma.order.findMany({
@@ -465,8 +467,8 @@ router.get("/all-dashboard-summary", async (req, res) => {
           OR: [
             {
               store_local_date: {
-                gte: startDate,
-                lte: endDate
+                gte: strStart || undefined,
+                lte: strEnd || undefined
               }
             },
             {
@@ -483,7 +485,7 @@ router.get("/all-dashboard-summary", async (req, res) => {
       const ordersForSales = orders.filter(
         (o) => {
           if (o.store_local_date) {
-            if (o.store_local_date < startDate || o.store_local_date > endDate) return false;
+            if ((strStart && o.store_local_date < strStart) || (strEnd && o.store_local_date > strEnd)) return false;
           } else {
             if (o.createdAt < storeStart || o.createdAt > storeEnd) return false;
           }
@@ -499,7 +501,7 @@ router.get("/all-dashboard-summary", async (req, res) => {
         (o) =>
           o.refunded &&
           (o.store_local_date
-            ? (o.store_local_date >= startDate && o.store_local_date <= endDate)
+            ? ((!strStart || o.store_local_date >= strStart) && (!strEnd || o.store_local_date <= strEnd))
             : ((o.refundedAt && o.refundedAt >= storeStart && o.refundedAt <= storeEnd) ||
                (!o.refundedAt && o.createdAt >= storeStart && o.createdAt <= storeEnd)))
       );

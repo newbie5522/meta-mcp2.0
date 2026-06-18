@@ -7,6 +7,19 @@ import { Input } from '@/components/ui/input';
 import { Key, RefreshCcw, Activity, AlertTriangle } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
+function getAccountId(acc: unknown): string {
+  if (!acc || typeof acc !== "object") return "";
+  const a = acc as Record<string, unknown>;
+  return String(a.id ?? a.account_id ?? a.accountId ?? "").trim();
+}
+
+function getAccountName(acc: unknown): string {
+  if (!acc || typeof acc !== "object") return "";
+  const a = acc as Record<string, unknown>;
+  const accountId = getAccountId(acc);
+  return String(a.name ?? a.accountName ?? a.fb_account_name ?? accountId ?? "Unknown").trim();
+}
+
 export function MetaConfigPage() {
   const [token, setToken] = useState<string>('');
   const [isEditingToken, setIsEditingToken] = useState(true);
@@ -441,26 +454,30 @@ export function MetaConfigPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredAccounts.map(acc => (
-                  <TableRow key={acc.id} className="hover:bg-slate-50 transition-colors">
-                    <TableCell className="px-6 py-4 font-mono text-xs text-slate-600 font-medium">{acc.id}</TableCell>
-                    <TableCell className="px-6 py-4 font-semibold text-slate-800 text-left">{acc.name}</TableCell>
-                    <TableCell className="px-6 py-4 text-xs text-slate-500 text-left font-mono">
-                      {acc.currency || 'USD'} / {acc.timezone || 'UTC'}
-                    </TableCell>
-                    <TableCell className="px-6 py-4">
-                      {acc.status === 'active' ? (
-                        <span className="px-2.5 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-100 text-xs font-semibold">
-                          活跃 (近90天有消耗)
-                        </span>
-                      ) : (
-                        <span className="px-2.5 py-1 rounded bg-slate-100 text-slate-500 text-xs font-medium">
-                          非活跃 (近期无消耗)
-                        </span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))
+                filteredAccounts.map(acc => {
+                  const accId = getAccountId(acc);
+                  const accName = getAccountName(acc);
+                  return (
+                    <TableRow key={accId} className="hover:bg-slate-50 transition-colors">
+                      <TableCell className="px-6 py-4 font-mono text-xs text-slate-600 font-medium">{accId}</TableCell>
+                      <TableCell className="px-6 py-4 font-semibold text-slate-800 text-left">{accName}</TableCell>
+                      <TableCell className="px-6 py-4 text-xs text-slate-500 text-left font-mono">
+                        {acc.currency || 'USD'} / {acc.timezone || 'UTC'}
+                      </TableCell>
+                      <TableCell className="px-6 py-4">
+                        {acc.status === 'active' ? (
+                          <span className="px-2.5 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-100 text-xs font-semibold">
+                            活跃 (近90天有消耗)
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 rounded bg-slate-100 text-slate-500 text-xs font-medium">
+                            非活跃 (近期无消耗)
+                          </span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>

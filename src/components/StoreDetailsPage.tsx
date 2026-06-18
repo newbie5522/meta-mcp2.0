@@ -54,6 +54,40 @@ const STORE_PLATFORM_OPTIONS = [
   }
 ] as const;
 
+type StorePlatformId = typeof STORE_PLATFORM_OPTIONS[number]["id"];
+
+const getCurrentPlatformOption = (platform?: string) =>
+  STORE_PLATFORM_OPTIONS.find(p => p.id === platform) || STORE_PLATFORM_OPTIONS[0];
+
+function getAccountId(acc: unknown): string {
+  if (!acc || typeof acc !== "object") return "";
+  const a = acc as Record<string, unknown>;
+  return String(a.id ?? a.account_id ?? a.accountId ?? "").trim();
+}
+
+function getAccountName(acc: unknown): string {
+  if (!acc || typeof acc !== "object") return "";
+  const a = acc as Record<string, unknown>;
+  const accountId = getAccountId(acc);
+  return String(a.name ?? a.accountName ?? a.fb_account_name ?? accountId ?? "Unknown").trim();
+}
+
+interface StoreSaveResponse {
+  success: boolean;
+  mode?: "created" | "updated_by_id" | "updated_existing_by_name";
+  id?: number;
+  store?: {
+    id?: number;
+    name?: string;
+    platform?: string;
+    domain?: string | null;
+  };
+  message?: string;
+  error?: string;
+  details?: string;
+  warnings?: string[];
+}
+
 export function StoreDetailsPage({
   isNew = false,
 }: {
@@ -72,6 +106,7 @@ export function StoreDetailsPage({
   });
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
+  const [savedStoreId, setSavedStoreId] = useState<number | null>(null);
 
   // Ad Account Mappings States
   const [mappings, setMappings] = useState<any[]>([]);
@@ -81,6 +116,8 @@ export function StoreDetailsPage({
   const [searchAccountQuery, setSearchAccountQuery] = useState("");
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [loadingAccountsList, setLoadingAccountsList] = useState(false);
+
+  const hasStoreId = !isNew || !!storeId || !!savedStoreId;
 
   useEffect(() => {
     if (addAccountOpen && availableAccounts.length === 0) {
@@ -108,19 +145,23 @@ export function StoreDetailsPage({
   };
 
   useEffect(() => {
-    if (!isNew && storeData?.name) {
+    if (hasStoreId && storeData?.name) {
       fetchAssociatedAdAccounts();
     }
-  }, [isNew, storeData?.name]);
+  }, [hasStoreId, storeData?.name]);
 
   const handleAddAccountSubmit = async () => {
+    if (selectedAccountIds.length === 0) {
+      toast.error("请先选择要绑定的广告账户");
+      return;
+    }
     setSaving(true);
     try {
       const mappingsPayload = selectedAccountIds.map(id => {
-        const acc = availableAccounts.find(a => a.id === id || a.account_id === id || a.accountId === id);
+        const acc = availableAccounts.find(a => getAccountId(a) === id);
         return {
           accountId: id,
-          accountName: acc?.accountName || acc?.name || id,
+          accountName: getAccountName(acc),
           store: storeData?.name,
           owner: "未分配",
           project: "未分配",
@@ -130,7 +171,7 @@ export function StoreDetailsPage({
       const res = await axios.post("/api/mappings/batch", { mappings: mappingsPayload });
       
       if (res.data.success) {
-        toast.success(`成功绑定 ${res.data.count} 个账户`);
+        toast.success(`成功绑定 ${res.data.count || res.data.count === 0 ? res.data.count : selectedAccountIds.length} 个账户`);
         setAddAccountOpen(false);
         setSelectedAccountIds([]);
         fetchAssociatedAdAccounts();
@@ -162,18 +203,19 @@ export function StoreDetailsPage({
   };
 
   useEffect(() => {
-    if (!isNew && storeId) {
-      fetchStore();
+    const activeStoreId = storeId || savedStoreId;
+    if (!isNew && activeStoreId) {
+      fetchStore(Number(activeStoreId));
     }
-  }, [isNew, storeId]);
+  }, [isNew, storeId, savedStoreId]);
 
-  const fetchStore = async () => {
+  const fetchStore = async (targetId: number) => {
     try {
-      const res = await axios.get(`/api/stores/${storeId}`);
+      const res = await axios.get(`/api/stores/${targetId}`);
       setStoreData(res.data);
     } catch (err: any) {
-      if (err.response?.status === 404 && storeId && isNaN(Number(storeId))) {
-        setStoreData((prev: any) => ({ ...prev, name: storeId }));
+      if (err.response?.status === 404 && targetId && isNaN(Number(targetId))) {
+        setStoreData((prev: any) => ({ ...prev, name: String(targetId) }));
       } else {
         toast.error("加载店铺数据失败");
       }
@@ -188,12 +230,17 @@ export function StoreDetailsPage({
     try {
       const payload = {
         ...storeData,
+        id: storeId || savedStoreId || undefined,
         name: storeData.name?.trim(),
         domain: storeData.domain?.trim()
       };
       
       const res = await axios.post("/api/stores", payload);
       
+      if (res.data.success === false) {
+        throw new Error(res.data.details || res.data.error || "保存失败");
+      }
+
       const mode = res.data.mode;
       let successMsg = "店铺保存成功";
       if (mode === "created") {
@@ -204,22 +251,30 @@ export function StoreDetailsPage({
         successMsg = "已检测到同名店铺，已更新已有配置";
       }
       
-      toast.success(successMsg);
-      
       const savedStore = res.data.store || res.data;
       const savedId = res.data.id || savedStore?.id;
       
-      if (!savedId) {
+      if (isNew && !savedId) {
+        console.error("Store save complete but return payload had no ID:", res.data);
         toast.error("保存成功，但系统未能匹配返回的店铺ID（响应内容：" + JSON.stringify(res.data) + "）");
         return;
       }
 
       toast.success(successMsg);
       
-      if (isNew) {
+      if (savedId) {
+        setSavedStoreId(Number(savedId));
+      }
+
+      if (isNew && savedId) {
         navigate(`/store/${savedId}`, { replace: true });
       } else {
-        fetchStore();
+        if (savedId) {
+          fetchStore(Number(savedId));
+        } else {
+          const activeId = storeId || savedStoreId;
+          if (activeId) fetchStore(Number(activeId));
+        }
       }
     } catch (err: unknown) {
       const message =
@@ -357,7 +412,7 @@ export function StoreDetailsPage({
         </Card>
 
         {/* === Meta 账户绑定映射 === */}
-        {!isNew && (
+        {hasStoreId && (
           <Card className="shadow-sm border border-slate-200 bg-white">
             <CardHeader className="bg-slate-50/50 border-b border-slate-100 py-4 px-6 flex flex-row items-center justify-between">
               <CardTitle className="text-base font-bold text-slate-800 flex items-center gap-2">
@@ -384,12 +439,12 @@ export function StoreDetailsPage({
                     <div className="max-h-[300px] overflow-y-auto border border-slate-100 rounded-lg">
                       <Table>
                         <TableHeader className="bg-slate-50 sticky top-0 shadow-sm border-b">
-                          <TableRow>
+                           <TableRow>
                             <TableHead className="w-[50px] text-center">
                               <Checkbox 
                                 checked={accountsFilter.length > 0 && selectedAccountIds.length === accountsFilter.length}
                                 onCheckedChange={(checked) => {
-                                  setSelectedAccountIds(checked ? accountsFilter.map(a => a.id || a.account_id || a.accountId) : []);
+                                  setSelectedAccountIds(checked ? accountsFilter.map(a => getAccountId(a)) : []);
                                 }}
                               />
                             </TableHead>
@@ -400,12 +455,14 @@ export function StoreDetailsPage({
                         <TableBody>
                           {loadingAccountsList ? (
                             <TableRow><TableCell colSpan={3} className="text-center h-24 text-slate-500"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></TableCell></TableRow>
+                          ) : availableAccounts.length === 0 ? (
+                            <TableRow><TableCell colSpan={3} className="text-center h-24 text-slate-500 font-medium p-4">暂无可绑定账户，请先到 Meta 账户配置页保存 Token 并拉取账户。</TableCell></TableRow>
                           ) : accountsFilter.length === 0 ? (
-                            <TableRow><TableCell colSpan={3} className="text-center h-24 text-slate-400">在90天活跃账户中未检索到结果</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={3} className="text-center h-24 text-slate-400">在活跃账户中未检索到结果</TableCell></TableRow>
                           ) : (
                             accountsFilter.map((acc, index) => {
-                              const accId = acc.id || acc.account_id || acc.accountId;
-                              const accName = acc.accountName || acc.name || accId;
+                              const accId = getAccountId(acc);
+                              const accName = getAccountName(acc);
                               return (
                                 <TableRow key={accId} className={index % 2===0 ? "bg-white" : "bg-slate-50/50"}>
                                   <TableCell className="text-center py-2 border-r border-[#f3f4f6]">
@@ -446,8 +503,8 @@ export function StoreDetailsPage({
               ) : mappings.length === 0 ? (
                 <div className="py-16 flex flex-col items-center text-center bg-slate-50/50">
                   <Key className="w-10 h-10 text-slate-300 mb-3" />
-                  <p className="text-sm font-semibold text-slate-700">该店铺暂未绑定任何广告账户</p>
-                  <p className="text-xs text-slate-500 mt-1">右上角点击「添加映射」即可选择Meta账户</p>
+                  <p className="text-sm font-semibold text-slate-700">暂无已绑定账户</p>
+                  <p className="text-xs text-slate-500 mt-1">右上角点击「添加映射」或「添加账户」即可选择Meta账户</p>
                 </div>
               ) : (
                 <Table>
