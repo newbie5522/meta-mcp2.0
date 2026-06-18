@@ -267,6 +267,23 @@ function normalizeDomain(domain: string | undefined | null): string {
   return d;
 }
 
+function withTimeout(promise: Promise<any>, ms: number, defaultValue: any): Promise<any> {
+  let timeoutId: any;
+  const timeoutPromise = new Promise((resolve) => {
+    timeoutId = setTimeout(() => {
+      console.warn(`[Stores Route] detectStoreTimezone exceeded ${ms}ms limit. Falling back to default.`);
+      resolve(defaultValue);
+    }, ms);
+  });
+  return Promise.race([
+    promise.then((res) => {
+      clearTimeout(timeoutId);
+      return res;
+    }),
+    timeoutPromise
+  ]);
+}
+
 function normalizePlatform(platform: string | undefined | null): "shopline" | "shopify" | "shoplazza" {
   const p = String(platform || "shopline").trim().toLowerCase();
   if (p === "shopify") return "shopify";
@@ -321,11 +338,16 @@ router.post("/", async (req, res) => {
     const warnings: string[] = [];
     try {
       if (token && normalizedDomain) {
-        resolvedTimezone = await detectStoreTimezone(
-          actualPlatform,
-          normalizedDomain,
-          token,
-          timezone || existingStore?.timezone || "GMT+8"
+        const fallTz = timezone || existingStore?.timezone || "GMT+8";
+        resolvedTimezone = await withTimeout(
+          detectStoreTimezone(
+            actualPlatform,
+            normalizedDomain,
+            token,
+            fallTz
+          ),
+          2000,
+          fallTz
         );
       } else {
         resolvedTimezone = timezone || existingStore?.timezone || "GMT+8";

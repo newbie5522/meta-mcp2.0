@@ -33,6 +33,27 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
+const STORE_PLATFORM_OPTIONS = [
+  {
+    id: "shopline",
+    label: "SHOPLINE",
+    domainPlaceholder: "xxxx.myshopline.com",
+    tokenPlaceholder: "输入 SHOPLINE Access Token"
+  },
+  {
+    id: "shoplazza",
+    label: "SHOPLAZZA",
+    domainPlaceholder: "xxxx.myshoplaza.com",
+    tokenPlaceholder: "输入 SHOPLAZZA Access Token"
+  },
+  {
+    id: "shopify",
+    label: "Shopify",
+    domainPlaceholder: "xxxx.myshopify.com",
+    tokenPlaceholder: "输入 Shopify Access Token"
+  }
+] as const;
+
 export function StoreDetailsPage({
   isNew = false,
 }: {
@@ -186,10 +207,17 @@ export function StoreDetailsPage({
       toast.success(successMsg);
       
       const savedStore = res.data.store || res.data;
-      const savedId = res.data.id || savedStore.id;
+      const savedId = res.data.id || savedStore?.id;
       
-      if (isNew && savedId) {
-        navigate(`/store/${savedId}`);
+      if (!savedId) {
+        toast.error("保存成功，但系统未能匹配返回的店铺ID（响应内容：" + JSON.stringify(res.data) + "）");
+        return;
+      }
+
+      toast.success(successMsg);
+      
+      if (isNew) {
+        navigate(`/store/${savedId}`, { replace: true });
       } else {
         fetchStore();
       }
@@ -249,11 +277,7 @@ export function StoreDetailsPage({
             <div className="space-y-3 pb-4 border-b border-slate-100">
               <label className="text-sm font-semibold text-slate-700 block">店铺所在独立站平台</label>
               <div className="grid grid-cols-3 gap-3">
-                {[
-                  { id: "shopline", name: "SHOPLINE" },
-                  { id: "shoplazza", name: "店匠" },
-                  { id: "shopify", name: "Shopify" },
-                ].map((p) => (
+                {STORE_PLATFORM_OPTIONS.map((p) => (
                   <button
                     key={p.id}
                     type="button"
@@ -265,7 +289,7 @@ export function StoreDetailsPage({
                         : "border-slate-200 text-slate-600 hover:bg-slate-50"
                     )}
                   >
-                    {p.name}
+                    {p.label}
                   </button>
                 ))}
               </div>
@@ -286,7 +310,9 @@ export function StoreDetailsPage({
                 <Input
                   value={storeData.domain || ""}
                   onChange={(e) => setStoreData({ ...storeData, domain: e.target.value })}
-                  placeholder="xxxx.myshopline.com"
+                  placeholder={
+                    STORE_PLATFORM_OPTIONS.find(p => p.id === storeData.platform)?.domainPlaceholder || "xxxx.myshopline.com"
+                  }
                   className="h-10 border-slate-200"
                 />
               </div>
@@ -309,7 +335,9 @@ export function StoreDetailsPage({
                                 "shopline_token";
                     setStoreData({ ...storeData, [key]: e.target.value });
                   }}
-                  placeholder={`输入 ${storeData.platform || "SHOPLINE"} Access Token`}
+                  placeholder={
+                    STORE_PLATFORM_OPTIONS.find(p => p.id === storeData.platform)?.tokenPlaceholder || "输入 Access Token"
+                  }
                   className="h-10 border-slate-200"
                 />
               </div>

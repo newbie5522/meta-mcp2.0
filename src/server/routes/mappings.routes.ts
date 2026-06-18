@@ -62,6 +62,25 @@ router.post("/batch", async (req, res) => {
     // Filter out invalid mappings before updating DB
     const validMappings = mappings.filter((m: any) => m && m.accountId != null);
 
+    // 1. Validate target stores exist - Strictly DO NOT automatically create store!
+    const storeNamesToCheck = Array.from(new Set(
+      validMappings
+        .map((m: any) => m.store ? String(m.store).trim() : null)
+        .filter((name): name is string => !!name && name !== "未分配" && name !== "Unknown")
+    ));
+
+    for (const name of storeNamesToCheck) {
+      const storeExists = await prisma.store.findFirst({
+        where: { name: name }
+      });
+      if (!storeExists) {
+        return res.status(400).json({
+          error: "STORE_NOT_FOUND",
+          details: `店铺 '${name}' 不存在，请先在店铺管理中创建该店铺配置。`
+        });
+      }
+    }
+
     const results = await Promise.all(
       validMappings.map(async (mapping: any) => {
         const cleanAccId = normalizeMetaAccountId(mapping.accountId);
@@ -69,35 +88,9 @@ router.post("/batch", async (req, res) => {
         const storeName = mapping.store ? String(mapping.store).trim() : null;
         let targetStoreId: number | null = null;
         if (storeName && storeName !== "未分配" && storeName !== "Unknown") {
-          let store = await prisma.store.findFirst({
-            where: {
-              name: {
-                equals: storeName,
-              },
-            },
+          const store = await prisma.store.findFirst({
+            where: { name: storeName }
           });
-          if (!store) {
-            try {
-              // Cancel the restriction and automatically create the store safely
-              store = await prisma.store.upsert({
-                where: { name: storeName },
-                update: {},
-                create: {
-                  name: storeName,
-                  platform: "shopline",
-                },
-              });
-            } catch (e) {
-              // Fallback selection in case of race condition
-              store = await prisma.store.findFirst({
-                where: {
-                  name: {
-                    equals: storeName,
-                  },
-                },
-              });
-            }
-          }
           if (store) {
             targetStoreId = store.id;
           }
@@ -121,13 +114,15 @@ router.post("/batch", async (req, res) => {
               owner: (mapping.owner && String(mapping.owner).trim() !== "未分配") ? String(mapping.owner).trim() : null,
             }
           });
-          // Also delete corresponding AdAccount record since storeId is not nullable
+
+          // Also set corresponding AdAccount's storeId to null instead of deleting it!
           try {
-            await prisma.adAccount.delete({
-              where: { fb_account_id: cleanAccId }
+            await prisma.adAccount.updateMany({
+              where: { fb_account_id: cleanAccId },
+              data: { storeId: null }
             });
           } catch (e) {
-            // ignore if not found in AdAccount
+            console.warn(`[Mappings Route] Failed to clear storeId relation on AdAccount ${cleanAccId}:`, e);
           }
           return { success: true, accountId: cleanAccId, action: 'unmapped' };
         }
@@ -151,16 +146,22 @@ router.post("/batch", async (req, res) => {
             },
           });
 
-          // Sync with AdAccount: find corresponding Store and upsert/update store relation
+          // Sync with AdAccount: find corresponding Store and upsert/update store relation but protect existing fields
+          const existingAdAccount = await prisma.adAccount.findUnique({
+            where: { fb_account_id: cleanAccId }
+          });
+
+          const finalName = mapping.accountName ? String(mapping.accountName).trim() : (existingAdAccount?.fb_account_name || "Unknown");
+
           await prisma.adAccount.upsert({
             where: { fb_account_id: cleanAccId },
             update: {
               storeId: targetStoreId,
-              fb_account_name: mapping.accountName ? String(mapping.accountName).trim() : "Unknown",
+              fb_account_name: finalName,
             },
             create: {
               fb_account_id: cleanAccId,
-              fb_account_name: mapping.accountName ? String(mapping.accountName).trim() : "Unknown",
+              fb_account_name: finalName,
               storeId: targetStoreId,
             },
           });
@@ -173,13 +174,15 @@ router.post("/batch", async (req, res) => {
     );
     res.json({ success: true, count: results.filter(Boolean).length });
 
-    // Trigger Sync Center integration to rebuild ROAS maps & dashboard summaries on mapping update
-    try {
-      const { SyncCenter } = await import("../services/sync-center.service.js");
-      await SyncCenter.triggerMappingChangeChain("mapping_change_api");
-    } catch (syncErr) {
-      console.error("[Mappings Route] Failed to trigger mapping rebuild sync:", syncErr);
-    }
+    // Trigger Sync Center integration to rebuild ROAS maps & dashboard summaries on mapping update non-blockingly
+    void import("../services/sync-center.service.js")
+      .then(({ SyncCenter }) => {
+        void SyncCenter.triggerMappingChangeChain("mapping_change_api")
+          .then(() => console.log("[Mappings Route] Rebuild mapping change chain background success"))
+          .catch(syncErr => console.error("[Mappings Route] Failed to trigger mapping rebuild sync:", syncErr));
+      })
+      .catch(importErr => console.error("[Mappings Route] Failed to import sync center for map change:", importErr));
+
   } catch (err: any) {
     console.error("Batch save mappings error:", err);
     res

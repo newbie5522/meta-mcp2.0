@@ -423,9 +423,6 @@ router.get("/active-list", async (req, res) => {
     });
 
     // Bulk update database with findings
-    const defaultStore = await prisma.store.findFirst();
-    const defaultStoreId = defaultStore ? defaultStore.id : null;
-
     const checkedAt = new Date();
     for (const acc of uniqueAccountsSync) {
       const statusStr = acc.status != null ? String(acc.status) : null;

@@ -236,7 +236,7 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
                               store.platform === "shoplazza" && "bg-emerald-50 text-emerald-600 border border-emerald-200",
                               store.platform === "shopify" && "bg-green-50 text-green-600 border border-green-200",
                             )}>
-                              {store.platform === "shoplazza" ? "店匠" : store.platform}
+                              {store.platform === "shoplazza" ? "SHOPLAZZA" : (store.platform === "shopline" ? "SHOPLINE" : "Shopify")}
                             </span>
                           )}
                           {!apiBound && (

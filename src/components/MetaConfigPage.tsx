@@ -147,11 +147,11 @@ export function MetaConfigPage() {
       await axios.post('/api/settings', { key: 'meta_token', value: token });
       await axios.post('/api/settings', { key: 'META_ACCESS_TOKEN', value: token });
       await axios.post('/api/settings', { key: 'META_TOKEN_UPDATED_AT', value: new Date().toISOString() });
-      toast.success("Meta API Token 保存成功！自动拉取环境资产...");
+      toast.success("Meta API Token 保存成功！您可以点按下方“拉取和更新”同步广告账户列表。");
       setIsEditingToken(false);
-      fetchAccountsAndTest(token);
-    } catch (err) {
-      toast.error("保存失败");
+    } catch (err: any) {
+      const errMsg = err.response?.data?.details || err.response?.data?.error || err.message || "保存失败";
+      toast.error(`保存失败：${errMsg}`);
     } finally {
       setSaving(false);
     }

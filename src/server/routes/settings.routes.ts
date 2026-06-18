@@ -28,13 +28,19 @@ router.post("/", async (req, res) => {
     
     // Automatically trigger Sync Center Meta Pipeline on Meta Token configuration success
     if (key === "META_ACCESS_TOKEN" || key === "META_TOKEN") {
-      try {
-        const { SyncCenter } = await import("../services/sync-center.service.js");
-        const chainId = await SyncCenter.triggerMetaConfigChain("auto_config_change");
-        console.log(`[Settings Route] Automatically triggered integration sync chain: ${chainId}`);
-      } catch (triggerErr) {
-        console.error("[Settings Route] Failed to trigger background sync:", triggerErr);
-      }
+      void import("../services/sync-center.service.js")
+        .then(({ SyncCenter }) => {
+          void SyncCenter.triggerMetaConfigChain("auto_config_change")
+            .then((chainId) => {
+              console.log(`[Settings Route] Automatically triggered integration sync chain background: ${chainId}`);
+            })
+            .catch((triggerErr) => {
+              console.error("[Settings Route] Failed to run triggerMetaConfigChain background:", triggerErr);
+            });
+        })
+        .catch((importErr) => {
+          console.error("[Settings Route] Failed to import sync-center backend service:", importErr);
+        });
     }
 
     res.json({ success: true });
