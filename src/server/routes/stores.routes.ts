@@ -390,23 +390,13 @@ router.post("/", async (req, res) => {
       message = "店铺配置已创建";
     }
 
-    // Best-effort non-blocking sync trigger
-    const finalToken = actualPlatform === "shopify" ? shopify_token : (actualPlatform === "shoplazza" ? shoplazza_token : shopline_token);
-    let syncTriggered: boolean | string = false;
-    if (finalToken) {
-      syncTriggered = "queued";
-      void import("../services/sync-center.service.js")
-        .then(({ SyncCenter }) => SyncCenter.triggerStoreConfigChain(savedStore.id, "auto_store_change"))
-        .catch((syncErr) => console.error("[Stores Route] Failed to trigger background sync:", syncErr));
-    }
-
     return res.json({
       success: true,
       mode,
       store: savedStore,
       id: savedStore.id,
       message,
-      syncTriggered,
+      syncTriggered: false,
       warnings
     });
 

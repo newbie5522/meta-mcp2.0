@@ -51,7 +51,7 @@ model AccountMapping {
   owner       String?
   name        String?
   mode        String?  @default("automatic")
-  store       Store?   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store       Store?   @relation(fields: [storeId], references: [id], onDelete: SetNull)
   updatedAt   DateTime @updatedAt
 }
 
@@ -107,14 +107,14 @@ model AdAccount {
   fb_account_id   String   @unique
   fb_account_name String?
   fb_access_token String?
-  storeId         Int
+  storeId         Int?
   activityStatus  Int      @default(2)
   status            String?   @default("1")
   recentActivity90d Boolean   @default(false)
   currency          String?   @default("USD")
   timezone          String?   @default("GMT+8")
   lastActivityCheckedAt DateTime?
-  store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store           Store?   @relation(fields: [storeId], references: [id], onDelete: SetNull)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   campaigns       Campaign[]
@@ -142,7 +142,10 @@ model Order {
   orderId         String?
   orderTotal      Float?
   createdAt       DateTime @default(now())
+  created_at_utc  DateTime?
+  store_timezone  String?
   store_local_date String?
+  store_local_datetime String?
   paymentStatus     String?   @default("paid")
   fulfillmentStatus String?   @default("fulfilled")
 }

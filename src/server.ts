@@ -52,6 +52,9 @@ async function checkDb() {
       );
     }
 
+    console.log("[checkDb] Startup database check is read-only; no users, seed data, demo data, or fake data are created.");
+    return;
+
     // Ensure we have at least one admin user
     const defaultEmail = process.env.VITE_ADMIN_ID || "admin";
     const defaultPass = process.env.VITE_ADMIN_SECRET || "123456";

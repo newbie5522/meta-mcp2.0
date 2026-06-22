@@ -395,7 +395,7 @@ export function MetaConfigPage() {
                 onClick={() => setFilterTab('all')}
                 className={`h-8 text-xs font-medium px-3.5 rounded-lg ${filterTab === 'all' ? 'bg-meta-blue text-white hover:bg-meta-blue/90' : 'border-slate-200 text-slate-600'}`}
               >
-                全部账户 ({accounts.length})
+                全部账户
               </Button>
               <Button
                 variant={filterTab === 'active' ? 'default' : 'outline'}
@@ -403,7 +403,7 @@ export function MetaConfigPage() {
                 onClick={() => setFilterTab('active')}
                 className={`h-8 text-xs font-medium px-3.5 rounded-lg ${filterTab === 'active' ? 'bg-[#059669] text-white hover:bg-[#05966 emerald-700]' : 'border-slate-200 text-slate-600'}`}
               >
-                近90天活跃 ({accounts.filter(acc => acc.status === 'active').length})
+                近90天活跃
               </Button>
               <Button
                 variant={filterTab === 'inactive' ? 'default' : 'outline'}
@@ -411,12 +411,12 @@ export function MetaConfigPage() {
                 onClick={() => setFilterTab('inactive')}
                 className={`h-8 text-xs font-medium px-3.5 rounded-lg ${filterTab === 'inactive' ? 'bg-slate-700 text-white hover:bg-slate-600' : 'border-slate-200 text-slate-500'}`}
               >
-                非活跃/无消耗 ({accounts.filter(acc => acc.status === 'inactive').length})
+                非活跃/无消耗
               </Button>
             </div>
             
             <div className="text-xs text-slate-500">
-              当前展示 <span className="font-semibold text-slate-800">{filteredAccounts.length}</span> 个账户
+              当前展示账户列表状态
             </div>
           </div>
         )}

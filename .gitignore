@@ -4,6 +4,8 @@ dist/
 coverage/
 .DS_Store
 *.log
+.npm-cache/
+backups/
 .env*
 !.env.example
 
@@ -14,6 +16,10 @@ prisma/dev.db-wal
 prisma/dev.db-shm
 prisma/*.db
 prisma/*.sqlite
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 *.bak
 *.backup
 *.tmp

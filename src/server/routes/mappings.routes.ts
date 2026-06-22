@@ -181,15 +181,6 @@ router.post("/batch", async (req, res) => {
     );
     res.json({ success: true, count: results.filter(Boolean).length });
 
-    // Trigger Sync Center integration to rebuild ROAS maps & dashboard summaries on mapping update non-blockingly
-    void import("../services/sync-center.service.js")
-      .then(({ SyncCenter }) => {
-        void SyncCenter.triggerMappingChangeChain("mapping_change_api")
-          .then(() => console.log("[Mappings Route] Rebuild mapping change chain background success"))
-          .catch(syncErr => console.error("[Mappings Route] Failed to trigger mapping rebuild sync:", syncErr));
-      })
-      .catch(importErr => console.error("[Mappings Route] Failed to import sync center for map change:", importErr));
-
   } catch (err: any) {
     console.error("Batch save mappings error:", err);
     res
