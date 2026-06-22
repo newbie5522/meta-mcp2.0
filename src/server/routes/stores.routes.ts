@@ -1,7 +1,7 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
-import { getTimezoneOffsetStr, isDemoDataEnabled } from "../utils.js";
+import { getTimezoneOffsetStr, isDemoDataEnabled, normalizeMetaAccountId } from "../utils.js";
 
 const router = Router();
 const shoplineCache = new Map<string, { data: any; expiry: number }>();
@@ -16,10 +16,18 @@ function isTokenInput(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && !value.includes("...");
 }
 
+function isMaskedTokenInput(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0 && value.includes("...");
+}
+
 function getTokenField(platform: string): "shopline_token" | "shopify_token" | "shoplazza_token" {
   if (platform === "shopify") return "shopify_token";
   if (platform === "shoplazza") return "shoplazza_token";
   return "shopline_token";
+}
+
+function isDangerousAdminEnabled(): boolean {
+  return process.env.ENABLE_DANGEROUS_ADMIN === "true";
 }
 
 function sanitizeAdAccount(account: any) {
@@ -34,9 +42,9 @@ function sanitizeStore(store: any) {
   return {
     ...safeStore,
     accounts: Array.isArray(accounts) ? accounts.map(sanitizeAdAccount) : accounts,
-    shopline_token_configured: Boolean(shopline_token),
-    shopify_token_configured: Boolean(shopify_token),
-    shoplazza_token_configured: Boolean(shoplazza_token),
+    hasShoplineToken: Boolean(shopline_token),
+    hasShopifyToken: Boolean(shopify_token),
+    hasShoplazzaToken: Boolean(shoplazza_token),
   };
 }
 
@@ -348,6 +356,13 @@ router.post("/", async (req, res) => {
 
     const normalizedDomain = normalizeDomain(domain);
     const tokenField = getTokenField(actualPlatform);
+    if (isMaskedTokenInput(req.body?.[tokenField])) {
+      return res.status(400).json({
+        success: false,
+        error: "MASKED_TOKEN_REJECTED",
+        details: "Masked store tokens cannot be saved. Enter a full new token or leave the field empty."
+      });
+    }
     const submittedToken = isTokenInput(req.body?.[tokenField]) ? String(req.body[tokenField]).trim() : "";
 
     let existingStore: any = null;
@@ -1120,6 +1135,14 @@ router.get("/:id", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   const { id } = req.params;
+  if (!isDangerousAdminEnabled()) {
+    return res.status(403).json({
+      success: false,
+      error: "DANGEROUS_ADMIN_DISABLED",
+      message: "Store deletion is disabled by default. Set ENABLE_DANGEROUS_ADMIN=true to enable dangerous admin operations explicitly."
+    });
+  }
+
   try {
     await prisma.store.delete({
       where: { id: parseInt(id, 10) },
@@ -1134,20 +1157,44 @@ router.delete("/:id", async (req, res) => {
 
 router.post("/:id/accounts", async (req, res) => {
   const { id } = req.params;
-  const { fb_account_id, fb_account_name, fb_access_token } = req.body;
+  const { fb_account_id, fb_account_name } = req.body;
+  const rawAccountId = String(fb_account_id || "").trim();
+  if (!rawAccountId) {
+    return res.status(400).json({
+      success: false,
+      error: "INVALID_ACCOUNT_ID",
+      details: "fb_account_id is required and cannot be empty."
+    });
+  }
+  const cleanAccountId = normalizeMetaAccountId(rawAccountId);
 
   try {
-    const account = await prisma.adAccount.upsert({
-      where: { fb_account_id },
-      update: {
-        fb_account_name,
-        fb_access_token,
-        storeId: parseInt(id, 10),
-      },
-      create: {
-        fb_account_id,
-        fb_account_name,
-        fb_access_token,
+    const store = await prisma.store.findUnique({
+      where: { id: parseInt(id, 10) },
+      select: { id: true }
+    });
+    if (!store) {
+      return res.status(404).json({
+        success: false,
+        error: "STORE_NOT_FOUND"
+      });
+    }
+
+    const existingAccount = await prisma.adAccount.findUnique({
+      where: { fb_account_id: cleanAccountId }
+    });
+    if (!existingAccount) {
+      return res.status(404).json({
+        success: false,
+        error: "ACCOUNT_NOT_FOUND",
+        details: "AdAccount must be fetched by /api/accounts/active-list before it can be bound to a Store."
+      });
+    }
+
+    const account = await prisma.adAccount.update({
+      where: { fb_account_id: cleanAccountId },
+      data: {
+        fb_account_name: fb_account_name ? String(fb_account_name).trim() : existingAccount.fb_account_name,
         storeId: parseInt(id, 10),
       },
     });

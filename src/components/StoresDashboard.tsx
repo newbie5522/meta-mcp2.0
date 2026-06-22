@@ -16,9 +16,9 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
 
   const isApiBound = (store: any) => {
     return !!(
-      store.shopline_token_configured ||
-      store.shopify_token_configured ||
-      store.shoplazza_token_configured
+      store.hasShoplineToken ||
+      store.hasShopifyToken ||
+      store.hasShoplazzaToken
     );
   };
 

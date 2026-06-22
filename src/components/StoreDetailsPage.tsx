@@ -65,6 +65,12 @@ function getStoreTokenKey(platform?: string): "shopline_token" | "shopify_token"
   return "shopline_token";
 }
 
+function getStoreTokenConfiguredKey(platform?: string): "hasShoplineToken" | "hasShopifyToken" | "hasShoplazzaToken" {
+  if (platform === "shopify") return "hasShopifyToken";
+  if (platform === "shoplazza") return "hasShoplazzaToken";
+  return "hasShoplineToken";
+}
+
 function getAccountId(acc: unknown): string {
   if (!acc || typeof acc !== "object") return "";
   const a = acc as Record<string, unknown>;
@@ -310,7 +316,7 @@ export function StoreDetailsPage({
     String(acc.account_id || acc.accountId).includes(searchAccountQuery)
   );
   const activeTokenKey = getStoreTokenKey(storeData.platform);
-  const activeTokenConfigured = Boolean(storeData[`${activeTokenKey}_configured`]);
+  const activeTokenConfigured = Boolean(storeData[getStoreTokenConfiguredKey(storeData.platform)]);
   const activeTokenValue = storeData[activeTokenKey] || "";
 
   return (

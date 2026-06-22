@@ -35,6 +35,7 @@ const metaConfigPage = readFile("src/components/MetaConfigPage.tsx");
 const accountsRoutes = readFile("src/server/routes/accounts.routes.ts");
 const mappingsRoutes = readFile("src/server/routes/mappings.routes.ts");
 const storesRoutes = readFile("src/server/routes/stores.routes.ts");
+const syncRoutes = readFile("src/server/routes/sync.routes.ts");
 
 const syncCenterFiles = [
   ["settings save", settingsRoutes],
@@ -118,11 +119,22 @@ const results: CheckResult[] = [
   check(
     "Store GET returns safe DTO",
     storesRoutes.includes("function sanitizeStore") &&
-      storesRoutes.includes("shopline_token_configured") &&
+      storesRoutes.includes("hasShoplineToken") &&
+      storesRoutes.includes("hasShopifyToken") &&
+      storesRoutes.includes("hasShoplazzaToken") &&
       storesRoutes.includes("res.json(stores.map(sanitizeStore))") &&
-      storesRoutes.includes("res.json(sanitizeStore(store))"),
-    "store list/detail responses omit raw platform tokens and expose configured flags",
+      storesRoutes.includes("res.json(sanitizeStore(store))") &&
+      storesRoutes.includes("store: sanitizeStore(savedStore)"),
+    "store list/detail/create responses omit raw platform tokens and expose has*Token flags",
     "store list/detail safe DTO contract is missing"
+  ),
+  check(
+    "Store save rejects masked platform tokens",
+    storesRoutes.includes("function isMaskedTokenInput") &&
+      storesRoutes.includes("MASKED_TOKEN_REJECTED") &&
+      storesRoutes.includes("Masked store tokens cannot be saved"),
+    "masked store token inputs return MASKED_TOKEN_REJECTED",
+    "masked store token rejection is missing"
   ),
   check(
     "Store save preserves existing token unless user enters a new token",
@@ -132,6 +144,35 @@ const results: CheckResult[] = [
       storesRoutes.includes("const existingToken = existingStore?.[tokenField] || \"\""),
     "blank or masked token input is not used to overwrite existing store tokens",
     "store save may overwrite an existing token with blank/masked input"
+  ),
+  check(
+    "DELETE Store endpoint is dangerous-admin protected",
+    storesRoutes.includes('router.delete("/:id"') &&
+      storesRoutes.includes("ENABLE_DANGEROUS_ADMIN") &&
+      storesRoutes.includes("DANGEROUS_ADMIN_DISABLED") &&
+      storesRoutes.includes("prisma.store.delete"),
+    "physical Store deletion is blocked unless ENABLE_DANGEROUS_ADMIN=true",
+    "physical Store deletion endpoint is not protected"
+  ),
+  check(
+    "Legacy store-account bind cannot create AdAccount",
+    storesRoutes.includes('router.post("/:id/accounts"') &&
+      storesRoutes.includes("ACCOUNT_NOT_FOUND") &&
+      storesRoutes.includes("prisma.adAccount.findUnique") &&
+      storesRoutes.includes("prisma.adAccount.update") &&
+      !/router\.post\("\/:id\/accounts"[\s\S]*?prisma\.adAccount\.upsert/.test(storesRoutes) &&
+      !/router\.post\("\/:id\/accounts"[\s\S]*?create:\s*\{[\s\S]*?fb_account_id/.test(storesRoutes),
+    "legacy bind requires an existing Store and existing AdAccount",
+    "legacy store-account bind may still create/upsert AdAccount"
+  ),
+  check(
+    "Dangerous manual sync endpoints are disabled by default",
+    syncRoutes.includes("ENABLE_MANUAL_SYNC") &&
+      syncRoutes.includes("MANUAL_SYNC_DISABLED") &&
+      syncRoutes.includes('router.post("/sync/trigger", requireManualSyncEnabled') &&
+      syncRoutes.includes('router.post("/sync/rebuild", requireManualSyncEnabled'),
+    "manual SyncCenter endpoints require ENABLE_MANUAL_SYNC=true",
+    "manual sync endpoints are not protected"
   ),
   ...syncCenterFiles.map(([name, file]) =>
     check(
@@ -153,4 +194,3 @@ console.log(`\nSummary: ${results.length - failures.length - warnings.length} pa
 if (failures.length > 0) {
   process.exit(1);
 }
-
