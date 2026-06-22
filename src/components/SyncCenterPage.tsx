@@ -115,6 +115,10 @@ export function SyncCenterPage() {
         setInfoMessage({ text: data.message || "任务已触发！", type: "success" });
         fetchStatusAndData();
       } else {
+        if (data.message || data.details) {
+          setInfoMessage({ text: data.message || data.details, type: "error" });
+          return;
+        }
         setInfoMessage({ text: data.error || "触发失败", type: "error" });
       }
     } catch (err: any) {
@@ -138,6 +142,10 @@ export function SyncCenterPage() {
         setInfoMessage({ text: data.message, type: "success" });
         fetchStatusAndData();
       } else {
+        if (data.message || data.details) {
+          setInfoMessage({ text: data.message || data.details, type: "error" });
+          return;
+        }
         setInfoMessage({ text: data.error || "运行历史重建失败", type: "error" });
       }
     } catch (err: any) {

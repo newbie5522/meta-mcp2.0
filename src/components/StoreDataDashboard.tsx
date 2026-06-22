@@ -68,6 +68,24 @@ interface UnmappedAccountsSummary {
 interface DataHealth {
   status: "EXCELLENT" | "WARNING" | "EMPTY" | string;
   message: string;
+  warnings?: string[];
+  lastFailedSync?: {
+    taskType?: string;
+    errorMessage?: string | null;
+    startedAt?: string;
+  } | null;
+}
+
+function getApiErrorMessage(error: any): string {
+  const data = error?.response?.data;
+  const code = data?.error || data?.code;
+  if (code === "MANUAL_SYNC_DISABLED") {
+    return "手动同步开关未开启：请在 VPS 临时设置 ENABLE_MANUAL_SYNC=true 后再触发同步。";
+  }
+  if (!error?.response) {
+    return `后端服务未连接或请求失败：${error?.message || "network error"}`;
+  }
+  return data?.message || data?.details || data?.error || error?.message || "同步请求失败";
 }
 
 interface ReconciliationData {
@@ -161,7 +179,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
       }
     } catch (error: any) {
       console.error("Failed to load stores analytics:", error);
-      toast.error("加载店铺数据失败: " + (error.response?.data?.error || error.message));
+      toast.error("加载店铺数据失败: " + getApiErrorMessage(error));
     } finally {
       if (!silent) setLoading(false);
     }
@@ -185,7 +203,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
       setReconData(response.data);
     } catch (error: any) {
       console.error("Failed to load store reconciliation details:", error);
-      toast.error("未获取到校对明细: " + (error.response?.data?.error || error.message));
+      toast.error("未获取到校对明细: " + getApiErrorMessage(error));
       setReconData(null);
     } finally {
       setReconLoading(false);
@@ -198,7 +216,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
     const toastId = toast.loading(`正在触发 [${store.name}] 订单同步...`);
     try {
       const response = await axios.post(`/api/sync/stores/${store.id}/orders`);
-      toast.success(response.data.message || `[${store.name}] 订单同步成功！`, { id: toastId });
+      toast.success(response.data.message || `已触发 [${store.name}] 订单同步`, { id: toastId });
       
       // Refresh data
       await fetchStoresData(true);
@@ -208,7 +226,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
       }
     } catch (error: any) {
       console.error("Failed to sync store orders:", error);
-      toast.error(`同步失败: ${error.response?.data?.error || error.message}`, { id: toastId });
+      toast.error(`同步失败: ${getApiErrorMessage(error)}`, { id: toastId });
     } finally {
       setSyncRowLoading(prev => ({ ...prev, [store.id]: false }));
     }
@@ -220,14 +238,14 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
     const toastId = toast.loading("开始为全局店铺启动拉取和订单增量抓取流...");
     try {
       const response = await axios.post("/api/sync/stores/orders");
-      toast.success(response.data.message || "全量店铺订单同步完毕！", { id: toastId });
+      toast.success(response.data.message || "已触发全局店铺订单同步", { id: toastId });
       await fetchStoresData();
       if (selectedStoreForRecon) {
         await loadReconciliation(selectedStoreForRecon);
       }
     } catch (error: any) {
       console.error("Failed to sync all stores:", error);
-      toast.error(`全量同步失败: ${error.response?.data?.error || error.message}`, { id: toastId });
+      toast.error(`全量同步失败: ${getApiErrorMessage(error)}`, { id: toastId });
     } finally {
       setSyncAllLoading(false);
     }
@@ -239,14 +257,14 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
     const toastId = toast.loading("正在清除本地 daily 聚合层并重构日期切片指标...");
     try {
       const response = await axios.post("/api/summary/stores/rebuild");
-      toast.success(response.data.message || "店铺历史维度数据归档与重建成功！", { id: toastId });
+      toast.success(response.data.message || "已触发店铺归档汇总重建", { id: toastId });
       await fetchStoresData();
       if (selectedStoreForRecon) {
         await loadReconciliation(selectedStoreForRecon);
       }
     } catch (error: any) {
       console.error("Rebuild stores summary error:", error);
-      toast.error(`重建汇总失败: ${error.response?.data?.error || error.message}`, { id: toastId });
+      toast.error(`重建汇总失败: ${getApiErrorMessage(error)}`, { id: toastId });
     } finally {
       setRebuildLoading(false);
     }
@@ -457,6 +475,25 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
       </div>
 
       {/* 📊 Main Store Data Table */}
+      {(dataHealth.status === "EMPTY_FACTS" || dataHealth.lastFailedSync?.errorMessage) && !loading && (
+        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-slate-800 text-xs shadow-sm">
+          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <h5 className="font-bold text-amber-900">
+              {dataHealth.status === "EMPTY_FACTS" ? "店铺已配置，但当前日期范围暂无订单事实数据" : "最近一次店铺/同步任务失败"}
+            </h5>
+            <p className="text-amber-800 leading-relaxed">
+              {dataHealth.message || "已配置店铺会继续显示在下方列表中；订单数、销售额和 AOV 在事实表为空时按 0 展示。"}
+            </p>
+            {dataHealth.lastFailedSync?.errorMessage && (
+              <p className="text-rose-700 leading-relaxed">
+                最近失败原因：{dataHealth.lastFailedSync.errorMessage}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       <Card className="border border-slate-200 shadow-sm bg-white rounded-xl overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-slate-50/50 to-white flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-2">
@@ -539,7 +576,9 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
                 {processedStores.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={10} className="text-center py-12 text-slate-400">
-                      没有找到任何合法的店铺数据，请确认是否已在设置页创建店铺实例。
+                      {stores.length > 0
+                        ? "当前搜索条件下没有匹配店铺；已配置店铺不会因订单为空而被隐藏。"
+                        : "没有找到任何合法的店铺数据，请确认是否已在设置页创建店铺实例。"}
                     </TableCell>
                   </TableRow>
                 ) : (

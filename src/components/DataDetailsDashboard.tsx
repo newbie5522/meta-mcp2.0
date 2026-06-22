@@ -28,6 +28,18 @@ interface DataDetailsDashboardProps {
   endDate: Date;
 }
 
+function getApiErrorMessage(error: any): string {
+  const data = error?.response?.data;
+  const code = data?.error || data?.code;
+  if (code === "MANUAL_SYNC_DISABLED") {
+    return "手动同步开关未开启：请在 VPS 临时设置 ENABLE_MANUAL_SYNC=true 后再触发同步。";
+  }
+  if (!error?.response) {
+    return `后端服务未连接或请求失败：${error?.message || "network error"}`;
+  }
+  return data?.message || data?.details || data?.error || error?.message || "请求失败";
+}
+
 export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>({
@@ -42,7 +54,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const [searchTerm, setSearchTerm] = useState<string>("");
   
   // Status Filter state: "spend" | "active" | "all" | "unmapped"
-  const [statusFilter, setStatusFilter] = useState<"spend" | "active" | "all" | "unmapped">("spend");
+  const [statusFilter, setStatusFilter] = useState<"spend" | "active" | "all" | "unmapped">("all");
 
   // Sorting configurations
   const [sortField, setSortField] = useState<string>("spend");
@@ -64,7 +76,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       setData(response.data);
     } catch (error: any) {
       console.error("Load Accounts Performance error:", error);
-      toast.error("加载账户数据明细失败，请检查数据服务");
+      toast.error("加载账户数据明细失败: " + getApiErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -139,9 +151,11 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
     window.location.href = `/data-center/ad-hierarchy?accountId=${accountId}&startDate=${startStr}&endDate=${endStr}`;
   };
 
-  const allAccountsCount = data.accounts?.length || 0;
-  const withSpendCount = data.accounts?.filter(a => (a.spend || 0) > 0).length || 0;
+  const allAccountsCount = data.accountsInventoryCount ?? data.summary?.totalAccounts ?? data.accounts?.length ?? 0;
+  const accountsWithFactsCount = data.accountsWithFactsCount ?? data.accounts?.filter(a => a.lastSyncedAt || (a.impressions || 0) > 0 || (a.clicks || 0) > 0).length ?? 0;
+  const withSpendCount = data.accountsWithSpendCount ?? data.summary?.spendAccounts ?? data.accounts?.filter(a => (a.spend || 0) > 0).length ?? 0;
   const unboundWithSpendCount = data.accounts?.filter(a => !a.isBound && (a.spend || 0) > 0).length || 0;
+  const hasAccountInventoryWithoutFacts = allAccountsCount > 0 && (data.metaFactsCount ?? 0) === 0;
 
   // Formatting date safely
   const formatTimeStr = (rawVal: any) => {
@@ -213,11 +227,28 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
         <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-850 text-xs shadow-sm">
           <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
           <div>
-            <h5 className="font-bold text-amber-900 mb-0.5">当前日期范围内未同步或不存在账户级成效数据</h5>
+            <h5 className="font-bold text-amber-900 mb-0.5">
+              {hasAccountInventoryWithoutFacts ? "账户已存在，但当前日期范围暂无广告表现事实数据" : "当前日期范围内没有有消耗账户"}
+            </h5>
             <p className="text-amber-700 leading-relaxed">
-              系统在选定的日期范围内 (<strong>{format(startDate, "yyyy-MM-dd")}</strong> 至 <strong>{format(endDate, "yyyy-MM-dd")}</strong>) 
-              未发现具有广告花费的活跃账户。请前往“<strong>数据同步中心</strong>”手动对 Meta 资产成效数据执行一次强制提取与加载。
+              {hasAccountInventoryWithoutFacts ? (
+                <>
+                  配置中心已保存 <strong className="font-mono">{allAccountsCount}</strong> 个 Meta 广告账户，但所选日期范围
+                  (<strong>{format(startDate, "yyyy-MM-dd")}</strong> 至 <strong>{format(endDate, "yyyy-MM-dd")}</strong>)
+                  暂无 FactMetaPerformance 事实记录。下方仍展示账户库存，花费、展示、点击、购买和 ROAS 按 0 展示。
+                </>
+              ) : (
+                <>
+                  系统在选定的日期范围内 (<strong>{format(startDate, "yyyy-MM-dd")}</strong> 至 <strong>{format(endDate, "yyyy-MM-dd")}</strong>)
+                  未发现具有广告花费的活跃账户。请前往“<strong>数据同步中心</strong>”手动对 Meta 资产成效数据执行一次强制提取与加载。
+                </>
+              )}
             </p>
+            {data.health?.lastFailedSync?.errorMessage && (
+              <p className="mt-2 text-rose-700 leading-relaxed">
+                最近同步失败原因：{data.health.lastFailedSync.errorMessage}
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -300,12 +331,12 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
         /* Real Account Table view */
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
           <div className="p-4 bg-slate-50 border-b flex items-center justify-between">
-            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
+          <h4 className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
               <TrendingUp className="w-4 h-4 text-blue-600" />
               Meta 广告账户级周期表现 (Meta Ad Accounts Multi-day Performance Insights)
             </h4>
             <span className="text-[11px] font-mono text-slate-500 font-semibold bg-slate-100 px-3 py-0.5 rounded-full border">
-              满足筛选: {filteredAccounts.length} / {allAccountsCount} 个
+              满足筛选: {filteredAccounts.length} / {allAccountsCount} 个 · 有事实账户 {accountsWithFactsCount} 个
             </span>
           </div>
 
@@ -368,7 +399,9 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                   <TableRow>
                     <TableCell colSpan={14} className="text-center p-12 text-slate-400 font-medium">
                       <Database className="w-8 h-8 mx-auto opacity-30 mb-2 text-slate-500" />
-                      当前筛选条件下暂无广告账户数据表。
+                      {allAccountsCount > 0
+                        ? "当前筛选条件下暂无账户。请切换到“全部账户”查看已保存的 Meta 账户库存。"
+                        : "暂无 Meta 广告账户库存。请先在配置中心保存 token 并拉取账户。"}
                     </TableCell>
                   </TableRow>
                 ) : (

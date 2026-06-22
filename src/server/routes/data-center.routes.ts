@@ -11,7 +11,7 @@ import { normalizeMetaAccountId, isDemoDataEnabled } from "../utils.js";
 import { getCountryAnalytics } from "../services/country-analytics.service.js";
 import { getStoreOrderFacts, getStoreOrderSummary } from "../services/order-fact.service.js";
 import { getMetaAccountPerformanceFacts, getMetaPerformanceSummary } from "../services/meta-performance-fact.service.js";
-import { getAccountMappingFacts } from "../services/mapping-fact.service.js";
+import { getAccountMappingFacts, resolveAccountStoreBinding } from "../services/mapping-fact.service.js";
 import { runDataPipelineAudit } from "../services/data-pipeline-audit.service.js";
 
 dayjs.extend(utc);
@@ -95,8 +95,11 @@ router.get("/detail", async (req, res) => {
     let dataHealth = "EXCELLENT";
     let missingReason = "";
 
-    if (rawInsights.length === 0 && rawOrders.length === 0) {
-      dataHealth = "EMPTY";
+    if (stores.length === 0 && adAccounts.length === 0) {
+      dataHealth = "EMPTY_CONFIG";
+      missingReason = "No Store or AdAccount inventory has been configured.";
+    } else if (rawInsights.length === 0 && rawOrders.length === 0) {
+      dataHealth = "EMPTY_FACTS";
       missingReason = "数据库中暂未发现对应的 Meta Insights 或 店铺 Order 数据。请检查授权并触发一次同步中心同步。";
     } else if (rawInsights.length === 0) {
       dataHealth = "WARNING";
@@ -166,10 +169,23 @@ router.get("/detail", async (req, res) => {
       filteredDetailedAccounts = detailedAccounts.filter(a => a.storeName === storeName);
     }
 
+    const accountsInventoryCount = adAccounts.length;
+    const accountsWithFactsCount = new Set(rawInsights.map(ins => normalizeMetaAccountId(ins.accountId))).size;
+    const accountsWithSpendCount = new Set(rawInsights.filter(ins => (ins.spend || 0) > 0).map(ins => normalizeMetaAccountId(ins.accountId))).size;
+    const storesInventoryCount = stores.length;
+    const storesWithOrdersCount = new Set(rawOrders.map(order => order.storeId).filter(Boolean)).size;
+
     res.json({
       metaInsights: rawInsights,
       accounts: filteredDetailedAccounts,
       orders: rawOrders,
+      accountsInventoryCount,
+      accountsWithFactsCount,
+      accountsWithSpendCount,
+      storesInventoryCount,
+      storesWithOrdersCount,
+      ordersCount: rawOrders.length,
+      metaFactsCount: rawInsights.length,
       filters: {
         stores,
         adAccounts,
@@ -913,6 +929,22 @@ router.get("/stores", async (req, res) => {
 
     const mappingFacts = await getAccountMappingFacts({ startDate: startStr, endDate: endStr });
     const allAdAccounts = await prisma.adAccount.findMany();
+    const storesInventoryCount = storesToAggregate.length;
+    const storesWithOrdersCount = processedList.filter(store => store.ordersCount > 0).length;
+    const ordersCount = processedList.reduce((sum, store) => sum + (store.ordersCount || 0), 0);
+    const metaFactsCount = accountPerformanceFacts.length;
+    const lastFailedSync = await prisma.syncLog.findFirst({
+      where: {
+        status: "failed",
+        OR: [
+          { taskType: "sync_store_orders" },
+          { type: "sync_store_orders" },
+          { taskType: "sync_meta_insights" },
+          { type: "sync_meta_insights" }
+        ]
+      },
+      orderBy: { startedAt: "desc" }
+    });
     const allMappedFbAccountIds = new Set<string>();
     storesToAggregate.forEach(s => {
       s.accounts.forEach(acc => allMappedFbAccountIds.add(normalizeMetaAccountId(acc.fb_account_id)));
@@ -922,13 +954,18 @@ router.get("/stores", async (req, res) => {
     });
 
     const unmappedAccounts = allAdAccounts.filter(acc => !allMappedFbAccountIds.has(normalizeMetaAccountId(acc.fb_account_id)));
+    const warnings: string[] = [];
 
     let dataStatus = "EXCELLENT";
     let missingReason = "所有店铺数据已实时对齐，未映射广告支出安全过滤中，数据流健康运行中。";
 
-    if (processedList.length === 0) {
-      dataStatus = "EMPTY";
+    if (storesInventoryCount === 0) {
+      dataStatus = "EMPTY_CONFIG";
       missingReason = "尚未创建任何电商平台店铺，请前往配置中心添加并关联您的首个店铺。";
+    } else if (ordersCount === 0) {
+      dataStatus = "EMPTY_FACTS";
+      missingReason = "店铺已配置，但当前日期范围暂无订单事实数据。请触发店铺订单同步，或检查店铺 API 是否返回订单。";
+      warnings.push("STORE_CONFIG_EXISTS_BUT_ORDER_FACTS_EMPTY");
     } else {
       const someMissingOrders = processedList.some(s => s.ordersCount === 0);
       const someMissingSpend = processedList.some(s => s.adSpend === 0 && s.accountsCount > 0);
@@ -941,8 +978,16 @@ router.get("/stores", async (req, res) => {
       }
     }
 
+    if (lastFailedSync) {
+      warnings.push(`LAST_SYNC_FAILED:${lastFailedSync.errorMessage || lastFailedSync.error || "Unknown sync error"}`);
+    }
+
     res.json({
       stores: processedList,
+      storesInventoryCount,
+      storesWithOrdersCount,
+      ordersCount,
+      metaFactsCount,
       unmappedAccountsSummary: {
         count: mappingFacts.unmappedSpendAccountsInRange,
         spend: mappingFacts.unmappedSpendAmount,
@@ -950,7 +995,13 @@ router.get("/stores", async (req, res) => {
       },
       dataHealth: {
         status: dataStatus,
-        message: missingReason
+        message: missingReason,
+        warnings,
+        lastFailedSync: lastFailedSync ? {
+          taskType: lastFailedSync.taskType || lastFailedSync.type,
+          errorMessage: lastFailedSync.errorMessage || lastFailedSync.error || null,
+          startedAt: lastFailedSync.startedAt
+        } : null
       },
       dataSourceExplain: {
         orderSource: "Order.store_local_date",
@@ -1311,9 +1362,23 @@ router.get("/accounts-performance", async (req, res) => {
     }) > 0;
 
     const lastSyncTimeVal = maxPerformanceSyncTime || lastSyncLog?.finishedAt || lastSyncLog?.startedAt || null;
+    const lastFailedSync = await prisma.syncLog.findFirst({
+      where: {
+        status: "failed",
+        OR: [
+          { taskType: "sync_meta_insights" },
+          { type: "sync_meta_insights" },
+          { taskType: "sync_meta_insights_slice" },
+          { type: "sync_meta_insights_slice" }
+        ]
+      },
+      orderBy: { startedAt: "desc" }
+    });
 
     // Use correct inventory SOT for indicators:
-    const totalAccounts = adAccounts.length; // source for inventory count
+    const accountsInventoryCount = adAccounts.length; // source for inventory count
+    const accountsWithFactsCount = performanceMap.size;
+    const metaFactsCount = performanceRows.length;
     const activeAccounts = mappingFacts.spendAccountsInRange; // Spend accounts count as active
     const spendAccounts = mappingFacts.spendAccountsInRange;
     const zeroSpendAccounts = results.filter(r => r.spend === 0).length;
@@ -1323,15 +1388,46 @@ router.get("/accounts-performance", async (req, res) => {
     const totalSpend = results.reduce((acc, r) => acc + r.spend, 0);
     const unboundSpend = mappingFacts.unmappedSpendAmount;
     const unboundSpendRate = totalSpend > 0 ? unboundSpend / totalSpend : 0;
+    const warnings: string[] = [];
+    let healthStatus = "READY";
+    let missingReason = "";
+
+    if (accountsInventoryCount === 0) {
+      healthStatus = "EMPTY_CONFIG";
+      missingReason = "尚未保存任何 Meta 广告账户，请先在配置中心拉取并保存广告账户。";
+    } else if (metaFactsCount === 0) {
+      healthStatus = "EMPTY_FACTS";
+      missingReason = "账户已存在，但当前日期范围暂无广告表现事实数据，请触发同步或检查 Meta API 返回。";
+      warnings.push("ACCOUNT_INVENTORY_EXISTS_BUT_META_FACTS_EMPTY");
+    } else if (spendAccounts === 0) {
+      healthStatus = "WARNING";
+      missingReason = "当前日期范围内已有 Meta 表现事实记录，但没有账户产生花费。";
+      warnings.push("META_FACTS_EXIST_BUT_SPEND_IS_ZERO");
+    }
+
+    if (lastFailedSync) {
+      warnings.push(`LAST_SYNC_FAILED:${lastFailedSync.errorMessage || lastFailedSync.error || "Unknown sync error"}`);
+    }
 
     res.json({
       success: true,
+      accountsInventoryCount,
+      accountsWithFactsCount,
+      accountsWithSpendCount: spendAccounts,
+      metaFactsCount,
       health: {
-        status: "READY",
+        status: healthStatus,
+        missingReason,
+        warnings,
         lastSyncTime: lastSyncTimeVal,
         lastSyncTimeStr: lastSyncTimeVal ? dayjs(lastSyncTimeVal).format("YYYY-MM-DD HH:mm:ss") : "无记录",
         latestPerformanceSync: maxPerformanceSyncTime,
-        isSyncActive
+        isSyncActive,
+        lastFailedSync: lastFailedSync ? {
+          taskType: lastFailedSync.taskType || lastFailedSync.type,
+          errorMessage: lastFailedSync.errorMessage || lastFailedSync.error || null,
+          startedAt: lastFailedSync.startedAt
+        } : null
       },
       filters: {
         stores,
@@ -1339,7 +1435,7 @@ router.get("/accounts-performance", async (req, res) => {
         mappings: accountMappings
       },
       summary: {
-        totalAccounts,
+        totalAccounts: accountsInventoryCount,
         activeAccounts,
         spendAccounts,
         zeroSpendAccounts,

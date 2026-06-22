@@ -28,6 +28,18 @@ import { DataHealthDiagnosisPage } from './diagnosis/DataHealthDiagnosisPage';
 import { PrescriptionCenterPage } from './prescription/PrescriptionCenterPage';
 import { PrescriptionReviewPage } from './prescription/PrescriptionReviewPage';
 
+function getApiErrorMessage(error: any): string {
+  const data = error?.response?.data;
+  const code = data?.error || data?.code;
+  if (code === "MANUAL_SYNC_DISABLED") {
+    return "手动同步开关未开启：请在 VPS 临时设置 ENABLE_MANUAL_SYNC=true 后再触发同步。";
+  }
+  if (!error?.response) {
+    return `后端服务未连接或请求失败：${error?.message || "network error"}`;
+  }
+  return data?.message || data?.details || data?.error || error?.message || "同步请求失败";
+}
+
 export function StandardPageHeader({ 
   title, 
   description, 
@@ -175,21 +187,22 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
     setSyncing(true);
     const syncToast = toast.loading("正在同步 Meta 数据...");
     try {
-      const activeAccountIds = Array.isArray(data) 
-        ? [...new Set(data.map(d => d.accountId).filter(Boolean))]
-        : [];
-
-      const response = await axios.post("/api/sync", {
+      const response = await axios.post("/api/sync/trigger", {
+        taskType: "sync_meta_insights",
         startDate: format(startDate, "yyyy-MM-dd"),
         endDate: format(endDate, "yyyy-MM-dd"),
-        syncProduct: false,
-        syncCreative: false,
-        accounts: activeAccountIds
+        days: 30
       });
+      if (response.data?.message) {
+        toast.success(response.data.message, { id: syncToast });
+        fetchData();
+        return;
+      }
       toast.success(`同步成功: ${response.data.count} 条记录`, { id: syncToast });
       fetchData();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || "同步失败", { id: syncToast });
+      toast.error(getApiErrorMessage(error), { id: syncToast });
+      return;
     } finally {
       setSyncing(false);
     }
