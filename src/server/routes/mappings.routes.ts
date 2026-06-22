@@ -4,6 +4,22 @@ import { normalizeMetaAccountId } from "../utils.js";
 
 const router = Router();
 
+function getRequiredAccountId(mapping: any): string | null {
+  if (!mapping || mapping.accountId == null) return null;
+  const accountId = String(mapping.accountId).trim();
+  return accountId ? normalizeMetaAccountId(accountId) : null;
+}
+
+function getStoreName(mapping: any): string | null {
+  if (!mapping || mapping.store == null) return null;
+  const storeName = String(mapping.store).trim();
+  return storeName || null;
+}
+
+function isUnmappedStoreName(storeName: string | null): boolean {
+  return !storeName || storeName === "未分配" || storeName === "Unknown";
+}
+
 router.get("/", async (req, res) => {
   try {
     const mappings = await prisma.accountMapping.findMany({
@@ -58,10 +74,7 @@ router.post("/batch", async (req, res) => {
   }
 
   try {
-    // Filter out invalid mappings before updating DB
-    const validMappings = mappings.filter((m: any) => m && m.accountId != null);
-
-    if (validMappings.length === 0) {
+    if (mappings.length === 0) {
       return res.status(400).json({
         success: false,
         error: "NO_VALID_MAPPINGS",
@@ -69,11 +82,41 @@ router.post("/batch", async (req, res) => {
       });
     }
 
+    const normalizedMappings = [];
+    for (const mapping of mappings) {
+      const cleanAccId = getRequiredAccountId(mapping);
+      if (!cleanAccId) {
+        return res.status(400).json({
+          success: false,
+          error: "INVALID_ACCOUNT_ID",
+          details: "accountId is required and cannot be empty",
+        });
+      }
+
+      const adAccount = await prisma.adAccount.findUnique({
+        where: { fb_account_id: cleanAccId }
+      });
+      if (!adAccount) {
+        return res.status(404).json({
+          success: false,
+          error: "ACCOUNT_NOT_FOUND",
+          accountId: cleanAccId,
+        });
+      }
+
+      normalizedMappings.push({
+        raw: mapping,
+        accountId: cleanAccId,
+        adAccount,
+        storeName: getStoreName(mapping),
+      });
+    }
+
     // 1. Validate target stores exist - Strictly DO NOT automatically create store!
     const storeNamesToCheck = Array.from(new Set(
-      validMappings
-        .map((m: any) => m.store ? String(m.store).trim() : null)
-        .filter((name): name is string => !!name && name !== "未分配" && name !== "Unknown")
+      normalizedMappings
+        .map((m) => m.storeName)
+        .filter((name): name is string => !isUnmappedStoreName(name))
     ));
 
     for (const name of storeNamesToCheck) {
@@ -89,12 +132,12 @@ router.post("/batch", async (req, res) => {
     }
 
     const results = await Promise.all(
-      validMappings.map(async (mapping: any) => {
-        const cleanAccId = normalizeMetaAccountId(mapping.accountId);
-
-        const storeName = mapping.store ? String(mapping.store).trim() : null;
+      normalizedMappings.map(async (mapping) => {
+        const cleanAccId = mapping.accountId;
+        const rawMapping = mapping.raw;
+        const storeName = mapping.storeName;
         let targetStoreId: number | null = null;
-        if (storeName && storeName !== "未分配" && storeName !== "Unknown") {
+        if (!isUnmappedStoreName(storeName)) {
           const store = await prisma.store.findFirst({
             where: { name: storeName }
           });
@@ -104,33 +147,21 @@ router.post("/batch", async (req, res) => {
         }
 
         if (!targetStoreId) {
-          // If no mapped store, update to storeId = null
-          const upMap = await prisma.accountMapping.upsert({
+          await prisma.accountMapping.updateMany({
             where: { fbAccountId: cleanAccId },
-            update: {
+            data: {
               storeId: null,
-              fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
-              project: (mapping.project && String(mapping.project).trim() !== "未分配") ? String(mapping.project).trim() : null,
-              owner: (mapping.owner && String(mapping.owner).trim() !== "未分配") ? String(mapping.owner).trim() : null,
+              fbPageId: rawMapping.fbPageId ? String(rawMapping.fbPageId) : null,
+              project: (rawMapping.project && String(rawMapping.project).trim() !== "未分配") ? String(rawMapping.project).trim() : null,
+              owner: (rawMapping.owner && String(rawMapping.owner).trim() !== "未分配") ? String(rawMapping.owner).trim() : null,
             },
-            create: {
-              storeId: null,
-              fbAccountId: cleanAccId,
-              fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
-              project: (mapping.project && String(mapping.project).trim() !== "未分配") ? String(mapping.project).trim() : null,
-              owner: (mapping.owner && String(mapping.owner).trim() !== "未分配") ? String(mapping.owner).trim() : null,
-            }
           });
 
           // Also set corresponding AdAccount's storeId to null instead of deleting it!
-          try {
-            await prisma.adAccount.updateMany({
-              where: { fb_account_id: cleanAccId },
-              data: { storeId: null }
-            });
-          } catch (e) {
-            console.warn(`[Mappings Route] Failed to clear storeId relation on AdAccount ${cleanAccId}:`, e);
-          }
+          await prisma.adAccount.update({
+            where: { fb_account_id: cleanAccId },
+            data: { storeId: null }
+          });
           return { success: true, accountId: cleanAccId, action: 'unmapped' };
         }
 
@@ -139,37 +170,27 @@ router.post("/batch", async (req, res) => {
             where: { fbAccountId: cleanAccId },
             update: {
               storeId: targetStoreId,
-              fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
-              project: (mapping.project && String(mapping.project).trim() !== "未分配") ? String(mapping.project).trim() : null,
-              owner: (mapping.owner && String(mapping.owner).trim() !== "未分配") ? String(mapping.owner).trim() : null,
+              fbPageId: rawMapping.fbPageId ? String(rawMapping.fbPageId) : null,
+              project: (rawMapping.project && String(rawMapping.project).trim() !== "未分配") ? String(rawMapping.project).trim() : null,
+              owner: (rawMapping.owner && String(rawMapping.owner).trim() !== "未分配") ? String(rawMapping.owner).trim() : null,
               updatedAt: new Date(),
             },
             create: {
               storeId: targetStoreId,
               fbAccountId: cleanAccId,
-              fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
-              project: (mapping.project && String(mapping.project).trim() !== "未分配") ? String(mapping.project).trim() : null,
-              owner: (mapping.owner && String(mapping.owner).trim() !== "未分配") ? String(mapping.owner).trim() : null,
+              fbPageId: rawMapping.fbPageId ? String(rawMapping.fbPageId) : null,
+              project: (rawMapping.project && String(rawMapping.project).trim() !== "未分配") ? String(rawMapping.project).trim() : null,
+              owner: (rawMapping.owner && String(rawMapping.owner).trim() !== "未分配") ? String(rawMapping.owner).trim() : null,
             },
           });
 
-          // Sync with AdAccount: find corresponding Store and upsert/update store relation but protect existing fields
-          const existingAdAccount = await prisma.adAccount.findUnique({
-            where: { fb_account_id: cleanAccId }
-          });
+          const finalName = rawMapping.accountName ? String(rawMapping.accountName).trim() : mapping.adAccount.fb_account_name;
 
-          const finalName = mapping.accountName ? String(mapping.accountName).trim() : (existingAdAccount?.fb_account_name || "Unknown");
-
-          await prisma.adAccount.upsert({
+          await prisma.adAccount.update({
             where: { fb_account_id: cleanAccId },
-            update: {
+            data: {
               storeId: targetStoreId,
               fb_account_name: finalName,
-            },
-            create: {
-              fb_account_id: cleanAccId,
-              fb_account_name: finalName,
-              storeId: targetStoreId,
             },
           });
 

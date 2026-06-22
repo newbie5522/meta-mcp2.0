@@ -5,6 +5,12 @@ import { getTimezoneOffsetStr, isDemoDataEnabled } from "../utils.js";
 
 const router = Router();
 const shoplineCache = new Map<string, { data: any; expiry: number }>();
+const demoStoreNames = ["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"];
+const demoStoreDomains = ["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"];
+
+function isFixtureStore(store: { name: string; domain?: string | null }): boolean {
+  return demoStoreNames.includes(store.name) || demoStoreDomains.includes(store.domain || "");
+}
 
 router.get("/", async (req, res) => {
   try {
@@ -13,11 +19,7 @@ router.get("/", async (req, res) => {
     });
 
     if (!isDemoDataEnabled()) {
-      stores = stores.filter(store => 
-        store.mode !== "sandbox" &&
-        !["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"].includes(store.name) &&
-        !["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"].includes(store.domain)
-      );
+      stores = stores.filter(store => !isFixtureStore(store));
     }
 
     res.json(stores);
@@ -290,8 +292,13 @@ function normalizePlatform(platform: string | undefined | null): "shopline" | "s
   return "shopline";
 }
 
+function normalizeStoreMode(mode: unknown): string {
+  const value = String(mode ?? "").trim().toLowerCase();
+  return value === "sandbox" ? "sandbox" : "production";
+}
+
 router.post("/", async (req, res) => {
-  const { id, name, platform, shopline_token, shopify_token, shoplazza_token, domain, visitors, timezone } = req.body;
+  const { id, name, platform, shopline_token, shopify_token, shoplazza_token, domain, visitors, timezone, mode } = req.body;
   try {
     const normalizedName = String(name || "").trim();
     if (!normalizedName) {
@@ -369,7 +376,8 @@ router.post("/", async (req, res) => {
       shoplazza_token: actualPlatform === "shoplazza" ? (shoplazza_token || null) : null,
       domain: normalizedDomain || null,
       timezone: resolvedTimezone,
-      visitors: visitors !== undefined ? parseInt(visitors, 10) : undefined
+      visitors: visitors !== undefined ? parseInt(visitors, 10) : undefined,
+      mode: normalizeStoreMode(mode)
     };
 
     if (existingStore) {
@@ -1064,11 +1072,7 @@ router.get("/:id", async (req, res) => {
     }
 
     if (!isDemoDataEnabled()) {
-      const isSandboxStore = 
-        store.mode === "sandbox" ||
-        ["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"].includes(store.name) ||
-        ["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"].includes(store.domain);
-      if (isSandboxStore) {
+      if (isFixtureStore(store)) {
         return res.status(404).json({ error: "Store not found" });
       }
     }

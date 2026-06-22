@@ -228,8 +228,9 @@ export function StoreDetailsPage({
     if (!storeData.name) return toast.error("请输入店铺名称");
     setSaving(true);
     try {
+      const { mode: _mode, ...storePayload } = storeData;
       const payload = {
-        ...storeData,
+        ...storePayload,
         id: storeId || savedStoreId || undefined,
         name: storeData.name?.trim(),
         domain: storeData.domain?.trim()
