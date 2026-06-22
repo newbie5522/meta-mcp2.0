@@ -204,7 +204,15 @@ export class SyncCenter {
   }
 
   // 2. sync_store_orders
-  static async syncStoreOrders(storeId: number, taskChainId: string, triggeredBy: string, parentTaskId: string | null = null, days: number = 90): Promise<string> {
+  static async syncStoreOrders(
+    storeId: number,
+    taskChainId: string,
+    triggeredBy: string,
+    parentTaskId: string | null = null,
+    days: number = 90,
+    startDateOverride: string | null = null,
+    endDateOverride: string | null = null
+  ): Promise<string> {
     return this.runTask(
       "sync_store_orders",
       "shopline",
@@ -217,8 +225,8 @@ export class SyncCenter {
         const store = await prisma.store.findUnique({ where: { id: storeId } });
         if (!store) throw new Error(`Store with ID ${storeId} not found`);
 
-        const startDate = dayjs().subtract(days, "day").format("YYYY-MM-DD");
-        const endDate = dayjs().format("YYYY-MM-DD");
+        const endDate = endDateOverride || dayjs().format("YYYY-MM-DD");
+        const startDate = startDateOverride || dayjs(endDate).subtract(days, "day").format("YYYY-MM-DD");
 
         console.log(`[Sync Center] Running syncStoreData for ${store.name} (${startDate} to ${endDate})`);
         const syncResults = await syncStoreData(startDate, endDate, String(storeId));
@@ -241,6 +249,10 @@ export class SyncCenter {
           failedCount: 0,
           orderItems: []
         };
+
+        if (res.errorMessage) {
+          throw new Error(`[Store Orders Sync] ${res.errorMessage}`);
+        }
 
         // Fetch counts from DB
         const ordersCount = await prisma.order.count({ where: { storeId } });

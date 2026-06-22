@@ -225,9 +225,10 @@ router.post("/sync/trigger", requireManualSyncEnabled, async (req, res) => {
         : `已开始从 Meta API 单步同步过去 ${daysVal} 天的受众/版位/设备等事实事实级细分归档。`;
     } else if (taskType === "sync_store_orders") {
       if (!storeId) return res.status(400).json({ error: "Store ID is required for sync_store_orders" });
-      SyncCenter.syncStoreOrders(parseInt(storeId, 10), chainId, "manual_trigger")
-        .then(() => SyncCenter.rebuildStoreSummary(chainId, "manual_trigger", null, 90))
-        .then(() => SyncCenter.rebuildDashboardSummary(chainId, "manual_trigger", null, 90))
+      const daysVal = days ? parseInt(days, 10) : 90;
+      SyncCenter.syncStoreOrders(parseInt(storeId, 10), chainId, "manual_trigger", null, daysVal, startDate || null, endDate || null)
+        .then(() => SyncCenter.rebuildStoreSummary(chainId, "manual_trigger", null, daysVal))
+        .then(() => SyncCenter.rebuildDashboardSummary(chainId, "manual_trigger", null, daysVal))
         .catch(e => console.error(e));
       message = `已触发该店铺 (ID:${storeId}) 订单流水历史同步与日度转化归档。`;
     } else if (taskType === "rebuild_roas_summary") {

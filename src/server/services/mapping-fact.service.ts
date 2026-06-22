@@ -11,17 +11,18 @@ export interface ResolvedBinding {
 
 export async function resolveAccountStoreBinding(accountId: string): Promise<ResolvedBinding> {
   const normId = normalizeMetaAccountId(accountId);
-  const actId = `act_${normId}`;
+  const numericId = normId.replace(/^act_/, "");
+  const accountIdCandidates = Array.from(new Set([normId, numericId].filter(Boolean)));
 
   const [mapping, adAccount] = await Promise.all([
     prisma.accountMapping.findFirst({
       where: {
-        OR: [{ fbAccountId: normId }, { fbAccountId: actId }],
+        OR: accountIdCandidates.map((id) => ({ fbAccountId: id })),
       },
     }),
     prisma.adAccount.findFirst({
       where: {
-        OR: [{ fb_account_id: normId }, { fb_account_id: actId }],
+        OR: accountIdCandidates.map((id) => ({ fb_account_id: id })),
       },
     }),
   ]);
