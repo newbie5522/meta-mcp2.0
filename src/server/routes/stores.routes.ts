@@ -1122,19 +1122,10 @@ router.post("/:id/accounts", async (req, res) => {
 });
 
 router.delete("/:id/accounts/:accountId", async (req, res) => {
-  const { accountId } = req.params;
-
-  try {
-    await prisma.adAccount.delete({
-      where: { fb_account_id: accountId },
-    });
-
-    res.json({ success: true });
-  } catch (error: any) {
-    res
-      .status(500)
-      .json({ error: "Failed to remove account", details: error.message });
-  }
+  return res.status(410).json({
+    success: false,
+    error: "AdAccount deletion is disabled. Use unmap instead.",
+  });
 });
 
 export default router;

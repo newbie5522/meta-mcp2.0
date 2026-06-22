@@ -22,18 +22,22 @@ import { SyncCenter } from "./server/services/sync-center.service.js";
 
 // -- SCHEDULE JOBS --
 // Run daily aggregation at 2:00 AM
-cron.schedule("0 2 * * *", async () => {
-  console.log("Triggering daily aggregation job via cron...");
-  try {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const dateStr = yesterday.toISOString().split("T")[0];
-    await attributePurchases();
-    await aggregateData(dateStr, dateStr);
-  } catch (error) {
-    console.error("Daily aggregation job failed:", error);
-  }
-});
+const syncSchedulerEnabled = process.env.ENABLE_SYNC_SCHEDULER === "true";
+
+if (syncSchedulerEnabled) {
+  cron.schedule("0 2 * * *", async () => {
+    console.log("Triggering daily aggregation job via cron...");
+    try {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const dateStr = yesterday.toISOString().split("T")[0];
+      await attributePurchases();
+      await aggregateData(dateStr, dateStr);
+    } catch (error) {
+      console.error("Daily aggregation job failed:", error);
+    }
+  });
+}
 
 // Log available models on startup to debug the "undefined" error
 
@@ -244,7 +248,8 @@ async function runBackgroundSync() {
 }
 
 // Run daily retroactive 30-day Meta Insights sync at 1:00 AM (attributions correction)
-cron.schedule("0 1 * * *", async () => {
+if (syncSchedulerEnabled) {
+  cron.schedule("0 1 * * *", async () => {
   const syncId = "daily-30d-" + Math.random().toString(36).substring(2, 8);
   console.log(`[Retroactive Sync | ${syncId}] 🔄 Starting daily 30-day retroactive Meta Insights sync...`);
   try {
@@ -258,7 +263,8 @@ cron.schedule("0 1 * * *", async () => {
   } catch (error: any) {
     console.error(`[Retroactive Sync | ${syncId}] ❌ Failed:`, error.message);
   }
-});
+  });
+}
 
 app.use("/api", (req, res) => {
   res
@@ -304,8 +310,12 @@ async function startServer() {
 
         // --- 启动后台静默同步 ---
         // runBackgroundSync(); // Disable immediate run to prevent startup crashes
-        setInterval(runBackgroundSync, 2 * 60 * 60 * 1000); // 之后每 2 小时执行一次
-        console.log("[后台任务] 已开启自动同步，频率: 每 2 小时");
+        if (syncSchedulerEnabled) {
+          setInterval(runBackgroundSync, 2 * 60 * 60 * 1000);
+          console.log("Sync scheduler enabled by env ENABLE_SYNC_SCHEDULER=true");
+        } else {
+          console.log("Sync scheduler disabled by default");
+        }
       });
     }
   } catch (error) {
