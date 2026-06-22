@@ -99,23 +99,32 @@ export class SyncCenter {
   ): Promise<string> {
     const taskId = generateUUID();
     console.log(`[Sync Center | chain:${taskChainId}] Task ${taskType} started...`);
-    
-    const log = await prisma.syncLog.create({
-      data: {
-        id: taskId,
-        type: taskType,
-        status: "running",
-        startedAt: new Date(),
-        taskType,
-        sourceType,
-        triggeredBy,
-        taskChainId,
-        parentTaskId,
-        storeId,
-        adAccountId,
-        metadata: JSON.stringify({ description: `Running task ${taskType}` })
-      }
-    });
+
+    const initialMetadata = {
+      description: `Running task ${taskType}`,
+      parentTaskId
+    };
+
+    try {
+      await prisma.syncLog.create({
+        data: {
+          id: taskId,
+          type: taskType,
+          status: "running",
+          startedAt: new Date(),
+          taskType,
+          sourceType,
+          triggeredBy,
+          taskChainId,
+          storeId,
+          adAccountId,
+          metadata: JSON.stringify(initialMetadata)
+        }
+      });
+    } catch (logErr) {
+      console.error(`[Sync Center | chain:${taskChainId}] Failed to create SyncLog for ${taskType}:`, logErr);
+      throw logErr;
+    }
 
     try {
       const result = await executor();
@@ -128,6 +137,7 @@ export class SyncCenter {
           recordsFetched: result.recordsFetched,
           recordsSaved: result.recordsSaved,
           metadata: JSON.stringify({
+            parentTaskId,
             ...result.metadata,
             completedAt: new Date().toISOString()
           })
@@ -148,10 +158,12 @@ export class SyncCenter {
           finishedAt: new Date(),
           error: errMsg,
           errorMessage: errMsg,
-          errorCode,
           fbtraceId,
           metadata: JSON.stringify({
+            parentTaskId,
             errorStack: err.stack,
+            errorCode,
+            fbtraceId,
             failedAt: new Date().toISOString()
           })
         }
