@@ -22,6 +22,8 @@ function getAccountName(acc: unknown): string {
 
 export function MetaConfigPage() {
   const [token, setToken] = useState<string>('');
+  const [maskedToken, setMaskedToken] = useState<string>('');
+  const [hasSavedToken, setHasSavedToken] = useState(false);
   const [isEditingToken, setIsEditingToken] = useState(true);
   const [saving, setSaving] = useState(false);
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -57,8 +59,14 @@ export function MetaConfigPage() {
         fbToken = res.data.META_ACCESS_TOKEN;
       }
       if (fbToken) {
-        setToken(fbToken);
+        setMaskedToken(fbToken);
+        setHasSavedToken(true);
+        setToken('');
         setIsEditingToken(false);
+      } else {
+        setMaskedToken('');
+        setHasSavedToken(false);
+        setIsEditingToken(true);
       }
     } catch (err) {
       console.error("Failed to fetch meta token", err);
@@ -85,11 +93,7 @@ export function MetaConfigPage() {
     }
   };
 
-  const fetchAccountsAndTest = async (currentToken: string) => {
-    if (currentToken && currentToken.includes("...")) {
-      setLastSyncError("当前数据库保存的 Token 为省略号掩码，不可用于 API 请求。请点修改并提供完整的 Access Token。");
-      return;
-    }
+  const fetchAccountsAndTest = async () => {
 
     setLoadingAccounts(true);
     setApiError(null);
@@ -102,12 +106,6 @@ export function MetaConfigPage() {
         return null;
       });
 
-      if (diagnostics && diagnostics.apiAccessStatus !== "usable") {
-        setLastSyncError("Token 身份验证成功，但广告账户 API 当前受限，暂不可同步账户数据。");
-        toast.error("Token 身份验证成功，但广告账户 API 当前受限，暂不可同步账户数据。当前展示的是本地缓存账户，不是本次 Meta API 同步结果。");
-        await fetchAccountsFromDb(); // 只加载本地缓存用于查看
-        return;
-      }
 
       // Step 2: Grab the accounts list
       const res = await axios.get('/api/accounts/active-list');
@@ -121,6 +119,10 @@ export function MetaConfigPage() {
         toast.warning("当前展示的是本地缓存账户，不是本次 Meta API 同步结果。");
       } else {
         if (diagnostics) {
+          if (diagnostics.apiAccessStatus !== "usable") {
+            setLastSyncError("Token identity check completed, but ad account API was limited. Account list follows /api/accounts/active-list.");
+            toast.warning("Token identity check completed, but account sync used active-list as the source.");
+          }
           if (accountsList.length === 0) {
             toast.warning("Token 验证成功，但在该 Meta 商务资产下未能拉取到可访问的广告账户，可能是权限限制或账户分配不足！");
           } else {
@@ -138,6 +140,12 @@ export function MetaConfigPage() {
       } else if (err.response?.data?.error) {
         errorMsg = err.response.data.error;
       }
+      if (typeof errorMsg === "string" && /Meta Token|未配置|not configured/i.test(errorMsg)) {
+        errorMsg = "请先保存 Meta Token";
+        setHasSavedToken(false);
+        setMaskedToken('');
+        setIsEditingToken(true);
+      }
       setLastSyncError(errorMsg);
       toast.error(errorMsg);
     } finally {
@@ -151,31 +159,43 @@ export function MetaConfigPage() {
   }, []);
 
   const handleSaveToken = async () => {
-    if (!token) {
-      toast.error("请输入有效的令牌。");
+    const tokenToSave = token.trim();
+    if (!tokenToSave) {
+      toast.error("请输入有效的 Meta Token。");
+      return;
+    }
+    if (tokenToSave.includes("...")) {
+      toast.error("请粘贴完整 Meta Token，不能保存已脱敏的 token。");
       return;
     }
     setSaving(true);
     try {
-      await axios.post('/api/settings', { key: 'meta_token', value: token });
-      await axios.post('/api/settings', { key: 'META_ACCESS_TOKEN', value: token });
-      await axios.post('/api/settings', { key: 'META_TOKEN_UPDATED_AT', value: new Date().toISOString() });
-      toast.success("Meta API Token 保存成功！您可以点按下方“拉取和更新”同步广告账户列表。");
+      await axios.post("/api/settings", { key: "meta_token", value: tokenToSave });
+      await axios.post("/api/settings", { key: "META_ACCESS_TOKEN", value: tokenToSave });
+      await axios.post("/api/settings", { key: "META_TOKEN_UPDATED_AT", value: new Date().toISOString() });
+      toast.success("Meta API Token 保存成功，可以直接拉取和更新广告账户列表。");
+      setToken("");
+      setMaskedToken(`${tokenToSave.slice(0, 4)}...${tokenToSave.slice(-4)}`);
+      setHasSavedToken(true);
       setIsEditingToken(false);
     } catch (err: any) {
-      const errMsg = err.response?.data?.details || err.response?.data?.error || err.message || "保存失败";
-      toast.error(`保存失败：${errMsg}`);
+      const errMsg = err.response?.data?.details || err.response?.data?.error || err.message || "Save failed";
+      toast.error(`Save failed: ${errMsg}`);
     } finally {
       setSaving(false);
     }
   };
 
   const handleManualFetch = () => {
-    fetchAccountsAndTest(token);
+    fetchAccountsAndTest();
   };
 
-  const displayToken = isEditingToken ? token : (token && token.length > 12 ? `${token.slice(0, 6)}.................................${token.slice(-6)}` : token);
+  const handleEditToken = () => {
+    setToken("");
+    setIsEditingToken(true);
+  };
 
+  const displayToken = isEditingToken ? token : (hasSavedToken ? `已配置：${maskedToken || "********"}` : "");
   const filteredAccounts = accounts.filter(acc => {
     if (filterTab === 'all') return true;
     if (filterTab === 'active') return acc.status === 'active';
@@ -226,7 +246,7 @@ export function MetaConfigPage() {
                 </Button>
               ) : (
                 <Button
-                  onClick={() => setIsEditingToken(true)}
+                  onClick={handleEditToken}
                   variant="outline"
                   className="px-6 h-10 border-slate-200 text-slate-700 hover:bg-slate-50 font-medium shadow-sm transition-all text-sm rounded-lg"
                 >
@@ -370,12 +390,12 @@ export function MetaConfigPage() {
           </div>
           <Button 
             onClick={handleManualFetch} 
-            disabled={loadingAccounts || isEditingToken || (testResult && testResult.apiAccessStatus !== 'usable')}
+            disabled={loadingAccounts}
             variant="outline"
             className="h-9 px-3 text-xs disabled:pointer-events-none disabled:opacity-50"
           >
             <RefreshCcw className={`w-3.5 h-3.5 mr-1 ${loadingAccounts ? 'animate-spin' : ''}`} />
-            {(testResult && testResult.apiAccessStatus !== 'usable') ? "Retry Later" : "拉取和更新"}
+            拉取和更新
           </Button>
         </CardHeader>
 
