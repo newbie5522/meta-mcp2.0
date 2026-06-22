@@ -80,7 +80,7 @@ function getApiErrorMessage(error: any): string {
   const data = error?.response?.data;
   const code = data?.error || data?.code;
   if (code === "MANUAL_SYNC_DISABLED") {
-    return "手动同步开关未开启：请在 VPS 临时设置 ENABLE_MANUAL_SYNC=true 后再触发同步。";
+    return "该同步任务被安全开关拦截。普通店铺订单同步请使用受限同步入口。";
   }
   if (!error?.response) {
     return `后端服务未连接或请求失败：${error?.message || "network error"}`;
@@ -215,8 +215,18 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
     setSyncRowLoading(prev => ({ ...prev, [store.id]: true }));
     const toastId = toast.loading(`正在触发 [${store.name}] 订单同步...`);
     try {
-      const response = await axios.post(`/api/sync/stores/${store.id}/orders`);
-      toast.success(response.data.message || `已触发 [${store.name}] 订单同步`, { id: toastId });
+      const response = await axios.post("/api/sync/trigger", {
+        taskType: "sync_store_orders",
+        storeId: store.id,
+        startDate: formattedStartDate,
+        endDate: formattedEndDate,
+        days: 90
+      });
+      if (response.data?.status === "NO_NEW_DATA") {
+        toast.warning(response.data.message || `[${store.name}] 同步完成，但当前日期范围暂无新订单。`, { id: toastId });
+      } else {
+        toast.success(response.data.message || `[${store.name}] 订单同步完成`, { id: toastId });
+      }
       
       // Refresh data
       await fetchStoresData(true);
@@ -237,8 +247,18 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
     setSyncAllLoading(true);
     const toastId = toast.loading("开始为全局店铺启动拉取和订单增量抓取流...");
     try {
-      const response = await axios.post("/api/sync/stores/orders");
-      toast.success(response.data.message || "已触发全局店铺订单同步", { id: toastId });
+      const response = await axios.post("/api/sync/trigger", {
+        taskType: "sync_store_orders",
+        startDate: formattedStartDate,
+        endDate: formattedEndDate,
+        days: 90,
+        limit: 10
+      });
+      if (response.data?.status === "NO_NEW_DATA") {
+        toast.warning(response.data.message || "同步完成，但当前日期范围暂无新的店铺订单。", { id: toastId });
+      } else {
+        toast.success(response.data.message || "店铺订单同步完成", { id: toastId });
+      }
       await fetchStoresData();
       if (selectedStoreForRecon) {
         await loadReconciliation(selectedStoreForRecon);

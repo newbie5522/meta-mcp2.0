@@ -189,6 +189,7 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
   let totalSaved = 0;
   let totalUpdated = 0;
   let totalFailed = 0;
+  const fatalErrors: string[] = [];
 
   const levelCounts = {
     account: 0,
@@ -437,6 +438,7 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
         sliceErrorMessage = err.response?.data?.error?.message || err.message || "Unknown Level Error";
         sliceTraceId = err.response?.data?.error?.fbtrace_id || "";
         console.error(`[Meta Insights Sync] Error for level "${currentLevel}" under ${actId}:`, sliceErrorMessage);
+        fatalErrors.push(`${actId}/${currentLevel}: ${sliceErrorMessage}${sliceTraceId ? ` (fbtrace_id: ${sliceTraceId})` : ""}`);
         sliceFailedCount += 1;
         totalFailed += 1;
       }
@@ -482,6 +484,13 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
   // Handle User Requirement: "如果 recordsFetched > 0 但 recordsSaved = 0，必须标记 PARTIAL 或 FAILED，并说明原因。"
   if (totalFetched > 0 && totalSaved === 0) {
     const errorText = `[Meta Sync Warning] Fetched ${totalFetched} insights rows from Graph API, but 0 rows were written to the fact table. This might occur due to sandbox exclusions or missing mapping linkages.`;
+    console.error(errorText);
+    throw new Error(errorText);
+  }
+
+  if (totalFetched === 0 && totalSaved === 0 && totalFailed > 0) {
+    const uniqueErrors = [...new Set(fatalErrors)].slice(0, 5).join(" | ");
+    const errorText = `[Meta Sync Failed] Meta API returned no usable insight rows and ${totalFailed} request slice(s) failed. ${uniqueErrors}`;
     console.error(errorText);
     throw new Error(errorText);
   }

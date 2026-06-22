@@ -32,7 +32,7 @@ function getApiErrorMessage(error: any): string {
   const data = error?.response?.data;
   const code = data?.error || data?.code;
   if (code === "MANUAL_SYNC_DISABLED") {
-    return "手动同步开关未开启：请在 VPS 临时设置 ENABLE_MANUAL_SYNC=true 后再触发同步。";
+    return "该同步任务被安全开关拦截。普通账户表现同步请使用页面上的受限同步按钮。";
   }
   if (!error?.response) {
     return `后端服务未连接或请求失败：${error?.message || "network error"}`;
@@ -55,6 +55,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   
   // Status Filter state: "spend" | "active" | "all" | "unmapped"
   const [statusFilter, setStatusFilter] = useState<"spend" | "active" | "all" | "unmapped">("all");
+  const [syncing, setSyncing] = useState(false);
 
   // Sorting configurations
   const [sortField, setSortField] = useState<string>("spend");
@@ -139,6 +140,39 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
     }
   };
 
+  const handleSyncAccounts = async () => {
+    setSyncing(true);
+    const toastId = toast.loading("正在通过 SyncCenter 同步 Meta 广告表现...");
+    try {
+      const startStr = format(startDate, "yyyy-MM-dd");
+      const endStr = format(endDate, "yyyy-MM-dd");
+      const visibleAccountIds = filteredAccounts
+        .map((account) => account.fb_account_id)
+        .filter(Boolean)
+        .slice(0, 10);
+
+      const response = await axios.post("/api/sync/trigger", {
+        taskType: "sync_meta_insights",
+        startDate: startStr,
+        endDate: endStr,
+        accountIds: visibleAccountIds.length > 0 ? visibleAccountIds : undefined,
+        limit: 10,
+        days: 30
+      });
+
+      if (response.data?.status === "NO_NEW_DATA") {
+        toast.warning(response.data.message || "同步完成，但当前日期范围暂无新的广告表现数据。", { id: toastId });
+      } else {
+        toast.success(response.data?.message || "Meta 广告表现同步完成。", { id: toastId });
+      }
+      await loadData();
+    } catch (error: any) {
+      toast.error(`Meta 同步失败: ${getApiErrorMessage(error)}`, { id: toastId });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const handleAskAI = (row: any) => {
     const prompt = `分析广告账户：${row.fb_account_name} (${row.fb_account_id})\n关联店铺：${row.storeName}\n花费 $${row.spend.toFixed(2)}，曝光 ${row.impressions}，点击数 ${row.clicks}，点击率 ${row.ctr.toFixed(2)}%，购买数 ${row.purchases}，CPC $${row.cpc.toFixed(2)}，CPA $${(row.cpa || 0).toFixed(2)}，Meta ROAS ${row.roas.toFixed(2)}。如何优化投放预算？`;
     navigator.clipboard.writeText(prompt);
@@ -193,10 +227,20 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
             size="sm"
             className="h-7 text-[11px] px-2.5 font-medium border-slate-200 bg-white hover:bg-slate-50 transition shadow-sm"
             onClick={loadData}
-            disabled={loading}
+            disabled={loading || syncing}
           >
             <RefreshCcw className={cn("w-3 h-3 text-slate-500", loading && "animate-spin")} />
             刷新数据
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-[11px] px-2.5 font-medium border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition shadow-sm"
+            onClick={handleSyncAccounts}
+            disabled={loading || syncing}
+          >
+            <RefreshCcw className={cn("w-3 h-3", syncing && "animate-spin")} />
+            同步 Meta 表现
           </Button>
         </div>
       </div>
@@ -249,6 +293,18 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                 最近同步失败原因：{data.health.lastFailedSync.errorMessage}
               </p>
             )}
+          </div>
+        </div>
+      )}
+
+      {data.health?.status === "SYNC_FAILED" && withSpendCount > 0 && !loading && (
+        <div className="flex items-start gap-3 p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs shadow-sm">
+          <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+          <div>
+            <h5 className="font-bold text-rose-900 mb-0.5">最近一次 Meta 同步失败</h5>
+            <p className="text-rose-700 leading-relaxed">
+              {data.health?.lastFailedSync?.errorMessage || data.health?.missingReason || "后端同步失败，但未返回具体错误。"}
+            </p>
           </div>
         </div>
       )}

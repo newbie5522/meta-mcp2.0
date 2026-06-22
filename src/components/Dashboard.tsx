@@ -32,7 +32,7 @@ function getApiErrorMessage(error: any): string {
   const data = error?.response?.data;
   const code = data?.error || data?.code;
   if (code === "MANUAL_SYNC_DISABLED") {
-    return "手动同步开关未开启：请在 VPS 临时设置 ENABLE_MANUAL_SYNC=true 后再触发同步。";
+    return "该同步任务被安全开关拦截。普通数据同步请使用受限同步入口。";
   }
   if (!error?.response) {
     return `后端服务未连接或请求失败：${error?.message || "network error"}`;
@@ -193,12 +193,11 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
         endDate: format(endDate, "yyyy-MM-dd"),
         days: 30
       });
-      if (response.data?.message) {
-        toast.success(response.data.message, { id: syncToast });
-        fetchData();
-        return;
+      if (response.data?.status === "NO_NEW_DATA") {
+        toast.warning(response.data.message || "同步完成，但当前日期范围暂无新的广告表现数据。", { id: syncToast });
+      } else {
+        toast.success(response.data?.message || `同步成功: ${response.data?.recordsSaved || response.data?.count || 0} 条记录`, { id: syncToast });
       }
-      toast.success(`同步成功: ${response.data.count} 条记录`, { id: syncToast });
       fetchData();
     } catch (error: any) {
       toast.error(getApiErrorMessage(error), { id: syncToast });

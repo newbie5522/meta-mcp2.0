@@ -22,6 +22,11 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
     );
   };
 
+  const getApiErrorMessage = (error: any) => {
+    const data = error?.response?.data;
+    return data?.message || data?.details || data?.error || error?.message || "同步店铺数据失败";
+  };
+
   const allCount = stores.length;
   
   const connectedStores = stores.filter(store => {
@@ -58,17 +63,21 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
       const startStr = localSDate.toISOString().split('T')[0];
       const endStr = localEDate.toISOString().split('T')[0];
 
-      const response = await axios.post("/api/sync-store", {
+      const response = await axios.post("/api/sync/trigger", {
+        taskType: "sync_store_orders",
         startDate: startStr,
-        endDate: endStr
+        endDate: endStr,
+        days: 90,
+        limit: 10
       });
-      toast.success(response.data.message || "店铺和订单数据同步成功", {
-        id: syncToast,
-      });
+      if (response.data?.status === "NO_NEW_DATA") {
+        toast.warning(response.data.message || "同步完成，但当前日期范围暂无新的店铺订单。", { id: syncToast });
+      } else {
+        toast.success(response.data.message || "店铺和订单数据同步完成", { id: syncToast });
+      }
+      fetchStores();
     } catch (error: any) {
-      const respErr = error.response?.data?.error;
-      const errMsg = typeof respErr === 'string' ? respErr : (respErr?.message || "同步店铺数据失败");
-      toast.error(errMsg, { id: syncToast });
+      toast.error(getApiErrorMessage(error), { id: syncToast });
     } finally {
       setSyncing(false);
     }

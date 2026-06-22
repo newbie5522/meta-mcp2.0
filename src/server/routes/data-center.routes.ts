@@ -19,6 +19,39 @@ dayjs.extend(timezone);
 
 const router = Router();
 
+function toStoreInventoryDto(store: any) {
+  return {
+    id: store.id,
+    name: store.name,
+    platform: store.platform,
+    domain: store.domain,
+    timezone: store.timezone,
+    mode: store.mode,
+    hasShoplineToken: Boolean(store.shopline_token),
+    hasShopifyToken: Boolean(store.shopify_token),
+    hasShoplazzaToken: Boolean(store.shoplazza_token),
+    createdAt: store.createdAt,
+    updatedAt: store.updatedAt
+  };
+}
+
+function toAccountInventoryDto(account: any) {
+  return {
+    id: account.id,
+    accountId: normalizeMetaAccountId(account.fb_account_id),
+    fb_account_id: normalizeMetaAccountId(account.fb_account_id),
+    fb_account_name: account.fb_account_name,
+    storeId: account.storeId || null,
+    activityStatus: account.activityStatus,
+    status: account.status,
+    recentActivity90d: Boolean(account.recentActivity90d),
+    currency: account.currency,
+    timezone: account.timezone,
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt
+  };
+}
+
 /**
  * GET /api/data-center/detail
  * Returns raw advertising and order details, filters list, and health metrics.
@@ -170,9 +203,11 @@ router.get("/detail", async (req, res) => {
     }
 
     const accountsInventoryCount = adAccounts.length;
+    const accountsInventory = adAccounts.map(toAccountInventoryDto);
     const accountsWithFactsCount = new Set(rawInsights.map(ins => normalizeMetaAccountId(ins.accountId))).size;
     const accountsWithSpendCount = new Set(rawInsights.filter(ins => (ins.spend || 0) > 0).map(ins => normalizeMetaAccountId(ins.accountId))).size;
     const storesInventoryCount = stores.length;
+    const storesInventory = stores.map(toStoreInventoryDto);
     const storesWithOrdersCount = new Set(rawOrders.map(order => order.storeId).filter(Boolean)).size;
 
     res.json({
@@ -180,15 +215,33 @@ router.get("/detail", async (req, res) => {
       accounts: filteredDetailedAccounts,
       orders: rawOrders,
       accountsInventoryCount,
+      accountsInventory,
       accountsWithFactsCount,
       accountsWithSpendCount,
       storesInventoryCount,
+      storesInventory,
       storesWithOrdersCount,
       ordersCount: rawOrders.length,
       metaFactsCount: rawInsights.length,
+      syncStatus: {
+        isSyncActive,
+        status: isSyncActive ? "running" : (lastSyncLog?.status || "none"),
+        lastSyncTime: lastSyncLog?.finishedAt || lastSyncLog?.startedAt || null,
+        lastSyncTaskType: lastSyncLog?.taskType || lastSyncLog?.type || null
+      },
+      lastSyncLog: lastSyncLog ? {
+        id: lastSyncLog.id,
+        taskType: lastSyncLog.taskType || lastSyncLog.type,
+        status: lastSyncLog.status,
+        startedAt: lastSyncLog.startedAt,
+        finishedAt: lastSyncLog.finishedAt,
+        recordsFetched: lastSyncLog.recordsFetched || 0,
+        recordsSaved: lastSyncLog.recordsSaved || 0,
+        errorMessage: lastSyncLog.errorMessage || lastSyncLog.error || null
+      } : null,
       filters: {
-        stores,
-        adAccounts,
+        stores: storesInventory,
+        adAccounts: accountsInventory,
         mappings: accountMappings
       },
       health: {
@@ -930,9 +983,28 @@ router.get("/stores", async (req, res) => {
     const mappingFacts = await getAccountMappingFacts({ startDate: startStr, endDate: endStr });
     const allAdAccounts = await prisma.adAccount.findMany();
     const storesInventoryCount = storesToAggregate.length;
+    const storesInventory = storesToAggregate.map(toStoreInventoryDto);
     const storesWithOrdersCount = processedList.filter(store => store.ordersCount > 0).length;
     const ordersCount = processedList.reduce((sum, store) => sum + (store.ordersCount || 0), 0);
     const metaFactsCount = accountPerformanceFacts.length;
+    const lastSyncLog = await prisma.syncLog.findFirst({
+      where: {
+        OR: [
+          { taskType: "sync_store_orders" },
+          { type: "sync_store_orders" }
+        ]
+      },
+      orderBy: { startedAt: "desc" }
+    });
+    const isSyncActive = await prisma.syncLog.count({
+      where: {
+        status: "running",
+        OR: [
+          { taskType: "sync_store_orders" },
+          { type: "sync_store_orders" }
+        ]
+      }
+    }) > 0;
     const lastFailedSync = await prisma.syncLog.findFirst({
       where: {
         status: "failed",
@@ -979,15 +1051,34 @@ router.get("/stores", async (req, res) => {
     }
 
     if (lastFailedSync) {
+      dataStatus = "SYNC_FAILED";
+      missingReason = `最近同步失败：${lastFailedSync.errorMessage || lastFailedSync.error || "Unknown sync error"}`;
       warnings.push(`LAST_SYNC_FAILED:${lastFailedSync.errorMessage || lastFailedSync.error || "Unknown sync error"}`);
     }
 
     res.json({
       stores: processedList,
       storesInventoryCount,
+      storesInventory,
       storesWithOrdersCount,
       ordersCount,
       metaFactsCount,
+      syncStatus: {
+        isSyncActive,
+        status: isSyncActive ? "running" : (lastSyncLog?.status || "none"),
+        lastSyncTime: lastSyncLog?.finishedAt || lastSyncLog?.startedAt || null,
+        lastSyncTaskType: lastSyncLog?.taskType || lastSyncLog?.type || null
+      },
+      lastSyncLog: lastSyncLog ? {
+        id: lastSyncLog.id,
+        taskType: lastSyncLog.taskType || lastSyncLog.type,
+        status: lastSyncLog.status,
+        startedAt: lastSyncLog.startedAt,
+        finishedAt: lastSyncLog.finishedAt,
+        recordsFetched: lastSyncLog.recordsFetched || 0,
+        recordsSaved: lastSyncLog.recordsSaved || 0,
+        errorMessage: lastSyncLog.errorMessage || lastSyncLog.error || null
+      } : null,
       unmappedAccountsSummary: {
         count: mappingFacts.unmappedSpendAccountsInRange,
         spend: mappingFacts.unmappedSpendAmount,
@@ -1377,6 +1468,8 @@ router.get("/accounts-performance", async (req, res) => {
 
     // Use correct inventory SOT for indicators:
     const accountsInventoryCount = adAccounts.length; // source for inventory count
+    const accountsInventory = adAccounts.map(toAccountInventoryDto);
+    const storesInventory = stores.map(toStoreInventoryDto);
     const accountsWithFactsCount = performanceMap.size;
     const metaFactsCount = performanceRows.length;
     const activeAccounts = mappingFacts.spendAccountsInRange; // Spend accounts count as active
@@ -1406,15 +1499,36 @@ router.get("/accounts-performance", async (req, res) => {
     }
 
     if (lastFailedSync) {
+      healthStatus = "SYNC_FAILED";
+      missingReason = `最近同步失败：${lastFailedSync.errorMessage || lastFailedSync.error || "Unknown sync error"}`;
       warnings.push(`LAST_SYNC_FAILED:${lastFailedSync.errorMessage || lastFailedSync.error || "Unknown sync error"}`);
     }
 
     res.json({
       success: true,
       accountsInventoryCount,
+      accountsInventory,
+      storesInventoryCount: stores.length,
+      storesInventory,
       accountsWithFactsCount,
       accountsWithSpendCount: spendAccounts,
       metaFactsCount,
+      syncStatus: {
+        isSyncActive,
+        status: isSyncActive ? "running" : (lastSyncLog?.status || "none"),
+        lastSyncTime: lastSyncTimeVal,
+        lastSyncTaskType: lastSyncLog?.taskType || lastSyncLog?.type || null
+      },
+      lastSyncLog: lastSyncLog ? {
+        id: lastSyncLog.id,
+        taskType: lastSyncLog.taskType || lastSyncLog.type,
+        status: lastSyncLog.status,
+        startedAt: lastSyncLog.startedAt,
+        finishedAt: lastSyncLog.finishedAt,
+        recordsFetched: lastSyncLog.recordsFetched || 0,
+        recordsSaved: lastSyncLog.recordsSaved || 0,
+        errorMessage: lastSyncLog.errorMessage || lastSyncLog.error || null
+      } : null,
       health: {
         status: healthStatus,
         missingReason,
@@ -1430,8 +1544,8 @@ router.get("/accounts-performance", async (req, res) => {
         } : null
       },
       filters: {
-        stores,
-        adAccounts,
+        stores: storesInventory,
+        adAccounts: accountsInventory,
         mappings: accountMappings
       },
       summary: {

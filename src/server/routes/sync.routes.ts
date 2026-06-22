@@ -2,7 +2,7 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import { SyncCenter } from "../services/sync-center.service.js";
-import { getMetaToken } from "../utils.js";
+import { getMetaToken, normalizeMetaAccountId } from "../utils.js";
 import { syncStoreData } from "../services/store-sync.service.js";
 import { syncMetaInsightsForActiveAccounts } from "../services/meta-insights.service.js";
 import dayjs from "dayjs";
@@ -22,6 +22,198 @@ function requireManualSyncEnabled(req, res, next) {
     });
   }
   return next();
+}
+
+const SAFE_META_ACCOUNT_LIMIT = 10;
+const SAFE_STORE_LIMIT = 10;
+const MAX_FRONTEND_META_DAYS = 30;
+const MAX_FRONTEND_STORE_DAYS = 90;
+
+function parseBoundedInt(value: any, fallback: number, min: number, max: number): number {
+  const parsed = parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed) || Number.isNaN(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function daysForRange(startDate?: string | null, endDate?: string | null, fallback = 7, max = MAX_FRONTEND_META_DAYS): number {
+  if (startDate && endDate) {
+    const diff = dayjs(endDate).diff(dayjs(startDate), "day") + 1;
+    if (Number.isFinite(diff) && diff > 0) {
+      return Math.max(1, Math.min(max, diff));
+    }
+  }
+  return Math.max(1, Math.min(max, fallback));
+}
+
+function boundedDateRange(startDate: any, endDate: any, fallbackDays: number, maxDays: number) {
+  const end = endDate && dayjs(String(endDate)).isValid()
+    ? dayjs(String(endDate))
+    : dayjs();
+  const fallbackStart = end.subtract(Math.max(1, fallbackDays) - 1, "day");
+  let start = startDate && dayjs(String(startDate)).isValid()
+    ? dayjs(String(startDate))
+    : fallbackStart;
+
+  const maxStart = end.subtract(maxDays - 1, "day");
+  if (start.isBefore(maxStart)) {
+    start = maxStart;
+  }
+  if (start.isAfter(end)) {
+    start = fallbackStart;
+  }
+
+  return {
+    startDate: start.format("YYYY-MM-DD"),
+    endDate: end.format("YYYY-MM-DD"),
+    days: end.diff(start, "day") + 1
+  };
+}
+
+function getErrorMessage(error: any): string {
+  return error?.response?.data?.error?.message ||
+    error?.response?.data?.message ||
+    error?.response?.data?.details ||
+    error?.message ||
+    String(error);
+}
+
+function hasStoreToken(store: any): boolean {
+  return Boolean(store?.shopline_token || store?.shopify_token || store?.shoplazza_token);
+}
+
+function isProductionSyncableStore(store: any): boolean {
+  return store?.mode === "production" && hasStoreToken(store);
+}
+
+async function assertNoRunningTask(taskTypes: string[]) {
+  const running = await prisma.syncLog.findFirst({
+    where: {
+      status: "running",
+      taskType: { in: taskTypes }
+    },
+    orderBy: { startedAt: "desc" }
+  });
+
+  if (running) {
+    const taskName = running.taskType || running.type || "unknown";
+    const error: any = new Error(`已有同步任务正在运行：${taskName} (${running.id})。请等待当前任务结束后再试。`);
+    error.statusCode = 409;
+    error.code = "SYNC_ALREADY_RUNNING";
+    error.runningTask = {
+      id: running.id,
+      taskType: taskName,
+      taskChainId: running.taskChainId,
+      startedAt: running.startedAt
+    };
+    throw error;
+  }
+}
+
+async function resolveSafeMetaTargets(input: {
+  accountId?: string | null;
+  accountIds?: string[] | null;
+  limit?: number;
+}) {
+  const limit = parseBoundedInt(input.limit, SAFE_META_ACCOUNT_LIMIT, 1, SAFE_META_ACCOUNT_LIMIT);
+  const requested = [
+    input.accountId,
+    ...(Array.isArray(input.accountIds) ? input.accountIds : [])
+  ]
+    .filter(Boolean)
+    .map((id) => normalizeMetaAccountId(String(id)))
+    .filter((id, index, arr) => id && arr.indexOf(id) === index)
+    .slice(0, limit);
+
+  if (requested.length > 0) {
+    const accounts = await prisma.adAccount.findMany({
+      where: { fb_account_id: { in: requested } },
+      include: { store: true },
+      orderBy: { updatedAt: "desc" }
+    });
+
+    if (accounts.length === 0) {
+      const error: any = new Error("未找到可同步的已落库 Meta 广告账户。请先在配置中心拉取账户。");
+      error.statusCode = 404;
+      error.code = "ACCOUNT_NOT_FOUND";
+      throw error;
+    }
+    return accounts.slice(0, limit);
+  }
+
+  const boundAccounts = await prisma.adAccount.findMany({
+    where: { storeId: { not: null } },
+    include: { store: true },
+    orderBy: { updatedAt: "desc" },
+    take: limit
+  });
+
+  const boundIds = boundAccounts.map((account) => account.fb_account_id);
+  const remaining = Math.max(0, limit - boundAccounts.length);
+  const activeAccounts = remaining > 0
+    ? await prisma.adAccount.findMany({
+        where: {
+          recentActivity90d: true,
+          fb_account_id: { notIn: boundIds }
+        },
+        include: { store: true },
+        orderBy: { updatedAt: "desc" },
+        take: remaining
+      })
+    : [];
+
+  const targets = [...boundAccounts, ...activeAccounts].slice(0, limit);
+  if (targets.length === 0) {
+    const error: any = new Error("没有符合安全同步范围的广告账户。默认只同步已绑定店铺或最近 90 天活跃的账户。");
+    error.statusCode = 400;
+    error.code = "NO_SYNC_TARGETS";
+    throw error;
+  }
+
+  return targets;
+}
+
+async function resolveSafeStoreTargets(input: { storeId?: string | number | null; limit?: number }) {
+  const limit = parseBoundedInt(input.limit, SAFE_STORE_LIMIT, 1, SAFE_STORE_LIMIT);
+
+  if (input.storeId) {
+    const id = parseInt(String(input.storeId), 10);
+    if (!Number.isFinite(id) || Number.isNaN(id)) {
+      const error: any = new Error("storeId 必须是有效数字。");
+      error.statusCode = 400;
+      error.code = "INVALID_STORE_ID";
+      throw error;
+    }
+
+    const store = await prisma.store.findUnique({ where: { id } });
+    if (!store) {
+      const error: any = new Error("Store 不存在，不能触发订单同步。");
+      error.statusCode = 404;
+      error.code = "STORE_NOT_FOUND";
+      throw error;
+    }
+    if (!isProductionSyncableStore(store)) {
+      const error: any = new Error("该店铺不是 production/API token 已配置状态，已阻止同步。");
+      error.statusCode = 400;
+      error.code = "STORE_NOT_SYNCABLE";
+      throw error;
+    }
+    return [store];
+  }
+
+  const stores = await prisma.store.findMany({
+    where: { mode: "production" },
+    orderBy: { updatedAt: "desc" }
+  });
+  const targets = stores.filter(isProductionSyncableStore).slice(0, limit);
+
+  if (targets.length === 0) {
+    const error: any = new Error("没有 production 且已配置平台 token 的店铺可同步。");
+    error.statusCode = 400;
+    error.code = "NO_SYNCABLE_STORES";
+    throw error;
+  }
+
+  return targets;
 }
 
 /**
@@ -179,6 +371,147 @@ router.get("/sync/chains", async (req, res) => {
     res.json(chainsList);
   } catch (error: any) {
     res.status(500).json({ error: "Failed to load grouped task chains", details: error.message });
+  }
+});
+
+/**
+ * POST /api/sync/trigger
+ * Frontend-safe sync tasks run with bounded scope by default.
+ * Dangerous/admin tasks continue to the guarded route below.
+ */
+router.post("/sync/trigger", async (req, res, next) => {
+  const { taskType, storeId, accountId, accountIds, startDate, endDate, days, limit } = req.body;
+
+  if (!["sync_meta_insights", "sync_store_orders"].includes(taskType)) {
+    return next();
+  }
+
+  try {
+    const chainId = "frontend-sync-" + Math.random().toString(36).substring(2, 8);
+
+    if (taskType === "sync_meta_insights") {
+      await assertNoRunningTask(["sync_meta_insights"]);
+      const daysVal = parseBoundedInt(days, daysForRange(startDate, endDate, 7, MAX_FRONTEND_META_DAYS), 1, MAX_FRONTEND_META_DAYS);
+      const range = boundedDateRange(startDate, endDate, daysVal, MAX_FRONTEND_META_DAYS);
+      const targets = await resolveSafeMetaTargets({ accountId, accountIds, limit });
+      let lastTaskId: string | null = null;
+      let recordsFetched = 0;
+      let recordsSaved = 0;
+      const taskIds: string[] = [];
+
+      for (const account of targets) {
+        const taskId = await SyncCenter.syncMetaInsights(
+          chainId,
+          "frontend_safe_sync",
+          lastTaskId,
+          range.days,
+          account.fb_account_id,
+          range.startDate,
+          range.endDate
+        );
+        taskIds.push(taskId);
+        lastTaskId = taskId;
+
+        const log = await prisma.syncLog.findUnique({ where: { id: taskId } });
+        recordsFetched += log?.recordsFetched || 0;
+        recordsSaved += log?.recordsSaved || 0;
+      }
+
+      const summaryDays = range.days;
+      const metaSummaryTaskId = await SyncCenter.rebuildMetaSummary(chainId, "frontend_safe_sync", lastTaskId, summaryDays);
+      await SyncCenter.rebuildDashboardSummary(chainId, "frontend_safe_sync", metaSummaryTaskId, summaryDays);
+
+      const status = recordsFetched === 0 && recordsSaved === 0 ? "NO_NEW_DATA" : "SUCCESS";
+      return res.json({
+        success: true,
+        status,
+        message: status === "NO_NEW_DATA"
+          ? `同步完成，但 Meta API 在当前日期范围没有返回新的广告表现数据。已检查 ${targets.length} 个安全范围内账户。`
+          : `同步完成：已检查 ${targets.length} 个账户，拉取 ${recordsFetched} 条 Meta 表现记录，写入/更新 ${recordsSaved} 条事实记录。`,
+        taskChainId: chainId,
+        taskIds,
+      targetAccounts: targets.map((account) => ({
+          accountId: account.fb_account_id,
+          name: account.fb_account_name,
+          storeId: account.storeId || null
+        })),
+        recordsFetched,
+        recordsSaved,
+        startDate: range.startDate,
+        endDate: range.endDate,
+        dataSourceExplain: {
+          inventorySource: "AdAccount",
+          factSource: "FactMetaPerformance",
+          executor: "SyncCenter.syncMetaInsights"
+        }
+      });
+    }
+
+    await assertNoRunningTask(["sync_store_orders"]);
+    const daysVal = parseBoundedInt(days, daysForRange(startDate, endDate, 30, MAX_FRONTEND_STORE_DAYS), 1, MAX_FRONTEND_STORE_DAYS);
+    const range = boundedDateRange(startDate, endDate, daysVal, MAX_FRONTEND_STORE_DAYS);
+    const targets = await resolveSafeStoreTargets({ storeId, limit });
+    let lastTaskId: string | null = null;
+    let recordsFetched = 0;
+    let recordsSaved = 0;
+    const taskIds: string[] = [];
+
+    for (const store of targets) {
+      const taskId = await SyncCenter.syncStoreOrders(
+        store.id,
+        chainId,
+        "frontend_safe_sync",
+        lastTaskId,
+        range.days,
+        range.startDate,
+        range.endDate
+      );
+      taskIds.push(taskId);
+      lastTaskId = taskId;
+
+      const log = await prisma.syncLog.findUnique({ where: { id: taskId } });
+      recordsFetched += log?.recordsFetched || 0;
+      recordsSaved += log?.recordsSaved || 0;
+    }
+
+    const summaryDays = range.days;
+    const storeSummaryTaskId = await SyncCenter.rebuildStoreSummary(chainId, "frontend_safe_sync", lastTaskId, summaryDays);
+    await SyncCenter.rebuildDashboardSummary(chainId, "frontend_safe_sync", storeSummaryTaskId, summaryDays);
+
+    const status = recordsFetched === 0 && recordsSaved === 0 ? "NO_NEW_DATA" : "SUCCESS";
+    return res.json({
+      success: true,
+      status,
+      message: status === "NO_NEW_DATA"
+        ? `同步完成，但店铺 API 在当前日期范围没有返回新的订单数据。已检查 ${targets.length} 个可同步店铺。`
+        : `同步完成：已检查 ${targets.length} 个店铺，拉取 ${recordsFetched} 条订单记录，写入/更新 ${recordsSaved} 条订单事实。`,
+      taskChainId: chainId,
+      taskIds,
+      targetStores: targets.map((store) => ({
+        id: store.id,
+        name: store.name,
+        platform: store.platform,
+        mode: store.mode
+      })),
+      recordsFetched,
+      recordsSaved,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      dataSourceExplain: {
+        inventorySource: "Store",
+        factSource: "Order",
+        executor: "SyncCenter.syncStoreOrders"
+      }
+    });
+  } catch (error: any) {
+    const statusCode = error?.statusCode || 500;
+    return res.status(statusCode).json({
+      success: false,
+      error: error?.code || "SYNC_TRIGGER_FAILED",
+      message: getErrorMessage(error),
+      details: getErrorMessage(error),
+      runningTask: error?.runningTask || null
+    });
   }
 });
 
