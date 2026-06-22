@@ -6,6 +6,9 @@ coverage/
 *.log
 .npm-cache/
 backups/
+.env
+.env.local
+.env.production
 .env*
 !.env.example
 

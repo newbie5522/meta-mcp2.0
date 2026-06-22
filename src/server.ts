@@ -114,15 +114,23 @@ app.use("/api", routes);
 export default app;
 const PORT = 3000;
 
-// API route to check if server is running
-app.get("/api/health", (req, res) => {
+function getHealthPayload() {
   const dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
-  res.json({
+  return {
     status: "ok",
     env: process.env.NODE_ENV,
     vercel: !!process.env.VERCEL,
     dbUrlPrefix: dbUrl ? dbUrl.substring(0, 20) + "..." : null,
-  });
+  };
+}
+
+// API route to check if server is running
+app.get("/api/health", (req, res) => {
+  res.json(getHealthPayload());
+});
+
+app.get("/health", (req, res) => {
+  res.json(getHealthPayload());
 });
 
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
