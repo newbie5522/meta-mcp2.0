@@ -264,7 +264,7 @@ router.get("/active-list", async (req, res) => {
     const activeLastDays = activeLastDaysRaw?.value ? (parseInt(activeLastDaysRaw.value) || 90) : 90;
     
     const syncLimitRaw = await prisma.setting.findUnique({ where: { key: 'META_AD_ACCOUNTS_SYNC_LIMIT' } });
-    const syncLimit = syncLimitRaw?.value ? (parseInt(syncLimitRaw.value) || 500) : 500;
+    const syncLimit = (syncLimitRaw?.value && parseInt(syncLimitRaw.value, 10)) ? parseInt(syncLimitRaw.value, 10) : 10000000;
 
     let fetchedMetaAccountsCount = 0;
     try {

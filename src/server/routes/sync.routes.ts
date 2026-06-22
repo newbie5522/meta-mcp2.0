@@ -24,8 +24,6 @@ function requireManualSyncEnabled(req, res, next) {
   return next();
 }
 
-const SAFE_META_ACCOUNT_LIMIT = 1000;
-const SAFE_STORE_LIMIT = 1000;
 const MAX_FRONTEND_META_DAYS = 3650;
 const MAX_FRONTEND_STORE_DAYS = 3650;
 
@@ -110,15 +108,13 @@ async function resolveSafeMetaTargets(input: {
   accountIds?: string[] | null;
   limit?: number;
 }) {
-  const limit = parseBoundedInt(input.limit, SAFE_META_ACCOUNT_LIMIT, 1, SAFE_META_ACCOUNT_LIMIT);
   const requested = [
     input.accountId,
     ...(Array.isArray(input.accountIds) ? input.accountIds : [])
   ]
     .filter(Boolean)
     .map((id) => normalizeMetaAccountId(String(id)))
-    .filter((id, index, arr) => id && arr.indexOf(id) === index)
-    .slice(0, limit);
+    .filter((id, index, arr) => id && arr.indexOf(id) === index);
 
   if (requested.length > 0) {
     const accounts = await prisma.adAccount.findMany({
@@ -133,31 +129,26 @@ async function resolveSafeMetaTargets(input: {
       error.code = "ACCOUNT_NOT_FOUND";
       throw error;
     }
-    return accounts.slice(0, limit);
+    return accounts;
   }
 
   const boundAccounts = await prisma.adAccount.findMany({
     where: { storeId: { not: null } },
     include: { store: true },
-    orderBy: { updatedAt: "desc" },
-    take: limit
+    orderBy: { updatedAt: "desc" }
   });
 
   const boundIds = boundAccounts.map((account) => account.fb_account_id);
-  const remaining = Math.max(0, limit - boundAccounts.length);
-  const activeAccounts = remaining > 0
-    ? await prisma.adAccount.findMany({
-        where: {
-          recentActivity90d: true,
-          fb_account_id: { notIn: boundIds }
-        },
-        include: { store: true },
-        orderBy: { updatedAt: "desc" },
-        take: remaining
-      })
-    : [];
+  const activeAccounts = await prisma.adAccount.findMany({
+    where: {
+      recentActivity90d: true,
+      fb_account_id: { notIn: boundIds }
+    },
+    include: { store: true },
+    orderBy: { updatedAt: "desc" }
+  });
 
-  const targets = [...boundAccounts, ...activeAccounts].slice(0, limit);
+  const targets = [...boundAccounts, ...activeAccounts];
   if (targets.length === 0) {
     const error: any = new Error("没有符合安全同步范围的广告账户。默认只同步已绑定店铺或最近 90 天活跃的账户。");
     error.statusCode = 400;
@@ -169,12 +160,10 @@ async function resolveSafeMetaTargets(input: {
 }
 
 async function resolveSafeStoreTargets(input: { storeId?: string | number | null; limit?: number }) {
-  const limit = parseBoundedInt(input.limit, SAFE_STORE_LIMIT, 1, SAFE_STORE_LIMIT);
-
   if (input.storeId) {
     const id = parseInt(String(input.storeId), 10);
     if (!Number.isFinite(id) || Number.isNaN(id)) {
-      const error: any = new Error("storeId 必须是有效数字。");
+      const error: any = new Error("storeId 必须 be effective digit.");
       error.statusCode = 400;
       error.code = "INVALID_STORE_ID";
       throw error;
@@ -182,13 +171,13 @@ async function resolveSafeStoreTargets(input: { storeId?: string | number | null
 
     const store = await prisma.store.findUnique({ where: { id } });
     if (!store) {
-      const error: any = new Error("Store 不存在，不能触发订单同步。");
+      const error: any = new Error("Store does not exist, cannot trigger sync.");
       error.statusCode = 404;
       error.code = "STORE_NOT_FOUND";
       throw error;
     }
     if (!isProductionSyncableStore(store)) {
-      const error: any = new Error("该店铺不是 production/API token 已配置状态，已阻止同步。");
+      const error: any = new Error("This store mode is not production or API token empty.");
       error.statusCode = 400;
       error.code = "STORE_NOT_SYNCABLE";
       throw error;
@@ -200,10 +189,10 @@ async function resolveSafeStoreTargets(input: { storeId?: string | number | null
     where: { mode: "production" },
     orderBy: { updatedAt: "desc" }
   });
-  const targets = stores.filter(isProductionSyncableStore).slice(0, limit);
+  const targets = stores.filter(isProductionSyncableStore);
 
   if (targets.length === 0) {
-    const error: any = new Error("没有 production 且已配置平台 token 的店铺可同步。");
+    const error: any = new Error("No production store with API token config available to sync.");
     error.statusCode = 400;
     error.code = "NO_SYNCABLE_STORES";
     throw error;

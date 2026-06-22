@@ -219,8 +219,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
         taskType: "sync_store_orders",
         storeId: store.id,
         startDate: formattedStartDate,
-        endDate: formattedEndDate,
-        days: 90
+        endDate: formattedEndDate
       });
       if (response.data?.status === "NO_NEW_DATA") {
         toast.warning(response.data.message || `[${store.name}] 同步完成，但当前日期范围暂无新订单。`, { id: toastId });
@@ -250,9 +249,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
       const response = await axios.post("/api/sync/trigger", {
         taskType: "sync_store_orders",
         startDate: formattedStartDate,
-        endDate: formattedEndDate,
-        days: 90,
-        limit: 10
+        endDate: formattedEndDate
       });
       if (response.data?.status === "NO_NEW_DATA") {
         toast.warning(response.data.message || "同步完成，但当前日期范围暂无新的店铺订单。", { id: toastId });

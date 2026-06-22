@@ -146,18 +146,11 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
     try {
       const startStr = format(startDate, "yyyy-MM-dd");
       const endStr = format(endDate, "yyyy-MM-dd");
-      const visibleAccountIds = filteredAccounts
-        .map((account) => account.fb_account_id)
-        .filter(Boolean)
-        .slice(0, 10);
 
       const response = await axios.post("/api/sync/trigger", {
         taskType: "sync_meta_insights",
         startDate: startStr,
-        endDate: endStr,
-        accountIds: visibleAccountIds.length > 0 ? visibleAccountIds : undefined,
-        limit: 10,
-        days: 30
+        endDate: endStr
       });
 
       if (response.data?.status === "NO_NEW_DATA") {

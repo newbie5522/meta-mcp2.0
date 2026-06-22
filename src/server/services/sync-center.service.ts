@@ -201,8 +201,7 @@ export class SyncCenter {
           where: { id: storeId },
           data: {
             domain,
-            timezone,
-            status: "active"
+            timezone
           }
         });
 
@@ -600,15 +599,36 @@ export class SyncCenter {
             const orders = await prisma.order.findMany({
               where: {
                 storeId: store.id,
-                createdAt: {
-                  gte: dayjs(dateStr).startOf("day").toDate(),
-                  lte: dayjs(dateStr).endOf("day").toDate()
-                }
+                store_local_date: dateStr
               }
             });
 
-            const revenue = orders.reduce((sum, o) => sum + (o.revenue || 0), 0);
-            const totalOrders = orders.length;
+            const filteredOrders = orders.filter(o => {
+              if (!o.paymentStatus) return true;
+              const s = o.paymentStatus.toLowerCase().trim();
+              return !["waiting", "unpaid", "pending", "cancelled", "voided"].includes(s);
+            });
+
+            const uniqueOrdersMap = new Map<string, number>();
+            for (const o of filteredOrders) {
+              const oId = o.orderId || o.id;
+              const orderAmount = (o.orderTotal != null && o.orderTotal > 0) ? o.orderTotal : (o.revenue || 0);
+
+              if (!uniqueOrdersMap.has(oId)) {
+                uniqueOrdersMap.set(oId, orderAmount);
+              } else {
+                if (o.orderTotal == null || o.orderTotal === 0) {
+                  uniqueOrdersMap.set(oId, uniqueOrdersMap.get(oId)! + (o.revenue || 0));
+                }
+              }
+            }
+
+            let revenue = 0;
+            let totalOrders = 0;
+            uniqueOrdersMap.forEach((amt) => {
+              revenue += amt;
+              totalOrders++;
+            });
 
             await prisma.dailySummary.upsert({
               where: {
