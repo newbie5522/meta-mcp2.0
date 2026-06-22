@@ -59,6 +59,12 @@ type StorePlatformId = typeof STORE_PLATFORM_OPTIONS[number]["id"];
 const getCurrentPlatformOption = (platform?: string) =>
   STORE_PLATFORM_OPTIONS.find(p => p.id === platform) || STORE_PLATFORM_OPTIONS[0];
 
+function getStoreTokenKey(platform?: string): "shopline_token" | "shopify_token" | "shoplazza_token" {
+  if (platform === "shopify") return "shopify_token";
+  if (platform === "shoplazza") return "shoplazza_token";
+  return "shopline_token";
+}
+
 function getAccountId(acc: unknown): string {
   if (!acc || typeof acc !== "object") return "";
   const a = acc as Record<string, unknown>;
@@ -303,6 +309,9 @@ export function StoreDetailsPage({
     (acc.name || acc.accountName || "").toLowerCase().includes(searchAccountQuery.toLowerCase()) || 
     String(acc.account_id || acc.accountId).includes(searchAccountQuery)
   );
+  const activeTokenKey = getStoreTokenKey(storeData.platform);
+  const activeTokenConfigured = Boolean(storeData[`${activeTokenKey}_configured`]);
+  const activeTokenValue = storeData[activeTokenKey] || "";
 
   return (
     <div className="flex-1 overflow-y-auto space-y-6 pb-12">
@@ -357,7 +366,7 @@ export function StoreDetailsPage({
                 <Input
                   value={storeData.name || ""}
                   onChange={(e) => setStoreData({ ...storeData, name: e.target.value })}
-                  placeholder="如您的域名主体或店铺简写"
+                  placeholder="Store name"
                   className="h-10 border-slate-200"
                 />
               </div>
@@ -380,19 +389,14 @@ export function StoreDetailsPage({
                 <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Access Token</label>
                 <Input
                   type="password"
-                  value={
-                    storeData.platform === "shoplazza" ? storeData.shoplazza_token :
-                    storeData.platform === "shopify" ? storeData.shopify_token :
-                    storeData.shopline_token || ""
-                  }
+                  value={activeTokenValue}
                   onChange={(e) => {
-                    const key = storeData.platform === "shoplazza" ? "shoplazza_token" :
-                                storeData.platform === "shopify" ? "shopify_token" :
-                                "shopline_token";
-                    setStoreData({ ...storeData, [key]: e.target.value });
+                    setStoreData({ ...storeData, [activeTokenKey]: e.target.value });
                   }}
                   placeholder={
-                    STORE_PLATFORM_OPTIONS.find(p => p.id === storeData.platform)?.tokenPlaceholder || "输入 Access Token"
+                    activeTokenConfigured
+                      ? "Configured; enter a new token to overwrite"
+                      : STORE_PLATFORM_OPTIONS.find(p => p.id === storeData.platform)?.tokenPlaceholder || "Enter Access Token"
                   }
                   className="h-10 border-slate-200"
                 />

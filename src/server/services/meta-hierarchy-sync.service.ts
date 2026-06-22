@@ -115,7 +115,6 @@ export async function ensureAdAccounts(token: string) {
       activeAccountsSync.push(...results);
     }
 
-    const defaultStore = await prisma.store.findFirst();
     let successCount = 0;
     const checkedAt = new Date();
 

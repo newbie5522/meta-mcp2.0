@@ -9,6 +9,21 @@ import dayjs from "dayjs";
 
 const router = Router();
 
+function isManualSyncEnabled(): boolean {
+  return process.env.ENABLE_MANUAL_SYNC === "true";
+}
+
+function requireManualSyncEnabled(req, res, next) {
+  if (!isManualSyncEnabled()) {
+    return res.status(403).json({
+      success: false,
+      error: "MANUAL_SYNC_DISABLED",
+      message: "Manual sync endpoints are disabled by default. Set ENABLE_MANUAL_SYNC=true to enable them explicitly."
+    });
+  }
+  return next();
+}
+
 /**
  * GET /api/sync/status
  * Evaluation of system configuration and metrics sync health.
@@ -171,7 +186,7 @@ router.get("/sync/chains", async (req, res) => {
  * POST /api/sync/trigger
  * Manually starts a specific task trigger.
  */
-router.post("/sync/trigger", async (req, res) => {
+router.post("/sync/trigger", requireManualSyncEnabled, async (req, res) => {
   const { taskType, storeId, accountId, startDate, endDate, days } = req.body;
   if (!taskType) {
     return res.status(400).json({ error: "taskType is required" });
@@ -241,7 +256,7 @@ router.post("/sync/trigger", async (req, res) => {
  * POST /api/sync/rebuild
  * Completely clears the dailySummary table and starts rebuilding all metrics for last 90 days.
  */
-router.post("/sync/rebuild", async (req, res) => {
+router.post("/sync/rebuild", requireManualSyncEnabled, async (req, res) => {
   try {
     const chainId = "rebuild-all-" + Math.random().toString(36).substring(2, 8);
     
@@ -278,7 +293,7 @@ router.post("/sync/rebuild", async (req, res) => {
 /**
  * LEGACY ROUTE FALLBACK (Satisfies old UI manual triggered global calls)
  */
-router.post("/sync", async (req, res) => {
+router.post("/sync", requireManualSyncEnabled, async (req, res) => {
   try {
     const parentChainId = "sync-" + Math.random().toString(36).substring(2, 8);
     const startedVal = new Date();
@@ -320,7 +335,7 @@ router.post("/sync", async (req, res) => {
   }
 });
 
-router.post("/sync-store", async (req, res) => {
+router.post("/sync-store", requireManualSyncEnabled, async (req, res) => {
   const { storeId } = req.body;
   if (!storeId) {
     return res.status(400).json({ error: "storeId is required" });
@@ -338,7 +353,7 @@ router.post("/sync-store", async (req, res) => {
 });
 
 // CRON MONTHLY
-router.get("/cron/sync-monthly", async (req, res) => {
+router.get("/cron/sync-monthly", requireManualSyncEnabled, async (req, res) => {
   try {
     const chainId = await SyncCenter.triggerMetaConfigChain("cron_monthly");
     res.json({ success: true, taskChainId: chainId });
@@ -351,7 +366,7 @@ router.get("/cron/sync-monthly", async (req, res) => {
  * POST /api/sync/stores/:storeId/orders
  * 同步指定店铺订单
  */
-router.post("/sync/stores/:storeId/orders", async (req, res) => {
+router.post("/sync/stores/:storeId/orders", requireManualSyncEnabled, async (req, res) => {
   const { storeId } = req.params;
   const chainId = "sync-single-store-" + Math.random().toString(36).substring(2, 8);
   try {
@@ -374,7 +389,7 @@ router.post("/sync/stores/:storeId/orders", async (req, res) => {
  * POST /api/sync/stores/orders
  * 同步所有店铺订单
  */
-router.post("/sync/stores/orders", async (req, res) => {
+router.post("/sync/stores/orders", requireManualSyncEnabled, async (req, res) => {
   const chainId = "sync-all-stores-" + Math.random().toString(36).substring(2, 8);
   try {
     const stores = await prisma.store.findMany();
@@ -401,7 +416,7 @@ router.post("/sync/stores/orders", async (req, res) => {
  * POST /api/summary/stores/rebuild
  * 重建店铺汇总
  */
-router.post("/summary/stores/rebuild", async (req, res) => {
+router.post("/summary/stores/rebuild", requireManualSyncEnabled, async (req, res) => {
   const chainId = "rebuild-store-summary-" + Math.random().toString(36).substring(2, 8);
   try {
     const id1 = await SyncCenter.rebuildStoreSummary(chainId, "rebuild_summary_btn", null, 90);
@@ -422,7 +437,7 @@ router.post("/summary/stores/rebuild", async (req, res) => {
  * GET /api/sync/stores/:storeId/reconcile
  * Fetch a direct audit check comparing active platform orders with DB saved ones
  */
-router.get("/sync/stores/:storeId/reconcile", async (req, res) => {
+router.get("/sync/stores/:storeId/reconcile", requireManualSyncEnabled, async (req, res) => {
   const { storeId } = req.params;
   const startDate = (req.query.startDate as string) || dayjs().subtract(7, "day").format("YYYY-MM-DD");
   const endDate = (req.query.endDate as string) || dayjs().format("YYYY-MM-DD");

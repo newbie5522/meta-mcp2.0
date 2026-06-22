@@ -15,7 +15,11 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
   const [filterType, setFilterType] = useState<"connected" | "unconnected" | "all">("connected");
 
   const isApiBound = (store: any) => {
-    return !!(store.shopline_token?.trim() || store.shopify_token?.trim() || store.shoplazza_token?.trim());
+    return !!(
+      store.shopline_token_configured ||
+      store.shopify_token_configured ||
+      store.shoplazza_token_configured
+    );
   };
 
   const allCount = stores.length;

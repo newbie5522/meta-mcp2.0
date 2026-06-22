@@ -25,11 +25,12 @@ const router = Router();
  * Refactored to aggregate Meta insights by ad account in the chosen date range.
  */
 router.get("/detail", async (req, res) => {
-  const { startDate, endDate, storeId, accountId } = req.query;
+  const { startDate, endDate, storeId, accountId, includeLegacyFallback } = req.query;
 
   try {
     const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const allowLegacyFallback = includeLegacyFallback === "true";
 
     // 1. Fetch available filters
     let [stores, adAccounts, accountMappings] = await Promise.all([
@@ -86,7 +87,7 @@ router.get("/detail", async (req, res) => {
       startDate: startStr,
       endDate: endStr,
       storeId: storeId ? String(storeId) : undefined,
-      includeLegacyCreatedAtFallback: true,
+      includeLegacyCreatedAtFallback: allowLegacyFallback,
     });
     const rawOrders = orderSummary.orders;
 
@@ -118,7 +119,7 @@ router.get("/detail", async (req, res) => {
 
       const spend = matchedInsights.reduce((s, item) => s + (item.spend || 0), 0);
       const impressions = matchedInsights.reduce((s, item) => s + (item.impressions || 0), 0);
-      const reach = spend / 0.15; // fallback estimate
+      const reach = null;
       const clicks = matchedInsights.reduce((s, item) => s + (item.clicks || 0), 0);
       const addToCart = 0; // Removed from schema, keeping 0 for API contract
       const purchases = matchedInsights.reduce((s, item) => s + (item.purchases || 0), 0);
@@ -142,6 +143,7 @@ router.get("/detail", async (req, res) => {
         spend,
         impressions,
         reach,
+        reachSource: "not_available",
         clicks,
         ctr,
         cpc,
@@ -184,6 +186,7 @@ router.get("/detail", async (req, res) => {
         orderSource: "Order.store_local_date",
         metaSource: "FactMetaPerformance",
         mappingSource: "AccountMapping + AdAccount",
+        legacyCreatedAtFallbackEnabled: allowLegacyFallback,
         legacyCreatedAtFallbackUsed: orderSummary.legacyFallbackUsed
       }
     });
@@ -816,11 +819,12 @@ router.post("/creatives/:creativeId/analyze", async (req, res) => {
  * Returns stores analytics dashboard list
  */
 router.get("/stores", async (req, res) => {
-  const { startDate, endDate } = req.query;
+  const { startDate, endDate, includeLegacyFallback } = req.query;
 
   try {
     const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const allowLegacyFallback = includeLegacyFallback === "true";
 
     // Start of SOT Refactored Stores Endpoint
     let storesToAggregate = await prisma.store.findMany({
@@ -835,12 +839,17 @@ router.get("/stores", async (req, res) => {
       );
     }
 
+    const accountPerformanceFacts = await getMetaAccountPerformanceFacts({
+      startDate: startStr,
+      endDate: endStr,
+    });
+
     const processedList = await Promise.all(storesToAggregate.map(async (store) => {
       const orderSummary = await getStoreOrderSummary({
         startDate: startStr,
         endDate: endStr,
         storeId: store.id,
-        includeLegacyCreatedAtFallback: true
+        includeLegacyCreatedAtFallback: allowLegacyFallback
       });
 
       const ordersCount = orderSummary.ordersCount;
@@ -857,18 +866,13 @@ router.get("/stores", async (req, res) => {
         if (m.fbAccountId) mappedFbAccountIds.add(m.fbAccountId);
       });
 
-      const uniqueMappedIds = Array.from(mappedFbAccountIds);
+      const uniqueMappedIds = Array.from(mappedFbAccountIds).map(normalizeMetaAccountId);
       let adSpend = 0;
       let hasMappedAccounts = uniqueMappedIds.length > 0;
 
       if (hasMappedAccounts) {
-        const perfRows = await prisma.factMetaPerformance.findMany({
-          where: {
-            account_id: { in: uniqueMappedIds },
-            date: { gte: startStr, lte: endStr },
-            level: "account"
-          }
-        });
+        const mappedIdSet = new Set(uniqueMappedIds);
+        const perfRows = accountPerformanceFacts.filter(row => mappedIdSet.has(normalizeMetaAccountId(row.account_id)));
         adSpend = perfRows.reduce((sum, ad) => sum + (ad.spend || 0), 0);
       }
 
@@ -898,6 +902,7 @@ router.get("/stores", async (req, res) => {
         realRoas: adSpend > 0 ? roas : null,
         hasMappedAccounts,
         hasOrders: ordersCount > 0,
+        legacyFallbackUsed: orderSummary.legacyFallbackUsed,
         countryCount,
         productCount,
         lastSyncTime: lastSync?.finishedAt || lastSync?.startedAt || null,
@@ -951,7 +956,8 @@ router.get("/stores", async (req, res) => {
         orderSource: "Order.store_local_date",
         metaSource: "FactMetaPerformance",
         mappingSource: "AccountMapping + AdAccount",
-        legacyCreatedAtFallbackUsed: false
+        legacyCreatedAtFallbackEnabled: allowLegacyFallback,
+        legacyCreatedAtFallbackUsed: allowLegacyFallback && processedList.some(store => store.legacyFallbackUsed)
       }
     });
 

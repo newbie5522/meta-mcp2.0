@@ -206,43 +206,46 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
 
     if (mapping && mapping.storeId === null) {
       if (dbAdAccount) {
-        try {
-          await prisma.adAccount.delete({
-            where: { fb_account_id: itemAccountId }
-          });
-        } catch (e) {}
+        await prisma.adAccount.update({
+          where: { fb_account_id: itemAccountId },
+          data: {
+            fb_account_name: accountNameRaw,
+            fb_access_token: token,
+            storeId: null
+          }
+        });
+      } else {
+        await prisma.adAccount.create({
+          data: {
+            fb_account_id: itemAccountId,
+            fb_account_name: accountNameRaw,
+            fb_access_token: token,
+            storeId: null
+          }
+        });
       }
-      return; // Skip syncing this ad account since it is explicitly unmapped
+      console.warn(`[Unified Ad Sync] Account ${itemAccountId} is explicitly unmapped; retaining AdAccount and skipping attributed insight writes.`);
+      return;
     }
 
     let targetStoreId: number | null = mapping ? mapping.storeId : null;
 
     if (!dbAdAccount) {
-      // Fallback to defaultStore if no mapping or mapped store does not exist
-      if (!targetStoreId) {
-        const defaultStore = await prisma.store.findFirst();
-        if (defaultStore) {
-          targetStoreId = defaultStore.id;
+      dbAdAccount = await prisma.adAccount.create({
+        data: {
+          fb_account_id: itemAccountId,
+          fb_account_name: accountNameRaw,
+          fb_access_token: token,
+          storeId: targetStoreId
         }
-      }
-
-      if (targetStoreId) {
-        dbAdAccount = await prisma.adAccount.create({
-          data: {
-            fb_account_id: itemAccountId,
-            fb_account_name: accountNameRaw,
-            fb_access_token: token,
-            storeId: targetStoreId
-          }
-        });
-      }
+      });
     } else {
       // If dbAdAccount exists, update name/token and also realign storeId if mapping dictates a valid store
       const updateData: any = {
         fb_account_name: accountNameRaw,
         fb_access_token: token
       };
-      if (targetStoreId) {
+      if (mapping) {
         updateData.storeId = targetStoreId;
       }
       dbAdAccount = await prisma.adAccount.update({
@@ -251,7 +254,7 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
       });
     }
 
-    const store = dbAdAccount ? await prisma.store.findUnique({ where: { id: dbAdAccount.storeId } }) : null;
+    const store = dbAdAccount?.storeId != null ? await prisma.store.findUnique({ where: { id: dbAdAccount.storeId } }) : null;
     const storeName = store ? store.name : null;
 
     // 2. Ensure/Sync AccountMapping

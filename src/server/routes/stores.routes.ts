@@ -12,6 +12,34 @@ function isFixtureStore(store: { name: string; domain?: string | null }): boolea
   return demoStoreNames.includes(store.name) || demoStoreDomains.includes(store.domain || "");
 }
 
+function isTokenInput(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && !value.includes("...");
+}
+
+function getTokenField(platform: string): "shopline_token" | "shopify_token" | "shoplazza_token" {
+  if (platform === "shopify") return "shopify_token";
+  if (platform === "shoplazza") return "shoplazza_token";
+  return "shopline_token";
+}
+
+function sanitizeAdAccount(account: any) {
+  if (!account || typeof account !== "object") return account;
+  const { fb_access_token, ...safeAccount } = account;
+  return safeAccount;
+}
+
+function sanitizeStore(store: any) {
+  if (!store || typeof store !== "object") return store;
+  const { shopline_token, shopify_token, shoplazza_token, accounts, ...safeStore } = store;
+  return {
+    ...safeStore,
+    accounts: Array.isArray(accounts) ? accounts.map(sanitizeAdAccount) : accounts,
+    shopline_token_configured: Boolean(shopline_token),
+    shopify_token_configured: Boolean(shopify_token),
+    shoplazza_token_configured: Boolean(shoplazza_token),
+  };
+}
+
 router.get("/", async (req, res) => {
   try {
     let stores = await prisma.store.findMany({
@@ -22,7 +50,7 @@ router.get("/", async (req, res) => {
       stores = stores.filter(store => !isFixtureStore(store));
     }
 
-    res.json(stores);
+    res.json(stores.map(sanitizeStore));
   } catch (error: any) {
     res
       .status(500)
@@ -298,14 +326,14 @@ function normalizeStoreMode(mode: unknown): string {
 }
 
 router.post("/", async (req, res) => {
-  const { id, name, platform, shopline_token, shopify_token, shoplazza_token, domain, visitors, timezone, mode } = req.body;
+  const { id, name, platform, domain, visitors, timezone, mode: incomingMode } = req.body;
   try {
     const normalizedName = String(name || "").trim();
     if (!normalizedName) {
       return res.status(400).json({
         success: false,
         error: "Missing name",
-        details: "店铺名称为必填项。"
+        details: "Store name is required."
       });
     }
 
@@ -319,7 +347,8 @@ router.post("/", async (req, res) => {
     }
 
     const normalizedDomain = normalizeDomain(domain);
-    const token = actualPlatform === "shopify" ? shopify_token : (actualPlatform === "shoplazza" ? shoplazza_token : shopline_token);
+    const tokenField = getTokenField(actualPlatform);
+    const submittedToken = isTokenInput(req.body?.[tokenField]) ? String(req.body[tokenField]).trim() : "";
 
     let existingStore: any = null;
     if (id) {
@@ -338,6 +367,8 @@ router.post("/", async (req, res) => {
         where: { name: normalizedName }
       });
     }
+    const existingToken = existingStore?.[tokenField] || "";
+    const token = submittedToken || existingToken;
 
     // Best-effort Timezone detection
     let resolvedTimezone = "GMT+8";
@@ -365,28 +396,32 @@ router.post("/", async (req, res) => {
     }
 
     let savedStore: any = null;
-    let mode: "created" | "updated_by_id" | "updated_existing_by_name" = "created";
+    let responseMode: "created" | "updated_by_id" | "updated_existing_by_name" = "created";
     let message = "";
 
-    const dataToSave = {
+    const dataToSave: any = {
       name: normalizedName,
       platform: actualPlatform,
-      shopline_token: actualPlatform === "shopline" ? (shopline_token || null) : null,
-      shopify_token: actualPlatform === "shopify" ? (shopify_token || null) : null,
-      shoplazza_token: actualPlatform === "shoplazza" ? (shoplazza_token || null) : null,
       domain: normalizedDomain || null,
       timezone: resolvedTimezone,
       visitors: visitors !== undefined ? parseInt(visitors, 10) : undefined,
-      mode: normalizeStoreMode(mode)
+      mode: normalizeStoreMode(incomingMode)
     };
+    if (submittedToken) {
+      dataToSave[tokenField] = submittedToken;
+    } else if (!existingStore) {
+      dataToSave.shopline_token = null;
+      dataToSave.shopify_token = null;
+      dataToSave.shoplazza_token = null;
+    }
 
     if (existingStore) {
       savedStore = await prisma.store.update({
         where: { id: existingStore.id },
         data: dataToSave
       });
-      mode = id ? "updated_by_id" : "updated_existing_by_name";
-      message = id ? "店铺配置已保存" : "已检测到同名店铺，已更新已有配置";
+      responseMode = id ? "updated_by_id" : "updated_existing_by_name";
+      message = id ? "Store configuration saved." : "Existing store with the same name was updated.";
     } else {
       savedStore = await prisma.store.create({
         data: {
@@ -394,14 +429,14 @@ router.post("/", async (req, res) => {
           visitors: visitors !== undefined ? parseInt(visitors, 10) : 0
         }
       });
-      mode = "created";
-      message = "店铺配置已创建";
+      responseMode = "created";
+      message = "Store configuration created.";
     }
 
     return res.json({
       success: true,
-      mode,
-      store: savedStore,
+      mode: responseMode,
+      store: sanitizeStore(savedStore),
       id: savedStore.id,
       message,
       syncTriggered: false,
@@ -418,7 +453,7 @@ router.post("/", async (req, res) => {
       return res.status(409).json({
         success: false,
         error: "STORE_NAME_ALREADY_EXISTS",
-        details: "店铺名称已存在，请打开已有店铺编辑，或系统将自动按名称更新。",
+        details: "Store name already exists. Open the existing store or save by id.",
         field: "name"
       });
     }
@@ -1077,7 +1112,7 @@ router.get("/:id", async (req, res) => {
       }
     }
 
-    res.json(store);
+    res.json(sanitizeStore(store));
   } catch (error: any) {
     res.status(500).json({ error: "Failed to fetch store" });
   }
@@ -1117,7 +1152,7 @@ router.post("/:id/accounts", async (req, res) => {
       },
     });
 
-    res.json(account);
+    res.json(sanitizeAdAccount(account));
   } catch (error: any) {
     res
       .status(500)
