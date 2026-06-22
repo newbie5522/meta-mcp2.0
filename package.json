@@ -14,7 +14,9 @@
     "audit:data-pipeline": "tsx src/server/scripts/run-pipeline-audit.ts",
     "smoke:config": "tsx src/server/scripts/smoke-config-contract.ts",
     "smoke:data": "tsx src/server/scripts/smoke-data-contract.ts",
-    "audit:live-data-flow": "tsx src/server/scripts/audit-live-data-flow.ts"
+    "audit:live-data-flow": "tsx src/server/scripts/audit-live-data-flow.ts",
+    "trace:meta-api-read": "tsx src/server/scripts/trace-meta-api-read.ts",
+    "trace:store-api-read": "tsx src/server/scripts/trace-store-api-read.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
