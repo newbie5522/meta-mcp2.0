@@ -3,12 +3,28 @@ import prisma from "../../db/index.js";
 
 const router = Router();
 
+function isSensitiveSettingKey(key: string): boolean {
+  const normalized = key.toUpperCase();
+  return (
+    normalized.includes("TOKEN") ||
+    normalized.includes("SECRET") ||
+    normalized.includes("API_KEY") ||
+    normalized.includes("ACCESS_KEY")
+  );
+}
+
+function maskSecret(value: string): string {
+  if (!value) return "";
+  if (value.length <= 8) return "***";
+  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+}
+
 router.get("/", async (req, res) => {
   try {
     const settings = await prisma.setting.findMany();
     const config: Record<string, string> = {};
     settings.forEach((s) => {
-      config[s.key] = s.value;
+      config[s.key] = isSensitiveSettingKey(s.key) ? maskSecret(s.value) : s.value;
     });
     res.json(config);
   } catch (err) {
