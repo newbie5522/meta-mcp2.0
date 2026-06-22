@@ -76,7 +76,8 @@ function hasStoreToken(store: any): boolean {
 }
 
 function isProductionSyncableStore(store: any): boolean {
-  return store?.mode === "production" && hasStoreToken(store);
+  const isProd = store?.mode === "production" || store?.mode === "生产";
+  return isProd && hasStoreToken(store);
 }
 
 async function assertNoRunningTask(taskTypes: string[]) {
@@ -132,25 +133,20 @@ async function resolveSafeMetaTargets(input: {
     return accounts;
   }
 
-  const boundAccounts = await prisma.adAccount.findMany({
-    where: { storeId: { not: null } },
-    include: { store: true },
-    orderBy: { updatedAt: "desc" }
-  });
-
-  const boundIds = boundAccounts.map((account) => account.fb_account_id);
-  const activeAccounts = await prisma.adAccount.findMany({
+  // Sync all non-sandbox accounts in database
+  const targets = await prisma.adAccount.findMany({
     where: {
-      recentActivity90d: true,
-      fb_account_id: { notIn: boundIds }
+      OR: [
+        { storeId: null },
+        { store: { mode: { not: "sandbox" } } }
+      ]
     },
     include: { store: true },
     orderBy: { updatedAt: "desc" }
   });
 
-  const targets = [...boundAccounts, ...activeAccounts];
   if (targets.length === 0) {
-    const error: any = new Error("没有符合安全同步范围的广告账户。默认只同步已绑定店铺或最近 90 天活跃的账户。");
+    const error: any = new Error("没有符合安全同步范围的广告账户。");
     error.statusCode = 400;
     error.code = "NO_SYNC_TARGETS";
     throw error;
@@ -186,7 +182,9 @@ async function resolveSafeStoreTargets(input: { storeId?: string | number | null
   }
 
   const stores = await prisma.store.findMany({
-    where: { mode: "production" },
+    where: {
+      mode: { in: ["production", "生产"] }
+    },
     orderBy: { updatedAt: "desc" }
   });
   const targets = stores.filter(isProductionSyncableStore);

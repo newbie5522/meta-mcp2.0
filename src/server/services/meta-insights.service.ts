@@ -173,8 +173,8 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
     validAccounts = await prisma.adAccount.findMany({
       where: {
         OR: [
-          { recentActivity90d: true },
-          { storeId: { not: null } }
+          { storeId: null },
+          { store: { mode: { not: "sandbox" } } }
         ]
       },
       include: { store: true }

@@ -352,8 +352,8 @@ export class SyncCenter {
         const activeAccounts = await prisma.adAccount.findMany({
           where: {
             OR: [
-              { recentActivity90d: true },
-              { storeId: { not: null } }
+              { storeId: null },
+              { store: { mode: { not: "sandbox" } } }
             ]
           },
           include: { store: true }
