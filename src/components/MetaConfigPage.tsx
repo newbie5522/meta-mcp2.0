@@ -28,6 +28,8 @@ export function MetaConfigPage() {
   const [saving, setSaving] = useState(false);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [saveStep, setSaveStep] = useState<'idle' | 'saving' | 'testing' | 'pulling' | 'done'>('idle');
+  const isAutoDuringSaveRef = React.useRef(false);
 
   // Diagnostics and testing state
   const [testResult, setTestResult] = useState<any>(null);
@@ -99,6 +101,11 @@ export function MetaConfigPage() {
     setApiError(null);
     setLastSyncError(null);
 
+    const isAutoDuringSave = isAutoDuringSaveRef.current;
+    if (isAutoDuringSave) {
+      setSaveStep('testing');
+    }
+
     try {
       // Step 1: Run diagnostics first (triggers identity /me endpoint verification)
       const diagnostics = await testMetaToken().catch((e) => {
@@ -106,6 +113,9 @@ export function MetaConfigPage() {
         return null;
       });
 
+      if (isAutoDuringSave) {
+        setSaveStep('pulling');
+      }
 
       // Step 2: Grab the accounts list
       const res = await axios.get('/api/accounts/active-list');
@@ -120,14 +130,23 @@ export function MetaConfigPage() {
       } else {
         if (diagnostics) {
           if (diagnostics.apiAccessStatus !== "usable") {
-            setLastSyncError("Token identity check completed, but ad account API was limited. Account list follows /api/accounts/active-list.");
-            toast.warning("Token identity check completed, but account sync used active-list as the source.");
-          }
-          if (accountsList.length === 0) {
-            toast.warning("Token 验证成功，但在该 Meta 商务资产下未能拉取到可访问的广告账户，可能是权限限制或账户分配不足！");
+            const errorMsg = diagnostics.apiError?.message || "Token identity check completed, but ad account API was limited.";
+            setLastSyncError(errorMsg);
+            if (diagnostics.apiError) {
+              setApiError(diagnostics.apiError);
+            }
+            toast.warning(`Token 验证成功，但广告账户 API 访问受限: ${errorMsg}`);
+          } else if (accountsList.length === 0) {
+            toast.warning("Token 验证成功，但没有拉取到广告账户，请检查 BM 资产分配 and ads_read 权限。");
           } else {
-            toast.success(`成功拉取并注册了 ${accountsList.length} 个广告账户基础结构！`);
+            if (isAutoDuringSave) {
+              toast.success(`Meta Token 已保存，并成功拉取/注册 ${accountsList.length} 个广告账户。`);
+            } else {
+              toast.success(`成功拉取并注册了 ${accountsList.length} 个广告账户基础结构！`);
+            }
           }
+        } else {
+          toast.error("Token 验证或诊断失败，请检查网络和 API 权限状态。");
         }
       }
     } catch (err: any) {
@@ -149,6 +168,11 @@ export function MetaConfigPage() {
       setLastSyncError(errorMsg);
       toast.error(errorMsg);
     } finally {
+      if (isAutoDuringSave) {
+        setSaveStep('done');
+        setTimeout(() => setSaveStep('idle'), 2000);
+      }
+      isAutoDuringSaveRef.current = false;
       setLoadingAccounts(false);
     }
   };
@@ -169,18 +193,22 @@ export function MetaConfigPage() {
       return;
     }
     setSaving(true);
+    setSaveStep('saving');
     try {
       await axios.post("/api/settings", { key: "meta_token", value: tokenToSave });
       await axios.post("/api/settings", { key: "META_ACCESS_TOKEN", value: tokenToSave });
       await axios.post("/api/settings", { key: "META_TOKEN_UPDATED_AT", value: new Date().toISOString() });
-      toast.success("Meta API Token 保存成功，可以直接拉取和更新广告账户列表。");
+      toast.info("Meta Token 保存成功，正在自动验证并拉取广告账户...");
       setToken("");
       setMaskedToken(`${tokenToSave.slice(0, 4)}...${tokenToSave.slice(-4)}`);
       setHasSavedToken(true);
       setIsEditingToken(false);
+      isAutoDuringSaveRef.current = true;
+      await fetchAccountsAndTest();
     } catch (err: any) {
       const errMsg = err.response?.data?.details || err.response?.data?.error || err.message || "Save failed";
       toast.error(`Save failed: ${errMsg}`);
+      setSaveStep('idle');
     } finally {
       setSaving(false);
     }
@@ -239,10 +267,14 @@ export function MetaConfigPage() {
               {isEditingToken ? (
                 <Button
                   onClick={handleSaveToken}
-                  disabled={saving || !token}
+                  disabled={saving || saveStep !== 'idle' || !token}
                   className="px-6 h-10 bg-meta-blue hover:bg-meta-blue/90 text-white font-medium shadow-sm transition-all text-sm rounded-lg"
                 >
-                  {saving ? "保存中..." : "保存绑定"}
+                  {saveStep === 'saving' && "保存中..."}
+                  {saveStep === 'testing' && "验证中..."}
+                  {saveStep === 'pulling' && "拉取广告账户..."}
+                  {saveStep === 'done' && "完成"}
+                  {saveStep === 'idle' && "保存绑定"}
                 </Button>
               ) : (
                 <Button
