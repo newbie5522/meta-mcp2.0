@@ -24,10 +24,10 @@ function requireManualSyncEnabled(req, res, next) {
   return next();
 }
 
-const SAFE_META_ACCOUNT_LIMIT = 10;
-const SAFE_STORE_LIMIT = 10;
-const MAX_FRONTEND_META_DAYS = 30;
-const MAX_FRONTEND_STORE_DAYS = 90;
+const SAFE_META_ACCOUNT_LIMIT = 1000;
+const SAFE_STORE_LIMIT = 1000;
+const MAX_FRONTEND_META_DAYS = 3650;
+const MAX_FRONTEND_STORE_DAYS = 3650;
 
 function parseBoundedInt(value: any, fallback: number, min: number, max: number): number {
   const parsed = parseInt(String(value ?? ""), 10);
@@ -39,10 +39,10 @@ function daysForRange(startDate?: string | null, endDate?: string | null, fallba
   if (startDate && endDate) {
     const diff = dayjs(endDate).diff(dayjs(startDate), "day") + 1;
     if (Number.isFinite(diff) && diff > 0) {
-      return Math.max(1, Math.min(max, diff));
+      return diff;
     }
   }
-  return Math.max(1, Math.min(max, fallback));
+  return fallback;
 }
 
 function boundedDateRange(startDate: any, endDate: any, fallbackDays: number, maxDays: number) {
@@ -54,10 +54,6 @@ function boundedDateRange(startDate: any, endDate: any, fallbackDays: number, ma
     ? dayjs(String(startDate))
     : fallbackStart;
 
-  const maxStart = end.subtract(maxDays - 1, "day");
-  if (start.isBefore(maxStart)) {
-    start = maxStart;
-  }
   if (start.isAfter(end)) {
     start = fallbackStart;
   }
@@ -382,7 +378,17 @@ router.get("/sync/chains", async (req, res) => {
 router.post("/sync/trigger", async (req, res, next) => {
   const { taskType, storeId, accountId, accountIds, startDate, endDate, days, limit } = req.body;
 
-  if (!["sync_meta_insights", "sync_store_orders"].includes(taskType)) {
+  const validSafeTypes = [
+    "sync_meta_insights",
+    "sync_store_orders",
+    "sync_meta_structure",
+    "sync_meta_accounts",
+    "sync_meta_audience",
+    "run_ai_rule_monitor",
+    "rebuild_roas_summary"
+  ];
+
+  if (!validSafeTypes.includes(taskType)) {
     return next();
   }
 
@@ -447,62 +453,141 @@ router.post("/sync/trigger", async (req, res, next) => {
       });
     }
 
-    await assertNoRunningTask(["sync_store_orders"]);
-    const daysVal = parseBoundedInt(days, daysForRange(startDate, endDate, 30, MAX_FRONTEND_STORE_DAYS), 1, MAX_FRONTEND_STORE_DAYS);
-    const range = boundedDateRange(startDate, endDate, daysVal, MAX_FRONTEND_STORE_DAYS);
-    const targets = await resolveSafeStoreTargets({ storeId, limit });
-    let lastTaskId: string | null = null;
-    let recordsFetched = 0;
-    let recordsSaved = 0;
-    const taskIds: string[] = [];
+    if (taskType === "sync_store_orders") {
+      await assertNoRunningTask(["sync_store_orders"]);
+      const daysVal = parseBoundedInt(days, daysForRange(startDate, endDate, 30, MAX_FRONTEND_STORE_DAYS), 1, MAX_FRONTEND_STORE_DAYS);
+      const range = boundedDateRange(startDate, endDate, daysVal, MAX_FRONTEND_STORE_DAYS);
+      const targets = await resolveSafeStoreTargets({ storeId, limit });
+      let lastTaskId: string | null = null;
+      let recordsFetched = 0;
+      let recordsSaved = 0;
+      const taskIds: string[] = [];
 
-    for (const store of targets) {
-      const taskId = await SyncCenter.syncStoreOrders(
-        store.id,
-        chainId,
-        "frontend_safe_sync",
-        lastTaskId,
-        range.days,
-        range.startDate,
-        range.endDate
-      );
-      taskIds.push(taskId);
-      lastTaskId = taskId;
+      for (const store of targets) {
+        const taskId = await SyncCenter.syncStoreOrders(
+          store.id,
+          chainId,
+          "frontend_safe_sync",
+          lastTaskId,
+          range.days,
+          range.startDate,
+          range.endDate
+        );
+        taskIds.push(taskId);
+        lastTaskId = taskId;
 
-      const log = await prisma.syncLog.findUnique({ where: { id: taskId } });
-      recordsFetched += log?.recordsFetched || 0;
-      recordsSaved += log?.recordsSaved || 0;
+        const log = await prisma.syncLog.findUnique({ where: { id: taskId } });
+        recordsFetched += log?.recordsFetched || 0;
+        recordsSaved += log?.recordsSaved || 0;
+      }
+
+      const summaryDays = range.days;
+      const storeSummaryTaskId = await SyncCenter.rebuildStoreSummary(chainId, "frontend_safe_sync", lastTaskId, summaryDays);
+      await SyncCenter.rebuildDashboardSummary(chainId, "frontend_safe_sync", storeSummaryTaskId, summaryDays);
+
+      const status = recordsFetched === 0 && recordsSaved === 0 ? "NO_NEW_DATA" : "SUCCESS";
+      return res.json({
+        success: true,
+        status,
+        message: status === "NO_NEW_DATA"
+          ? `同步完成，但店铺 API 在当前日期范围没有返回新的订单数据。已检查 ${targets.length} 个可同步店铺。`
+          : `同步完成：已检查 ${targets.length} 个店铺，拉取 ${recordsFetched} 条订单记录，写入/更新 ${recordsSaved} 条订单事实。`,
+        taskChainId: chainId,
+        taskIds,
+        targetStores: targets.map((store) => ({
+          id: store.id,
+          name: store.name,
+          platform: store.platform,
+          mode: store.mode
+        })),
+        recordsFetched,
+        recordsSaved,
+        startDate: range.startDate,
+        endDate: range.endDate,
+        dataSourceExplain: {
+          inventorySource: "Store",
+          factSource: "Order",
+          executor: "SyncCenter.syncStoreOrders"
+        }
+      });
     }
 
-    const summaryDays = range.days;
-    const storeSummaryTaskId = await SyncCenter.rebuildStoreSummary(chainId, "frontend_safe_sync", lastTaskId, summaryDays);
-    await SyncCenter.rebuildDashboardSummary(chainId, "frontend_safe_sync", storeSummaryTaskId, summaryDays);
+    if (taskType === "sync_meta_structure") {
+      await assertNoRunningTask(["sync_meta_structure"]);
+      const taskId = await SyncCenter.syncMetaStructure(chainId, "frontend_safe_sync");
+      return res.json({
+        success: true,
+        message: "已启动并成功同步 Meta 创意结构拆解任务 (Campaign / AdSet / Ads)。",
+        taskChainId: chainId,
+        taskIds: [taskId]
+      });
+    }
 
-    const status = recordsFetched === 0 && recordsSaved === 0 ? "NO_NEW_DATA" : "SUCCESS";
-    return res.json({
-      success: true,
-      status,
-      message: status === "NO_NEW_DATA"
-        ? `同步完成，但店铺 API 在当前日期范围没有返回新的订单数据。已检查 ${targets.length} 个可同步店铺。`
-        : `同步完成：已检查 ${targets.length} 个店铺，拉取 ${recordsFetched} 条订单记录，写入/更新 ${recordsSaved} 条订单事实。`,
-      taskChainId: chainId,
-      taskIds,
-      targetStores: targets.map((store) => ({
-        id: store.id,
-        name: store.name,
-        platform: store.platform,
-        mode: store.mode
-      })),
-      recordsFetched,
-      recordsSaved,
-      startDate: range.startDate,
-      endDate: range.endDate,
-      dataSourceExplain: {
-        inventorySource: "Store",
-        factSource: "Order",
-        executor: "SyncCenter.syncStoreOrders"
+    if (taskType === "sync_meta_accounts") {
+      await assertNoRunningTask(["sync_meta_accounts"]);
+      const taskId = await SyncCenter.syncMetaAccounts(chainId, "frontend_safe_sync");
+      await SyncCenter.syncMetaActivity(chainId, "frontend_safe_sync", taskId);
+      return res.json({
+        success: true,
+        message: "成功同步并更新 Meta 客户及有效广告账户状态 (AdAccount)。",
+        taskChainId: chainId,
+        taskIds: [taskId]
+      });
+    }
+
+    if (taskType === "sync_meta_audience") {
+      await assertNoRunningTask(["sync_meta_audience"]);
+      const daysVal = parseBoundedInt(days, daysForRange(startDate, endDate, 7, MAX_FRONTEND_META_DAYS), 1, MAX_FRONTEND_META_DAYS);
+      const range = boundedDateRange(startDate, endDate, daysVal, MAX_FRONTEND_META_DAYS);
+      const targets = await resolveSafeMetaTargets({ accountId, accountIds, limit });
+      let lastTaskId: string | null = null;
+      const taskIds: string[] = [];
+
+      for (const account of targets) {
+        const taskId = await SyncCenter.syncMetaAudience(
+          chainId,
+          "frontend_safe_sync",
+          lastTaskId,
+          range.days,
+          account.fb_account_id,
+          range.startDate,
+          range.endDate
+        );
+        taskIds.push(taskId);
+        lastTaskId = taskId;
       }
-    });
+      return res.json({
+        success: true,
+        message: `成功完成受众与渠道细分数据同步（已处理 ${targets.length} 个账户，期间: ${range.startDate} 到 ${range.endDate}）。`,
+        taskChainId: chainId,
+        taskIds
+      });
+    }
+
+    if (taskType === "run_ai_rule_monitor") {
+      await assertNoRunningTask(["run_ai_rule_monitor"]);
+      const taskId = await SyncCenter.runAiRuleMonitor(chainId, "frontend_safe_sync");
+      return res.json({
+        success: true,
+        message: "AI风控系统体检扫描运行完毕，已重新计算并更新各账户的诊断卡片。",
+        taskChainId: chainId,
+        taskIds: [taskId]
+      });
+    }
+
+    if (taskType === "rebuild_roas_summary") {
+      await assertNoRunningTask(["rebuild_roas_summary"]);
+      const summaryDays = days ? parseInt(days, 10) : 90;
+      const taskId = await SyncCenter.rebuildRoasSummary(chainId, "frontend_safe_sync", null, summaryDays);
+      await SyncCenter.rebuildDashboardSummary(chainId, "frontend_safe_sync", taskId, summaryDays);
+      return res.json({
+        success: true,
+        message: `销售额/开销 ROAS 映射汇总表重新对准成功（对齐窗口: 过去 ${summaryDays} 天）。`,
+        taskChainId: chainId,
+        taskIds: [taskId]
+      });
+    }
+
   } catch (error: any) {
     const statusCode = error?.statusCode || 500;
     return res.status(statusCode).json({
