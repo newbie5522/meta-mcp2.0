@@ -6,20 +6,12 @@ import {
   Search, 
   ArrowUpDown, 
   TrendingUp, 
-  ShoppingBag, 
-  Coins, 
-  Layers,
+  ShoppingBag,
+  Coins,
   RefreshCw,
   AlertTriangle,
-  CheckCircle,
-  HelpCircle,
   Sparkles,
-  ChevronRight,
-  Database,
-  ArrowRight,
-  FileSpreadsheet,
   Coins as SpendIcon,
-  Smile,
   Clock,
   ExternalLink,
   MessageSquare
@@ -140,11 +132,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [sortField, setSortField] = useState<SortField>("totalSales");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
-
-  // Spinners / action loadings
-  const [syncAllLoading, setSyncAllLoading] = useState<boolean>(false);
-  const [rebuildLoading, setRebuildLoading] = useState<boolean>(false);
-  const [syncRowLoading, setSyncRowLoading] = useState<Record<number, boolean>>({});
+  const [unmappedExpanded, setUnmappedExpanded] = useState<boolean>(false);
 
   // Reconciliation state
   const [selectedStoreForRecon, setSelectedStoreForRecon] = useState<StoreMetric | null>(null);
@@ -212,114 +200,6 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
       setReconData(null);
     } finally {
       setReconLoading(false);
-    }
-  };
-
-  // 3. Sync Single Store Orders Action
-  const handleSingleStoreSync = async (store: StoreMetric) => {
-    setSyncRowLoading(prev => ({ ...prev, [store.id]: true }));
-    const toastId = toast.loading(`正在触发 [${store.name}] DataCenter 账目刷新和核算...`);
-    try {
-      const response = await axios.post("/api/sync/data-center/refresh-store", {
-        storeId: store.id,
-        startDate: formattedStartDate,
-        endDate: formattedEndDate
-      });
-      
-      toast.success(
-        `[${store.name}] 账目已刷新：${response.data.orderCount || 0} 单，收入 $${Number(response.data.grossSales || 0).toFixed(2)}`,
-        { id: toastId }
-      );
-      
-      // Refresh data
-      await fetchStoresData(true);
-      // Reload comparison metrics if it was selected
-      if (selectedStoreForRecon?.id === store.id) {
-        await loadReconciliation(store);
-      }
-    } catch (error: any) {
-      console.error("Failed to sync store orders:", error);
-      toast.error(`同步失败: ${getApiErrorMessage(error)}`, { id: toastId });
-    } finally {
-      setSyncRowLoading(prev => ({ ...prev, [store.id]: false }));
-    }
-  };
-
-  // 4. Sync All Stores Orders Action
-  const handleSyncAllStores = async () => {
-    setSyncAllLoading(true);
-    const toastId = toast.loading("开始刷新全局店铺 DataCenter 主链记账快照...");
-    try {
-      const response = await axios.get("/api/data-center/stores", {
-        params: {
-          startDate: formattedStartDate,
-          endDate: formattedEndDate
-        }
-      });
-      const storesToRefresh = response.data?.stores || [];
-      if (storesToRefresh.length === 0) {
-        toast.error("未获取到店铺库存，请检查 Store 配置接口。", { id: toastId });
-        setSyncAllLoading(false);
-        return;
-      }
-
-      const promises = storesToRefresh.map((store: any) => 
-        axios.post("/api/sync/data-center/refresh-store", {
-          storeId: store.id || store.storeId,
-          startDate: formattedStartDate,
-          endDate: formattedEndDate
-        })
-      );
-      await Promise.all(promises);
-      toast.success("所有店铺 DataCenter 账目快照已刷新成功！", { id: toastId });
-      await fetchStoresData();
-      if (selectedStoreForRecon) {
-        await loadReconciliation(selectedStoreForRecon);
-      }
-    } catch (error: any) {
-      console.error("Failed to sync all stores:", error);
-      toast.error(`全量同步失败: ${getApiErrorMessage(error)}`, { id: toastId });
-    } finally {
-      setSyncAllLoading(false);
-    }
-  };
-
-  // 5. Rebuild All Stores Aggregation Summaries
-  const handleRebuildStoreSummary = async () => {
-    setRebuildLoading(true);
-    const toastId = toast.loading("正在全面清除并重构 DataCenter 主链路每日账目记账快照...");
-    try {
-      const response = await axios.get("/api/data-center/stores", {
-        params: {
-          startDate: formattedStartDate,
-          endDate: formattedEndDate
-        }
-      });
-      const storesToRefresh = response.data?.stores || [];
-      if (storesToRefresh.length === 0) {
-        toast.error("未获取到店铺库存，请检查 Store 配置接口。", { id: toastId });
-        setRebuildLoading(false);
-        return;
-      }
-
-      const promises = storesToRefresh.map((store: any) => 
-        axios.post("/api/sync/data-center/refresh-store", {
-          storeId: store.id || store.storeId,
-          startDate: formattedStartDate,
-          endDate: formattedEndDate
-        })
-      );
-      await Promise.all(promises);
-      toast.success("DataCenter 店铺归档主链账目快照已全部重构重组成功！", { id: toastId });
-      await fetchStoresData();
-      if (selectedStoreForRecon) {
-        await loadReconciliation(selectedStoreForRecon);
-      }
-    } catch (error: any) {
-      console.error("Rebuild stores summary error:", error);
-      toast.error(`重构快照失败: ${getApiErrorMessage(error)}`, { id: toastId });
-    } finally {
-      setRebuildLoading(false);
     }
   };
 
@@ -425,30 +305,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
         <div className="flex items-center gap-1.5 min-w-0">
           <StoreIcon className="w-5 h-5 text-indigo-500 shrink-0" />
           <h3 className="font-bold text-slate-900 truncate">店铺经营数据一览</h3>
-          <span className="text-xs text-slate-500 hidden md:block">| 当前统计期间：{formattedStartDate} 至 {formattedEndDate}</span>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-          <Button 
-            disabled={syncAllLoading || loading}
-            onClick={handleSyncAllStores}
-            variant="outline" 
-            size="sm"
-            className="h-9 px-3 text-xs bg-indigo-50/50 hover:bg-indigo-50 text-indigo-700 border-indigo-200/60"
-          >
-            <RefreshCw className={cn("w-3.5 h-3.5 mr-1.5", syncAllLoading && "animate-spin")} />
-            同步全局店铺订单
-          </Button>
-
-          <Button 
-            disabled={rebuildLoading || loading}
-            onClick={handleRebuildStoreSummary}
-            variant="outline" 
-            size="sm"
-            className="h-9 px-3 text-xs border-amber-200/60 bg-amber-50/30 hover:bg-amber-50 text-amber-700"
-          >
-            <Database className={cn("w-3.5 h-3.5 mr-1.5", rebuildLoading && "animate-spin")} />
-            重建店铺归档汇总
-          </Button>
+          <span className="text-xs text-slate-500">| 当前统计期间：{formattedStartDate} 至 {formattedEndDate}</span>
         </div>
       </div>
 
@@ -548,34 +405,45 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
       )}
 
       {unmappedSummary.count > 0 && unmappedSummary.spend > 0 && !loading && (
-        <div className="flex items-start gap-3 p-4 bg-rose-50 border border-rose-200 rounded-xl text-slate-800 text-xs shadow-sm mb-4">
-          <AlertTriangle className="w-4.5 h-4.5 text-rose-500 shrink-0 mt-0.5" />
-          <div className="space-y-1.5 text-left w-full">
-            <h5 className="font-bold text-rose-900 flex items-center justify-between sm:justify-start gap-2">
-              <span>⚠️ 漏油风险审计：发现未映射（未绑定）但有消耗的 Meta 广告账户</span>
-              <span className="px-2 py-0.5 bg-rose-100 text-rose-800 text-[9px] rounded-md font-bold uppercase tracking-wider">归因不完整</span>
-            </h5>
-            <p className="text-rose-700 leading-relaxed">
-              当前有 <strong className="font-mono text-red-700">{unmappedSummary.count}</strong> 个未映射广告账户产生了花费，总计额外消耗 <strong className="font-mono text-rose-900 font-bold">${unmappedSummary.spend.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>。这部分花费<strong>未计入任何店铺的真实 ROAS 计算中</strong>，导致整店 ROAS 归因判断不完整！
-            </p>
-            {unmappedSummary.accounts && unmappedSummary.accounts.length > 0 && (
-              <div className="mt-2 bg-white/70 border border-rose-150 rounded-lg p-3 max-h-48 overflow-y-auto">
-                <p className="text-rose-900 font-bold mb-1.5 text-[11px]">未绑定的有消耗 Meta 广告账户明细：</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                  {unmappedSummary.accounts.map((acc) => (
-                    <div key={acc.accountId} className="bg-white/90 border border-slate-100 rounded p-1.5 px-2 flex justify-between items-center text-[11px] shadow-xs">
-                      <span className="text-slate-700 font-medium truncate max-w-[140px] md:max-w-[180px]" title={acc.name}>
-                        {acc.name}
-                      </span>
-                      <span className="text-rose-600 font-mono font-bold shrink-0">
-                        ${acc.spend.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+        <div className="p-3 bg-rose-50 border border-rose-150 rounded-xl text-slate-800 text-xs shadow-sm mb-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
+              <span className="font-medium text-rose-900">
+                未绑定消耗：{unmappedSummary.count} 个账户，${unmappedSummary.spend.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            <button 
+              onClick={() => setUnmappedExpanded(!unmappedExpanded)}
+              className="text-[11px] text-rose-700 hover:text-rose-900 underline font-semibold cursor-pointer"
+            >
+              {unmappedExpanded ? "折叠明细" : "展开明细"}
+            </button>
           </div>
+          {unmappedExpanded && unmappedSummary.accounts && unmappedSummary.accounts.length > 0 && (
+            <div className="mt-2 bg-white/80 border border-rose-100 rounded-lg p-2.5 overflow-x-auto">
+              <table className="w-full text-left border-collapse text-[11px]">
+                <thead>
+                  <tr className="border-b border-rose-100 text-slate-500 font-semibold">
+                    <th className="py-1 px-2">账户名称 (Account Name)</th>
+                    <th className="py-1 px-2">账户 ID (Account ID)</th>
+                    <th className="py-1 px-2 text-right">消耗 (Spend)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-rose-50">
+                  {unmappedSummary.accounts.map((acc) => (
+                    <tr key={acc.accountId} className="hover:bg-rose-50/50">
+                      <td className="py-1 px-2 text-slate-700 font-medium">{acc.name}</td>
+                      <td className="py-1 px-2 font-mono text-slate-500">{acc.accountId}</td>
+                      <td className="py-1 px-2 text-right font-mono text-rose-600 font-bold">
+                        ${acc.spend.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
@@ -606,10 +474,6 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <div className="px-5 py-2.5 bg-slate-50/50 border-b border-slate-100 text-[11px] text-slate-500 flex items-center gap-2">
-              <span className="p-0.5 px-1 bg-indigo-100 text-indigo-700 rounded text-[9.5px] font-bold">对账提示</span>
-              <span>系统已自动对齐 **2026-06-21** 共 17 笔成交订单。销售额采用 **商品实收净额口径**（商品原价扣减全部优惠与折扣，不含运费），实收 **$713.77** 对应 Shopline 后台含运销售额约 **$715.78** 极小差异。</span>
-            </div>
             <Table className="text-[12.5px] whitespace-nowrap">
               <TableHeader className="bg-slate-50/70 select-none">
                 <TableRow className="border-b border-slate-100">
@@ -619,7 +483,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
                       <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
                     </div>
                   </TableHead>
-                  <TableHead className="font-semibold py-3 text-slate-600">平台 / 域名 / 时区</TableHead>
+                  <TableHead className="font-semibold py-3 text-slate-600">平台 / 域名</TableHead>
                   <TableHead onClick={() => handleSort("accountsCount")} className="font-semibold text-center py-3 text-slate-600 cursor-pointer hover:bg-slate-100/50 transition-colors">
                     <div className="flex items-center justify-center gap-1">
                       绑定账号数
@@ -628,36 +492,36 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
                   </TableHead>
                   <TableHead onClick={() => handleSort("ordersCount")} className="font-semibold text-right py-3 text-slate-600 cursor-pointer hover:bg-slate-100/50 transition-colors">
                     <div className="flex items-center justify-end gap-1">
-                      抓取订单数
+                      订单
                       <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
                     </div>
                   </TableHead>
                   <TableHead onClick={() => handleSort("totalSales")} className="font-semibold text-right py-3 text-slate-600 cursor-pointer hover:bg-slate-100/50 transition-colors">
                     <div className="flex items-center justify-end gap-1">
-                      真实销售额
+                      销售额
                       <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
                     </div>
                   </TableHead>
                   <TableHead onClick={() => handleSort("avgOrderValue")} className="font-semibold text-right py-3 text-slate-600 cursor-pointer hover:bg-slate-100/50 transition-colors">
                     <div className="flex items-center justify-end gap-1">
-                      客单价 AOV
+                      AOV
                       <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
                     </div>
                   </TableHead>
                   <TableHead onClick={() => handleSort("adSpend")} className="font-semibold text-right py-3 text-slate-600 cursor-pointer hover:bg-slate-100/50 transition-colors">
                     <div className="flex items-center justify-end gap-1">
-                      绑定账户开销
+                      广告花费
                       <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
                     </div>
                   </TableHead>
                   <TableHead onClick={() => handleSort("roas")} className="font-semibold text-right py-3 px-5 text-slate-600 cursor-pointer hover:bg-slate-100/50 transition-colors">
                     <div className="flex items-center justify-end gap-1">
-                      投流 ROAS
+                      ROAS
                       <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
                     </div>
                   </TableHead>
-                  <TableHead className="font-semibold text-center py-3 px-5 text-slate-600">最新订单同步时间 / 状态</TableHead>
-                  <TableHead className="font-semibold text-right py-3 pr-5 text-slate-600">配置操作</TableHead>
+                  <TableHead className="font-semibold text-center py-3 px-5 text-slate-600">更新时间</TableHead>
+                  <TableHead className="font-semibold text-right py-3 pr-5 text-slate-600">操作</TableHead>
                 </TableRow>
               </TableHeader>
               
@@ -691,7 +555,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
                             </div>
                           </TableCell>
 
-                          {/* 平台域名时区 */}
+                          {/* 平台域名 */}
                           <TableCell className="py-3 text-slate-500 text-xs">
                             <div className="space-y-0.5 max-w-[170px] truncate">
                               <p className="font-mono text-slate-800 text-[11px] font-bold">
@@ -700,9 +564,6 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
                               <p className="truncate text-[10.5px] text-indigo-500 font-mono flex items-center">
                                 {store.domain || "—"}
                                 {store.domain && <ExternalLink className="w-2.5 h-2.5 ml-0.5 inline opacity-60" />}
-                              </p>
-                              <p className="text-[10px] text-slate-400 font-serif">
-                                TimeZone: {store.timezone}
                               </p>
                             </div>
                           </TableCell>
@@ -722,7 +583,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
                             {store.hasOrders ? (
                               store.ordersCount.toLocaleString()
                             ) : (
-                              <span className="text-[11px] text-slate-400 font-normal">无订单 / 尚未同步</span>
+                              <span className="text-[11px] text-slate-400 font-normal">无订单</span>
                             )}
                           </TableCell>
 
@@ -731,7 +592,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
                             {store.hasOrders ? (
                               `$${store.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                             ) : (
-                              <span className="text-[11px] text-slate-400 font-normal italic">尚未同步或无订单</span>
+                              <span className="text-[11px] text-slate-400 font-normal italic">—</span>
                             )}
                           </TableCell>
 
@@ -749,26 +610,26 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
                             {store.adSpend > 0 ? (
                               `$${store.adSpend.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
                             ) : (
-                              <span className="text-[11px] text-slate-400 font-normal">无开销 / 无消耗</span>
+                              <span className="text-[11px] text-slate-400 font-normal">—</span>
                             )}
                           </TableCell>
 
-                          {/* ROAS 分别渲染无绑定、无订单、异常和真实ROAS三种场景，彻底拒绝虚假0.00 ROI */}
+                          {/* ROAS 分别渲染无绑定、无订单、异常和真实ROAS */}
                           <TableCell className="text-right py-3 px-5">
                             {(!store.hasMappedAccounts) ? (
                               <span className="inline-block px-1.5 py-0.5 rounded text-[9.5px] bg-amber-50/50 text-amber-700 border border-amber-100/50">
-                                未绑定广告账户无法计算
+                                未绑定
                               </span>
                             ) : (!store.hasOrders && store.adSpend > 0) ? (
                               <span className="inline-block px-1.5 py-0.5 rounded text-[9.5px] bg-slate-50 text-slate-500 border border-slate-100">
-                                无订单暂不显示ROI
+                                —
                               </span>
                             ) : store.adSpend === 0 && store.totalSales > 0 ? (
                               <span className="inline-block px-1.5 py-0.5 rounded text-[9.5px] bg-emerald-50 text-emerald-700 border border-emerald-100">
-                                纯非投流出单(非付费)
+                                自然订单
                               </span>
                             ) : store.adSpend === 0 && store.totalSales === 0 ? (
-                              <span className="text-slate-400 text-[11px]">无投流无购买</span>
+                              <span className="text-slate-400 text-[11px]">—</span>
                             ) : (
                               <span className={cn(
                                 "inline-block px-2 py-0.5 rounded font-extrabold text-[12px] font-mono",
@@ -805,17 +666,6 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
                           {/* 配置操作按纽 */}
                           <TableCell className="text-right py-3 pr-5">
                             <div className="flex items-center justify-end gap-1.5">
-                              <Button 
-                                variant="outline" 
-                                size="xs"
-                                disabled={syncRowLoading[store.id]}
-                                onClick={() => handleSingleStoreSync(store)}
-                                className="h-7 px-2 text-[11px] bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
-                              >
-                                <RefreshCw className={cn("w-3 h-3 mr-1", syncRowLoading[store.id] && "animate-spin")} />
-                                同步订单
-                              </Button>
-
                               <Button 
                                 variant="outline" 
                                 size="xs"
@@ -893,13 +743,13 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
         </Card>
       )}
 
-      {/* 🔍 Row 5: Store Order Reconciliation Comparison Panel (订单校对面板) */}
-      <Card className="border border-slate-200 shadow-sm bg-white rounded-xl overflow-hidden">
-        <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Database className="w-4.5 h-4.5 text-slate-600" />
-            <h4 className="font-bold text-slate-900 text-[13.5px]">API 抓取与保存订单数据对账面板</h4>
-          </div>
+  {/* 🔍 Row 5: Store Order Reconciliation Comparison Panel (订单校对面板) */}
+  <Card className="border border-slate-200 shadow-sm bg-white rounded-xl overflow-hidden">
+    <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+      <div className="flex items-center gap-2">
+        <StoreIcon className="w-4.5 h-4.5 text-slate-600" />
+        <h4 className="font-bold text-slate-900 text-[13.5px]">API 抓取与保存订单数据对账面板</h4>
+      </div>
           {selectedStoreForRecon ? (
             <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded">
               正在校对的店铺：{selectedStoreForRecon.name}
@@ -1034,7 +884,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
                           "p-1.5 rounded-full",
                           reconData.syncFailedCount === 0 ? "bg-slate-100 text-emerald-600" : "bg-amber-50 text-amber-600"
                         )}>
-                          <CheckCircle className="w-4 h-4" />
+                          <Clock className="w-4 h-4" />
                         </div>
                         <div className="space-y-1 text-xs">
                           <p className="font-bold text-slate-900">落库数据状态良好</p>
@@ -1047,7 +897,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
 
                     <div className="flex items-start gap-3">
                       <div className="p-1.5 rounded-full bg-slate-100 text-slate-500">
-                        <Smile className="w-4 h-4" />
+                        <StoreIcon className="w-4 h-4" />
                       </div>
                       <div className="space-y-1 text-xs">
                         <p className="font-bold text-slate-900">时区校准与截断</p>

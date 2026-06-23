@@ -16,6 +16,7 @@ import { attributePurchases } from "./server/services/attribution.service.js";
 import { getMetaToken, evaluateActivityStatus, syncSingleAccountAdData } from "./server/utils.js";
 import { SyncCenter } from "./server/services/sync-center.service.js";
 import { businessYesterdayString } from "./server/utils/business-time.js";
+import { startDataCenterAutoRefreshLoop } from "./server/services/data-center-auto-refresh.service.js";
 
 
 
@@ -316,6 +317,12 @@ async function startServer() {
         console.log(`📍 Binding: http://0.0.0.0:${PORT}`);
 
         // --- 启动后台静默同步 ---
+        try {
+          startDataCenterAutoRefreshLoop();
+        } catch (err) {
+          console.error("Failed to start data center auto refresh loop:", err);
+        }
+
         // runBackgroundSync(); // Disable immediate run to prevent startup crashes
         if (syncSchedulerEnabled) {
           setInterval(runBackgroundSync, 2 * 60 * 60 * 1000);

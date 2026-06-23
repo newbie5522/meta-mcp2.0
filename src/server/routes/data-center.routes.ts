@@ -15,6 +15,7 @@ import { getAccountMappingFacts, resolveAccountStoreBinding } from "../services/
 import { runDataPipelineAudit } from "../services/data-pipeline-audit.service.js";
 import { runDataCenterAudit } from "../services/data-center-audit.service.js";
 import { runDataCenterRebuild } from "../services/data-center-rebuild.service.js";
+import { ensureDataCenterFreshness, getFreshnessMeta } from "../services/data-center-auto-refresh.service.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -884,6 +885,24 @@ router.get("/stores", async (req, res) => {
   const storeId = req.query.storeId ? Number(req.query.storeId) : null;
 
   try {
+    const ledgerCount = await prisma.dataCenterStoreDaily.count({
+      where: {
+        date: {
+          gte: startDate,
+          lte: endDate
+        }
+      }
+    });
+    const freshnessMode = ledgerCount === 0 ? "blocking_if_missing" : "background";
+
+    await ensureDataCenterFreshness({
+      reason: "api_request",
+      requestedStartDate: startDate,
+      requestedEndDate: endDate,
+      storeId,
+      mode: freshnessMode
+    }).catch(err => console.warn("[DataCenterAutoRefresh] stores freshness failed:", err));
+
     const where: any = {
       date: {
         gte: startDate,
@@ -1027,6 +1046,8 @@ router.get("/stores", async (req, res) => {
       spend: Number(spend.toFixed(2))
     })).sort((a, b) => b.spend - a.spend);
 
+    const freshness = await getFreshnessMeta();
+
     return res.json({
       source: "DataCenterStoreDaily",
       mode: "DATACENTER_LEDGER",
@@ -1046,7 +1067,8 @@ router.get("/stores", async (req, res) => {
         status: rows.length > 0 ? "OK" : "EMPTY",
         message: rows.length > 0 ? "所有数据来自 DataCenter Store Daily 账目表。" : "此日期范围内暂无 DataCenter 账目记录。",
         source: "DataCenterStoreDaily"
-      }
+      },
+      freshness
     });
   } catch (error: any) {
     console.error("[DataCenter] Stores API error:", error);
@@ -1223,6 +1245,26 @@ router.get("/accounts-performance", async (req, res) => {
   const storeIdParam = req.query.storeId ? String(req.query.storeId) : "all";
 
   try {
+    const ledgerCount = await prisma.dataCenterMetaAccountDaily.count({
+      where: {
+        date: {
+          gte: startDate,
+          lte: endDate
+        }
+      }
+    });
+    const freshnessMode = ledgerCount === 0 ? "blocking_if_missing" : "background";
+
+    const storeIdNum = storeIdParam !== "all" && storeIdParam !== "undefined" && storeIdParam !== "null" ? Number(storeIdParam) : null;
+
+    await ensureDataCenterFreshness({
+      reason: "api_request",
+      requestedStartDate: startDate,
+      requestedEndDate: endDate,
+      storeId: storeIdNum,
+      mode: freshnessMode
+    }).catch(err => console.warn("[DataCenterAutoRefresh] accounts freshness failed:", err));
+
     const where: any = {
       date: {
         gte: startDate,
@@ -1339,6 +1381,8 @@ router.get("/accounts-performance", async (req, res) => {
     const unboundSpendAccounts = results.filter(r => !r.isBound && r.spend > 0).length;
     const unboundSpendRate = totalSpend > 0 ? unboundSpend / totalSpend : 0;
 
+    const freshness = await getFreshnessMeta();
+
     return res.json({
       success: true,
       source: "DataCenterMetaAccountDaily",
@@ -1389,7 +1433,8 @@ router.get("/accounts-performance", async (req, res) => {
         inventorySource: "DataCenterMetaAccountDaily",
         legacySource: "None",
         legacyUsed: false
-      }
+      },
+      freshness
     });
 
     return; // Fast return to skip legacy duplicate code below safely
@@ -2129,7 +2174,12 @@ router.get("/audit", async (req, res) => {
       accountId: accountId ? String(accountId) : undefined
     });
 
-    res.json(auditResult);
+    const freshness = await getFreshnessMeta();
+
+    res.json({
+      ...auditResult,
+      freshness
+    });
   } catch (err: any) {
     res.status(500).json({ error: "Data Center Audit failed", details: err.message });
   }
