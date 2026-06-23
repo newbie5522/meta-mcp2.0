@@ -15,6 +15,7 @@
     "smoke:config": "tsx src/server/scripts/smoke-config-contract.ts",
     "smoke:data": "tsx src/server/scripts/smoke-data-contract.ts",
     "audit:live-data-flow": "tsx src/server/scripts/audit-live-data-flow.ts",
+    "audit:cleanup": "tsx src/server/scripts/audit-cleanup-candidates.ts",
     "rebuild:data-pipeline": "tsx src/server/scripts/rebuild-data-pipeline.ts",
     "trace:meta-api-read": "tsx src/server/scripts/trace-meta-api-read.ts",
     "trace:store-api-read": "tsx src/server/scripts/trace-store-api-read.ts",

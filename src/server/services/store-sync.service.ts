@@ -329,6 +329,7 @@ export async function syncStoreData(startDate: string, endDate: string, storeIde
         startDate,
         endDate,
         timezone: normalizedTimezone,
+        storeName: store.name || "",
         baseline
       });
 

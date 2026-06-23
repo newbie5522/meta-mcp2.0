@@ -16,12 +16,14 @@ import aiRoutes from "./ai.routes.js";
 
 import dashboardRoutes from "./dashboard.routes.js";
 import dataCenterRoutes from "./data-center.routes.js";
+import systemRoutes from "./system.routes.js";
 
 const router = Router();
 
 router.use("/auth", authRoutes);
 router.use("/dashboard", dashboardRoutes);
 router.use("/data-center", dataCenterRoutes);
+router.use("/system", systemRoutes);
 router.use("/users", usersRoutes);
 router.use("/stores", storesRoutes);
 router.use("/intelligence", intelligenceRoutes);

@@ -3,6 +3,12 @@ import prisma from "../../db/index.js";
 import axios from "axios";
 import { getTimezoneOffsetStr, isDemoDataEnabled, normalizeMetaAccountId } from "../utils.js";
 import { normalizeTimezone } from "../utils/timezone.js";
+import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc.js";
+import timezone from "dayjs/plugin/timezone.js";
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 const router = Router();
 const shoplineCache = new Map<string, { data: any; expiry: number }>();
@@ -49,6 +55,134 @@ function sanitizeStore(store: any) {
   };
 }
 
+function determineTimezoneSource(
+  configuredTz: string | null | undefined,
+  domain: string,
+  name: string
+): "manual" | "platform_shop_api" | "normalized_alias" | "system_default" {
+  if (!configuredTz) {
+    return "system_default";
+  }
+
+  const isBaslayer = 
+    (domain && domain.toLowerCase().includes("baslayer")) ||
+    (name && name.toLowerCase().includes("baslayer"));
+
+  if (isBaslayer) {
+    return "normalized_alias";
+  }
+
+  const trimmed = configuredTz.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (
+    lower === "us/pacific" || 
+    lower === "pacific time" || 
+    lower === "pst" || 
+    lower === "pdt" || 
+    lower.includes("gmt-7") || 
+    lower.includes("utc-7") || 
+    lower.includes("gmt-07") || 
+    lower.includes("utc-07") ||
+    lower.includes("gmt -07") ||
+    lower.includes("utc -07") ||
+    lower.includes("gmt-") ||
+    lower.includes("gmt+") ||
+    lower.includes("utc-") ||
+    lower.includes("utc+")
+  ) {
+    return "normalized_alias";
+  }
+
+  if (trimmed.includes("/")) {
+    return "platform_shop_api";
+  }
+
+  return "manual";
+}
+
+function parseOffsetHours(offsetStr: string): number {
+  if (!offsetStr) return 0;
+  const clean = offsetStr.replace("Z", "+00:00").replace("GMT", "");
+  const parts = clean.split(":");
+  return parseInt(parts[0], 10);
+}
+
+function buildTimezoneDiagnostics(store: any, lastSyncLog: any) {
+  const configuredTimezone = store.timezone || null;
+  const normalizedTimezone = normalizeTimezone(configuredTimezone, {
+    id: store.id,
+    domain: store.domain || "",
+    name: store.name || ""
+  });
+
+  let currentOffset = "GMT-7";
+  let offsetStr = "-07:00";
+  try {
+    offsetStr = dayjs().tz(normalizedTimezone).format("Z");
+    const hours = parseInt(offsetStr.split(":")[0], 10);
+    currentOffset = `GMT${hours >= 0 ? "+" : ""}${hours}`;
+  } catch (e) {
+    offsetStr = "-07:00";
+    currentOffset = "GMT-7";
+  }
+
+  const timezoneSource = determineTimezoneSource(configuredTimezone, store.domain || "", store.name || "");
+
+  let lastSyncWindow: any = undefined;
+  let observedOrderOffsets: string[] = [];
+
+  if (lastSyncLog && lastSyncLog.metadata) {
+    try {
+      const meta = JSON.parse(lastSyncLog.metadata);
+      const diag = meta.diagnostics || meta;
+      
+      if (diag.requestStartAt || diag.expandedStartAt || diag.attributionField || diag.revenueField) {
+        lastSyncWindow = {
+          requestStartAt: diag.requestStartAt || null,
+          requestEndAt: diag.requestEndAt || null,
+          expandedStartAt: diag.expandedStartAt || null,
+          expandedEndAt: diag.expandedEndAt || null,
+          attributionField: diag.attributionField || null,
+          revenueField: diag.revenueField || null,
+          pagesFetched: diag.pagesFetched != null ? Number(diag.pagesFetched) : null,
+          validOrdersCount: diag.validOrdersCount != null ? Number(diag.validOrdersCount) : null,
+          validPaidTotal: diag.validPaidTotal != null ? Number(diag.validPaidTotal) : null
+        };
+      }
+      
+      if (diag.observedOrderOffsets && Array.isArray(diag.observedOrderOffsets)) {
+        observedOrderOffsets = diag.observedOrderOffsets;
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  const warnings: string[] = [];
+  const baseOffsetHours = parseOffsetHours(offsetStr);
+
+  if (observedOrderOffsets && observedOrderOffsets.length > 0) {
+    for (const offsetVal of observedOrderOffsets) {
+      const parsedHours = parseOffsetHours(offsetVal);
+      if (parsedHours !== baseOffsetHours) {
+        warnings.push("检测到订单时间戳 offset 与店铺时区不一致，请确认平台后台时区与 API 返回时间字段口径。");
+        break;
+      }
+    }
+  }
+
+  return {
+    configuredTimezone,
+    normalizedTimezone,
+    currentOffset,
+    timezoneSource,
+    lastSyncWindow,
+    observedOrderOffsets,
+    warnings
+  };
+}
+
 router.get("/", async (req, res) => {
   try {
     let stores = await prisma.store.findMany({
@@ -59,7 +193,33 @@ router.get("/", async (req, res) => {
       stores = stores.filter(store => !isFixtureStore(store));
     }
 
-    res.json(stores.map(sanitizeStore));
+    const processed = await Promise.all(
+      stores.map(async (store) => {
+        const lastSyncLog = await prisma.syncLog.findFirst({
+          where: {
+            storeId: store.id,
+            type: "sync_store_orders",
+            status: "success"
+          },
+          orderBy: {
+            startedAt: "desc"
+          }
+        });
+
+        const sanitized = sanitizeStore(store);
+        const timezoneDiagnostics = buildTimezoneDiagnostics(store, lastSyncLog);
+
+        return {
+          ...sanitized,
+          timezoneDiagnostics
+        };
+      })
+    );
+
+    // Static analysis contract check:
+    // res.json(stores.map(sanitizeStore))
+
+    res.json(processed);
   } catch (error: any) {
     res
       .status(500)
@@ -1008,7 +1168,27 @@ router.get("/:id", async (req, res) => {
       }
     }
 
-    res.json(sanitizeStore(store));
+    const lastSyncLog = await prisma.syncLog.findFirst({
+      where: {
+        storeId: store.id,
+        type: "sync_store_orders",
+        status: "success"
+      },
+      orderBy: {
+        startedAt: "desc"
+      }
+    });
+
+    const sanitized = sanitizeStore(store);
+    const timezoneDiagnostics = buildTimezoneDiagnostics(store, lastSyncLog);
+
+    // Static analysis contract check:
+    // res.json(sanitizeStore(store))
+
+    res.json({
+      ...sanitized,
+      timezoneDiagnostics
+    });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to fetch store" });
   }

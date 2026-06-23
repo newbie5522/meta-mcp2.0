@@ -15,6 +15,7 @@ import { aggregateData } from "./server/services/aggregation.service.js";
 import { attributePurchases } from "./server/services/attribution.service.js";
 import { getMetaToken, evaluateActivityStatus, syncSingleAccountAdData } from "./server/utils.js";
 import { SyncCenter } from "./server/services/sync-center.service.js";
+import { businessYesterdayString } from "./server/utils/business-time.js";
 
 
 
@@ -28,9 +29,7 @@ if (syncSchedulerEnabled) {
   cron.schedule("0 2 * * *", async () => {
     console.log("Triggering daily aggregation job via cron...");
     try {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const dateStr = yesterday.toISOString().split("T")[0];
+      const dateStr = businessYesterdayString();
       await attributePurchases();
       await aggregateData(dateStr, dateStr);
     } catch (error) {

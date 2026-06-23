@@ -187,6 +187,66 @@ async function fetchRawPlatformOrdersPage(params: {
   throw new Error(`Unsupported platform: ${params.platform}`);
 }
 
+export function extractOffset(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const match = text.match(/([+-]\d{2}:?\d{2}|Z)$/);
+  if (match) {
+    let raw = match[1];
+    if (raw === "Z") return "+00:00";
+    if (raw.indexOf(":") === -1) {
+      return raw.substring(0, 3) + ":" + raw.substring(3);
+    }
+    return raw;
+  }
+  return null;
+}
+
+export function determineTimezoneSource(
+  configuredTz: string | null | undefined,
+  domain: string,
+  name: string
+): "manual" | "platform_shop_api" | "normalized_alias" | "system_default" {
+  if (!configuredTz) {
+    return "system_default";
+  }
+
+  const isBaslayer = 
+    (domain && domain.toLowerCase().includes("baslayer")) ||
+    (name && name.toLowerCase().includes("baslayer"));
+
+  if (isBaslayer) {
+    return "normalized_alias";
+  }
+
+  const trimmed = configuredTz.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (
+    lower === "us/pacific" || 
+    lower === "pacific time" || 
+    lower === "pst" || 
+    lower === "pdt" || 
+    lower.includes("gmt-7") || 
+    lower.includes("utc-7") || 
+    lower.includes("gmt-07") || 
+    lower.includes("utc-07") ||
+    lower.includes("gmt -07") ||
+    lower.includes("utc -07") ||
+    lower.includes("gmt-") ||
+    lower.includes("gmt+") ||
+    lower.includes("utc-") ||
+    lower.includes("utc+")
+  ) {
+    return "normalized_alias";
+  }
+
+  if (trimmed.includes("/")) {
+    return "platform_shop_api";
+  }
+
+  return "manual";
+}
+
 /**
  * High quality Canonical Store synchronization Core.
  */
@@ -198,6 +258,7 @@ export async function fetchStoreOrdersCanonical(params: {
   startDate: string;
   endDate: string;
   timezone: string;
+  storeName?: string;
   baseline?: {
     orders?: number;
     revenue?: number;
@@ -209,6 +270,7 @@ export async function fetchStoreOrdersCanonical(params: {
     platform: StorePlatform;
     timezoneBefore: string;
     timezoneAfter: string;
+    timezoneSource: "manual" | "platform_shop_api" | "normalized_alias" | "system_default";
     requestStartAt: string;
     requestEndAt: string;
     expandedStartAt: string;
@@ -233,6 +295,7 @@ export async function fetchStoreOrdersCanonical(params: {
       net_subtotal_less_discount: number;
     };
     attributionFieldStats: Record<string, { count: number; total: number }>;
+    observedOrderOffsets: string[];
   };
 }> {
   const timezoneBefore = params.timezone;
@@ -520,6 +583,19 @@ export async function fetchStoreOrdersCanonical(params: {
   const validOrdersCount = canonicalOrders.length;
   const validPaidTotal = canonicalOrders.reduce((s, o) => s + o.orderTotal, 0);
 
+  const observedOrderOffsetsSet = new Set<string>();
+  for (const co of canonicalOrders) {
+    const rawTimes = [co.rawCreatedAt, co.rawProcessedAt, co.rawPaidAt, co.rawCompletedAt, co.rawUpdatedAt];
+    for (const rt of rawTimes) {
+      const offsetStr = extractOffset(rt);
+      if (offsetStr) {
+        observedOrderOffsetsSet.add(offsetStr);
+      }
+    }
+  }
+  const observedOrderOffsets = Array.from(observedOrderOffsetsSet);
+  const timezoneSource = determineTimezoneSource(timezoneBefore, params.domain, params.storeName || "");
+
   return {
     orders: canonicalOrders,
     rawOrders,
@@ -527,6 +603,7 @@ export async function fetchStoreOrdersCanonical(params: {
       platform: params.platform,
       timezoneBefore,
       timezoneAfter: storeTimezone,
+      timezoneSource,
       requestStartAt,
       requestEndAt,
       expandedStartAt,
@@ -542,7 +619,8 @@ export async function fetchStoreOrdersCanonical(params: {
       responseBodyKeys: Array.from(responseBodyKeysSet),
       responseHeaderKeys: Array.from(responseHeaderKeysSet),
       revenueFieldSums,
-      attributionFieldStats
+      attributionFieldStats,
+      observedOrderOffsets
     }
   };
 }

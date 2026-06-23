@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Plus, Store, Link as LinkIcon, Trash2, RefreshCw } from "lucide-react";
+import { Plus, Store, Link as LinkIcon, Trash2, RefreshCw, ChevronDown, Clock, AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -13,6 +13,11 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [filterType, setFilterType] = useState<"connected" | "unconnected" | "all">("connected");
+  const [expandedStoreIds, setExpandedStoreIds] = useState<Record<number, boolean>>({});
+
+  const toggleExpand = (id: number) => {
+    setExpandedStoreIds(prev => ({ ...prev, [id]: !prev[id] }));
+  };
 
   const isApiBound = (store: any) => {
     return !!(
@@ -292,6 +297,143 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
                       {apiBound ? "API ACTIVE" : "NO API"}
                     </span>
                   </div>
+
+                  {store.timezoneDiagnostics && (
+                    <div className="border-t pt-2 mt-3 flex justify-between items-center" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1 cursor-pointer font-semibold text-left"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleExpand(store.id);
+                        }}
+                      >
+                        {expandedStoreIds[store.id] ? "收起时区与同步血缘" : "查看时区与同步血缘"}
+                        <ChevronDown className={cn("w-3.5 h-3.5 transition-transform inline-block", expandedStoreIds[store.id] && "rotate-180")} />
+                      </button>
+
+                      {store.timezoneDiagnostics.warnings?.length > 0 && (
+                        <span className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full font-bold">
+                          <AlertTriangle className="w-3 h-3 text-amber-500" />
+                          有警报
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {expandedStoreIds[store.id] && store.timezoneDiagnostics && (
+                    <div 
+                      className="mt-3 p-3 bg-slate-50 rounded-lg text-xs space-y-2.5 border border-slate-100 font-sans"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="grid grid-cols-2 gap-2 text-[11px] bg-white p-2.5 rounded border border-gray-100">
+                        <div>
+                          <span className="text-gray-400 block font-medium">1. timezone 原始配置值:</span>
+                          <span className="font-mono text-gray-800 block text-[12px] truncate" title={store.timezoneDiagnostics.configuredTimezone || "null"}>
+                            {store.timezoneDiagnostics.configuredTimezone || "未配置"}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-gray-400 block font-medium">2. 标准使用值 (normalized):</span>
+                          <span className="font-mono text-gray-800 block text-[12px] truncate" title={store.timezoneDiagnostics.normalizedTimezone}>
+                            {store.timezoneDiagnostics.normalizedTimezone}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-gray-400 block font-medium">3. 时区 Offset / 当前:</span>
+                          <span className="font-mono text-gray-800 block text-[12px]">
+                            {store.timezoneDiagnostics.currentOffset || "-"}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-gray-400 block font-medium">4. timezoneSource 来源:</span>
+                          <span className="font-bold text-indigo-600 block text-[11px] truncate">
+                            {store.timezoneDiagnostics.timezoneSource === "manual" && "手动配置 (manual)"}
+                            {store.timezoneDiagnostics.timezoneSource === "platform_shop_api" && "平台 API (platform_shop_api)"}
+                            {store.timezoneDiagnostics.timezoneSource === "normalized_alias" && "别名映射 (normalized_alias)"}
+                            {store.timezoneDiagnostics.timezoneSource === "system_default" && "系统兜底 (system_default)"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {store.timezoneDiagnostics.lastSyncWindow ? (
+                        <div className="space-y-1.5 text-[11px]">
+                          <div className="font-semibold text-slate-700 flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                            最近一次订单同步窗口血缘
+                          </div>
+                          <div className="grid grid-cols-1 gap-2 font-mono text-[10px] text-gray-500 bg-white p-2.5 rounded border border-gray-100">
+                            <div>
+                              <span className="text-gray-400 block font-sans">5. sync_store_orders 请求窗口:</span>
+                              <div className="text-gray-700 break-all font-mono select-all bg-slate-50 p-1 rounded font-medium mt-0.5">
+                                {store.timezoneDiagnostics.lastSyncWindow.requestStartAt || "-"} 至 {store.timezoneDiagnostics.lastSyncWindow.requestEndAt || "-"}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-gray-400 block font-sans">6. 拓展防丢溢出窗口:</span>
+                              <div className="text-gray-700 break-all font-mono select-all bg-slate-50 p-1 rounded font-medium mt-0.5">
+                                {store.timezoneDiagnostics.lastSyncWindow.expandedStartAt || "-"} 至 {store.timezoneDiagnostics.lastSyncWindow.expandedEndAt || "-"}
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
+                              <div>
+                                <span className="text-gray-400 block font-sans">7. 归因时点口径:</span>
+                                <span className="text-slate-800 font-sans block font-semibold text-[11px] truncate bg-slate-50 p-1 rounded" title={store.timezoneDiagnostics.lastSyncWindow.attributionField}>
+                                  {store.timezoneDiagnostics.lastSyncWindow.attributionField || "-"}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400 block font-sans">8. 收入口径字段:</span>
+                                <span className="text-slate-800 font-sans block font-semibold text-[11px] truncate bg-slate-50 p-1 rounded" title={store.timezoneDiagnostics.lastSyncWindow.revenueField}>
+                                  {store.timezoneDiagnostics.lastSyncWindow.revenueField || "-"}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400 block font-sans">9. HTTP 请求页数:</span>
+                                <span className="text-slate-800 font-sans block font-semibold text-[11px] bg-slate-50 p-1 rounded">
+                                  {store.timezoneDiagnostics.lastSyncWindow.pagesFetched ?? "-"} 页
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400 block font-sans">10. 验证同步订单/金额:</span>
+                                <span className="text-emerald-700 font-sans block font-bold text-[11px] bg-emerald-50 p-1 rounded">
+                                  {store.timezoneDiagnostics.lastSyncWindow.validOrdersCount ?? 0} 单 (US${store.timezoneDiagnostics.lastSyncWindow.validPaidTotal?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"})
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-white p-2.5 rounded border border-gray-150 text-[11.5px] text-slate-400 italic font-sans text-center">
+                          ⚠️ 暂无该店铺最近一次同步血缘信息
+                        </div>
+                      )}
+
+                      {store.timezoneDiagnostics.observedOrderOffsets && store.timezoneDiagnostics.observedOrderOffsets.length > 0 && (
+                        <div className="text-[11px] bg-white p-2 rounded border border-gray-100">
+                          <span className="font-semibold block text-slate-700 font-sans mb-1">订单中观测到的 offsets:</span>
+                          <div className="flex flex-wrap gap-1">
+                            {store.timezoneDiagnostics.observedOrderOffsets.map((os: string, idx: number) => (
+                              <span key={idx} className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-mono font-medium text-[10px]">
+                                {os}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {store.timezoneDiagnostics.warnings?.length > 0 && (
+                        <div className="p-2.5 bg-amber-50 rounded border border-amber-200 text-[10.5px] text-amber-800 space-y-1 font-sans">
+                          {store.timezoneDiagnostics.warnings.map((warn: string, idx: number) => (
+                            <div key={idx} className="flex gap-1.5 align-top">
+                              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 text-amber-600 mt-0.5" />
+                              <span className="leading-tight font-medium">{warn}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             );

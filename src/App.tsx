@@ -93,6 +93,30 @@ function AdHierarchyBridge() {
   );
 }
 
+function BusinessClock() {
+  const [now, setNow] = useState("");
+
+  useEffect(() => {
+    const tick = () => {
+      import("./shared/business-time").then(({ getBusinessClockLabel }) => {
+        setNow(getBusinessClockLabel());
+      });
+    };
+
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="fixed top-3 right-24 z-40 px-3 py-1.5 rounded-lg bg-white border border-slate-200 shadow-sm text-xs text-slate-600 flex items-center gap-1.5 font-sans font-medium">
+      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
+      <span>系统时区 (美西 LA)：</span>
+      <span className="font-mono text-indigo-600 font-semibold">{now}</span>
+    </div>
+  );
+}
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState('data-details');
@@ -140,6 +164,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#f8fafc] flex font-sans text-slate-900">
+      <BusinessClock />
       <Sidebar 
         activeTab={activeTab} 
         setActiveTab={handleSetActiveTab} 

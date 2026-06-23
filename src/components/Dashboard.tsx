@@ -3,8 +3,13 @@ import { DateFilter } from './DateFilter';
 import { DateRangeType } from '../types';
 import { Download, RefreshCw, Filter, Search } from 'lucide-react';
 import axios from 'axios';
-import { format, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subWeeks, subMonths } from 'date-fns';
 import { toast } from 'sonner';
+import dayjs from 'dayjs';
+import {
+  getBusinessDateRange,
+  businessDateStringToSafeDate,
+  safeDateToDateString
+} from "../shared/business-time";
 
 import { OverviewDashboard } from './OverviewDashboard';
 import { DataDetailsDashboard } from './DataDetailsDashboard';
@@ -92,32 +97,11 @@ export function StandardPageHeader({
   );
 }
 
-function getDateRange(rangeId: DateRangeType): { startDate: Date, endDate: Date } {
-  const today = new Date();
-  switch (rangeId) {
-    case 'today': return { startDate: today, endDate: today };
-    case 'yesterday': return { startDate: subDays(today, 1), endDate: subDays(today, 1) };
-    case 'past_7': return { startDate: subDays(today, 6), endDate: today };
-    case 'past_14': return { startDate: subDays(today, 13), endDate: today };
-    case 'past_30': return { startDate: subDays(today, 29), endDate: today };
-    case 'this_week': return { startDate: startOfWeek(today, { weekStartsOn: 1 }), endDate: endOfWeek(today, { weekStartsOn: 1 }) };
-    case 'last_week': {
-      const lastWeek = subWeeks(today, 1);
-      return { startDate: startOfWeek(lastWeek, { weekStartsOn: 1 }), endDate: endOfWeek(lastWeek, { weekStartsOn: 1 }) };
-    }
-    case 'this_month': return { startDate: startOfMonth(today), endDate: endOfMonth(today) };
-    case 'last_month': {
-      const lastMonth = subMonths(today, 1);
-      return { startDate: startOfMonth(lastMonth), endDate: endOfMonth(lastMonth) };
-    }
-    default: return { startDate: subDays(today, 6), endDate: today };
-  }
-}
-
 export function DashboardContainer({ title, tabId }: { title: string, tabId: string }) {
-  // Set standard default ranges, then auto-heal on load matching the SQLite database active dates
-  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 29));
-  const [endDate, setEndDate] = useState<Date>(new Date());
+  // Set standard default ranges, then auto-heal on load matching the database active dates
+  const defaultRange = getBusinessDateRange("past_30");
+  const [startDate, setStartDate] = useState<Date>(businessDateStringToSafeDate(defaultRange.startDateStr));
+  const [endDate, setEndDate] = useState<Date>(businessDateStringToSafeDate(defaultRange.endDateStr));
   const [data, setData] = useState<any[]>([]);
   const [storeSummaries, setStoreSummaries] = useState<Record<string, any>>({});
   const [mappings, setMappings] = useState<Record<string, any>>({});
@@ -128,11 +112,9 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
     axios.get("/api/data-center/max-date")
       .then(res => {
         if (res.data && res.data.maxDate) {
-          const maxDateObj = new Date(res.data.maxDate);
-          if (!isNaN(maxDateObj.getTime())) {
-            setEndDate(maxDateObj);
-            setStartDate(subDays(maxDateObj, 29)); // Default to past 30 days of active data
-          }
+          const maxDateStr = String(res.data.maxDate).slice(0, 10);
+          setEndDate(businessDateStringToSafeDate(maxDateStr));
+          setStartDate(businessDateStringToSafeDate(dayjs(maxDateStr).subtract(29, "day").format("YYYY-MM-DD")));
         }
       })
       .catch(err => console.warn("Failed to fetch database max date:", err));
@@ -157,8 +139,8 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
     setLoading(true);
     try {
       const dateParams = {
-        startDate: format(startDate, "yyyy-MM-dd"),
-        endDate: format(endDate, "yyyy-MM-dd"),
+        startDate: safeDateToDateString(startDate),
+        endDate: safeDateToDateString(endDate),
       };
 
       const [response, summariesRes] = await Promise.all([
@@ -189,8 +171,8 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
     try {
       const response = await axios.post("/api/sync/trigger", {
         taskType: "sync_meta_insights",
-        startDate: format(startDate, "yyyy-MM-dd"),
-        endDate: format(endDate, "yyyy-MM-dd"),
+        startDate: safeDateToDateString(startDate),
+        endDate: safeDateToDateString(endDate),
         days: 30
       });
       if (response.data?.status === "NO_NEW_DATA") {
