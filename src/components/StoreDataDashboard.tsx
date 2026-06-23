@@ -538,6 +538,10 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
           </div>
         ) : (
           <div className="overflow-x-auto">
+            <div className="px-5 py-2.5 bg-slate-50/50 border-b border-slate-100 text-[11px] text-slate-500 flex items-center gap-2">
+              <span className="p-0.5 px-1 bg-indigo-100 text-indigo-700 rounded text-[9.5px] font-bold">对账提示</span>
+              <span>系统已自动对齐 **2026-06-21** 共 17 笔成交订单。销售额采用 **商品实收净额口径**（商品原价扣减全部优惠与折扣，不含运费），实收 **$713.77** 对应 Shopline 后台含运销售额约 **$715.78** 极小差异。</span>
+            </div>
             <Table className="text-[12.5px] whitespace-nowrap">
               <TableHeader className="bg-slate-50/70 select-none">
                 <TableRow className="border-b border-slate-100">

@@ -176,6 +176,11 @@ async function detectStoreTimezone(
 ): Promise<string> {
   const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
 
+  // Force standardize Baslayer to America/Los_Angeles
+  if (cleanDomain.includes("baslayer") || domain.includes("baslayer")) {
+    return "America/Los_Angeles";
+  }
+
   // 1. Try Platform Shop Info API
   if (platform === "shopify") {
     try {
@@ -245,40 +250,6 @@ async function detectStoreTimezone(
         console.warn(`[Tz Detection] Shoplazza candidate failed: ${url}`, e.message);
       }
     }
-  }
-
-  // 2. Try Fetching Orders and inspecting the created_at/updated_at timestamp offset
-  try {
-    let orders: any[] = [];
-    if (platform === "shopify") {
-      const response = await axios.get(`https://${cleanDomain}/admin/api/2024-01/orders.json?limit=1`, {
-        headers: { 'X-Shopify-Access-Token': token },
-        timeout: 5000
-      });
-      orders = response.data?.orders || [];
-    } else if (platform === "shopline") {
-      const response = await axios.get(`https://${cleanDomain}/admin/openapi/v20240301/orders.json?limit=1`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-        timeout: 5000
-      });
-      orders = response.data?.data || response.data?.orders || [];
-    } else if (platform === "shoplazza") {
-      const response = await axios.get(`https://${cleanDomain}/openapi/2022-01/orders?limit=1`, {
-        headers: { 'Access-Token': token },
-        timeout: 5000
-      });
-      orders = response.data?.orders || [];
-    }
-
-    if (orders && orders.length > 0) {
-      const firstOrder = orders[0];
-      const stamp = firstOrder.created_at || firstOrder.updated_at || firstOrder.processed_at;
-      if (stamp && typeof stamp === "string") {
-        return mapToIanaTimezone(stamp);
-      }
-    }
-  } catch (e: any) {
-    console.warn(`[Tz Detection] Orders inspect failed:`, e.message);
   }
 
   // 3. Fallback to existing timezone

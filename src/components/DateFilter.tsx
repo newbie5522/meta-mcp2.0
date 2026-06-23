@@ -25,6 +25,7 @@ export function DateFilter({
     { id: 'last_week', label: '上周' },
     { id: 'this_month', label: '本月' },
     { id: 'last_month', label: '上月' },
+    { id: 'audit_day', label: '对账专属日 (6/21)' },
     { id: 'custom', label: '自定义' },
   ];
 
@@ -40,12 +41,14 @@ export function DateFilter({
     const today = new Date();
     const isToday = isSameDay(startDate, today) && isSameDay(endDate, today);
     const isYesterday = isSameDay(startDate, subDays(today, 1)) && isSameDay(endDate, subDays(today, 1));
+    const isAuditDay = toLocalISOString(startDate) === "2026-06-21" && toLocalISOString(endDate) === "2026-06-21";
     const isPast7 = isSameDay(startDate, subDays(today, 6)) && isSameDay(endDate, today);
     const isPast14 = isSameDay(startDate, subDays(today, 13)) && isSameDay(endDate, today);
     const isPast30 = isSameDay(startDate, subDays(today, 29)) && isSameDay(endDate, today);
     
     if (isToday) setActiveShortcut('today');
     else if (isYesterday) setActiveShortcut('yesterday');
+    else if (isAuditDay) setActiveShortcut('audit_day');
     else if (isPast7) setActiveShortcut('past_7');
     else if (isPast14) setActiveShortcut('past_14');
     else if (isPast30) setActiveShortcut('past_30');
@@ -75,6 +78,11 @@ export function DateFilter({
       case 'last_month': {
         const lastMonth = subMonths(today, 1);
         newStart = startOfMonth(lastMonth); newEnd = endOfMonth(lastMonth);
+        break;
+      }
+      case 'audit_day': {
+        const d = new Date("2026-06-21T00:00:00");
+        newStart = d; newEnd = d;
         break;
       }
       case 'custom':

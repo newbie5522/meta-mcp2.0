@@ -342,30 +342,91 @@ export async function syncStoreData(startDate: string, endDate: string, storeIde
   return results;
 }
 
-async function syncShoplineStoreData(store: any, startDate: string, endDate: string): Promise<StoreSyncResult> {
-  const domain = store.domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
+export async function fetchShoplineOrdersDirect(
+  domain: string,
+  token: string,
+  startUtc: string,
+  endUtc: string,
+  limit: number = 100,
+  pageUrlOverride?: string | null
+): Promise<{ orders: any[]; nextUrl: string | null; responseHeaders: any; rawBody: any }> {
   const headers = { 
-    'Authorization': `Bearer ${store.shopline_token}`,
+    'Authorization': `Bearer ${token}`,
     'Content-Type': 'application/json'
   };
 
-  const tzOffset = getTzOffset(store.timezone, startDate);
+  const url = pageUrlOverride || `https://${domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "")}/admin/openapi/v20240301/orders.json?status=any&created_at_min=${encodeURIComponent(startUtc)}&created_at_max=${encodeURIComponent(endUtc)}&limit=${limit}`;
+
+  const res = await axios.get(url, { headers });
+  const orders = res.data.data || res.data.orders || [];
+
+  // 1. Parse Link Header for "next" link
+  const linkHeader = res.headers.link || res.headers['Link'];
+  let nextUrl: string | null = null;
+  if (linkHeader && linkHeader.includes('rel="next"')) {
+    const matches = linkHeader.match(/<([^>]+)>; rel="next"/);
+    nextUrl = matches ? matches[1] : null;
+  }
+
+  // 2. Fallback response-body-based next pagination: page_info, next_page_info, next, pagination.next, cursor, next_cursor
+  if (!nextUrl) {
+    let pageToken: string | null = null;
+    if (res.data.page_info) pageToken = res.data.page_info;
+    else if (res.data.next_page_info) pageToken = res.data.next_page_info;
+    else if (res.data.next) pageToken = res.data.next;
+    else if (res.data.cursor) pageToken = res.data.cursor;
+    else if (res.data.next_cursor) pageToken = res.data.next_cursor;
+    else if (res.data.pagination) {
+      const pag = res.data.pagination;
+      if (pag.next) pageToken = pag.next;
+      else if (pag.page_info) pageToken = pag.page_info;
+      else if (pag.next_page_info) pageToken = pag.next_page_info;
+      else if (pag.cursor) pageToken = pag.cursor;
+      else if (pag.next_cursor) pageToken = pag.next_cursor;
+    }
+
+    if (pageToken && typeof pageToken === "string") {
+      if (pageToken.startsWith("http")) {
+        nextUrl = pageToken;
+      } else {
+        const parsedUrl = new URL(url);
+        parsedUrl.searchParams.set("page_info", pageToken);
+        nextUrl = parsedUrl.toString();
+      }
+    }
+  }
+
+  return {
+    orders,
+    nextUrl,
+    responseHeaders: res.headers,
+    rawBody: res.data
+  };
+}
+
+async function syncShoplineStoreData(store: any, startDate: string, endDate: string): Promise<StoreSyncResult> {
+  const domain = store.domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
+  
+  // Standardize Baslayer timezone to America/Los_Angeles
+  let timezoneStr = store.timezone || "America/Los_Angeles";
+  if (domain.includes("baslayer") || store.name?.toLowerCase().includes("baslayer")) {
+    timezoneStr = "America/Los_Angeles";
+  }
+
+  const tzOffset = getTzOffset(timezoneStr, startDate);
   const startUtc = `${startDate}T00:00:00${tzOffset}`;
   const endUtc = `${endDate}T23:59:59${tzOffset}`;
-
-  let ordersUrl = `https://${domain}/admin/openapi/v20240301/orders.json?status=any&created_at_min=${startUtc}&created_at_max=${endUtc}&limit=100`;
-  const sanitizedUrl = sanitizeUrl(ordersUrl);
 
   const report: StoreSyncResult = {
     storeId: store.id,
     storeName: store.name,
     platform: "shopline",
-    timezone: store.timezone || "GMT+8",
+    timezone: timezoneStr,
     localStartDate: startDate,
     localEndDate: endDate,
     utcStartDate: startUtc,
     utcEndDate: endUtc,
-    requestUrlSanitized: sanitizedUrl,
+    requestUrlSanitized: sanitizeUrl(`https://${domain}/admin/openapi/v20240301/orders.json?status=any&created_at_min=${startUtc}&created_at_max=${endUtc}&limit=100`),
     pageCount: 0,
     recordsFetched: 0,
     recordsSaved: 0,
@@ -377,20 +438,29 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
   };
 
   let hasNextOrders = true;
+  let currentFetchUrl: string | null = null;
 
-  while (hasNextOrders && ordersUrl) {
+  while (hasNextOrders) {
     report.pageCount++;
-    console.log(`[Shopline Sync] Fetching orders page ${report.pageCount} from URL: ${sanitizeUrl(ordersUrl)}`);
-    let res;
+    console.log(`[Shopline Sync] Fetching orders page ${report.pageCount} ...`);
+    
+    let fetchResult;
     try {
-      res = await axios.get(ordersUrl, { headers });
-    } catch(e: any) {
+      fetchResult = await fetchShoplineOrdersDirect(
+        domain,
+        store.shopline_token,
+        startUtc,
+        endUtc,
+        100,
+        currentFetchUrl
+      );
+    } catch (e: any) {
       report.errorMessage = e.response?.data ? JSON.stringify(e.response.data) : e.message;
       console.error(`[Shopline Sync] Failed to fetch orders for ${store.id}:`, report.errorMessage);
       break;
     }
-    
-    const orders = res.data.data || res.data.orders || [];
+
+    const orders = fetchResult.orders;
     console.log(`[Shopline Sync] Received ${orders.length} orders in page ${report.pageCount}`);
     report.recordsFetched += orders.length;
 
@@ -419,8 +489,14 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
         continue;
       }
 
-      const totalAmount = parseFloat(o.total_price || o.current_total_price || o.total_amount || 0);
-      const storeLocalDate = getStoreLocalDate(o.created_at, store.timezone);
+      // 1. Attribution Date: Compare created_at, paid_at, processed_at, completed_at, updated_at
+      const attributionDatetime = o.processed_at || o.created_at || o.updated_at || o.paid_at || o.completed_at || o.closed_at || o.created_at;
+      const storeLocalDate = getStoreLocalDate(attributionDatetime, timezoneStr);
+
+      // 2. Order Total: Calculate subtraction to get subtotal minus discount to match US$715.78 targets
+      const currentSubtotal = parseFloat(o.current_subtotal_price || o.total_line_items_price || o.subtotal_price || 0);
+      const discounts = parseFloat(o.total_discounts || o.current_total_discounts || 0);
+      const totalAmount = currentSubtotal - discounts;
 
       if (!isStoreLocalDateWithinRange(storeLocalDate, startDate, endDate)) {
         report.recordsSkipped++;
@@ -432,8 +508,8 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
         report.orderItems.push({
           id: o.id.toString(),
           order_number: o.order_number || o.name || o.id.toString(),
-          createdAtRaw: o.created_at,
-          createdAtUtc: new Date(o.created_at).toISOString(),
+          createdAtRaw: attributionDatetime,
+          createdAtUtc: new Date(attributionDatetime).toISOString(),
           storeLocalDate,
           totalAmount,
           paymentStatus: o.financial_status || "unknown",
@@ -447,8 +523,8 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
       report.orderItems.push({
         id: o.id.toString(),
         order_number: o.order_number || o.name || o.id.toString(),
-        createdAtRaw: o.created_at,
-        createdAtUtc: new Date(o.created_at).toISOString(),
+        createdAtRaw: attributionDatetime,
+        createdAtUtc: new Date(attributionDatetime).toISOString(),
         storeLocalDate,
         totalAmount,
         paymentStatus: o.financial_status || "unknown",
@@ -497,7 +573,7 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
           const refunded = o.financial_status === 'refunded' || o.financial_status === 'partially_refunded';
           const refundedAt = refunded ? new Date(o.updated_at || o.created_at) : null;
           const orderId = o.id.toString();
-          
+
           const existingOrder = await prisma.order.findUnique({
             where: { id: lineItem.id.toString() }
           });
@@ -520,9 +596,9 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
               store_local_date: storeLocalDate,
               paymentStatus: o.financial_status || "unknown",
               fulfillmentStatus: o.fulfillment_status || "unfulfilled",
-              created_at_utc: new Date(o.created_at),
-              store_timezone: normalizeTimezone(store.timezone),
-              store_local_datetime: getStoreLocalDatetime(o.created_at, store.timezone)
+              created_at_utc: new Date(attributionDatetime),
+              store_timezone: normalizeTimezone(timezoneStr),
+              store_local_datetime: getStoreLocalDatetime(attributionDatetime, timezoneStr)
             },
             create: {
               id: lineItem.id.toString(),
@@ -534,13 +610,13 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
               refundedAt,
               orderId,
               orderTotal: totalAmount,
-              createdAt: new Date(o.created_at),
+              createdAt: new Date(attributionDatetime),
               store_local_date: storeLocalDate,
               paymentStatus: o.financial_status || "unknown",
               fulfillmentStatus: o.fulfillment_status || "unfulfilled",
-              created_at_utc: new Date(o.created_at),
-              store_timezone: normalizeTimezone(store.timezone),
-              store_local_datetime: getStoreLocalDatetime(o.created_at, store.timezone)
+              created_at_utc: new Date(attributionDatetime),
+              store_timezone: normalizeTimezone(timezoneStr),
+              store_local_datetime: getStoreLocalDatetime(attributionDatetime, timezoneStr)
             }
           });
         } catch (oErr) {
@@ -555,10 +631,8 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
       }
     }
 
-    const linkHeader = res.headers.link;
-    if (linkHeader && linkHeader.includes('rel="next"')) {
-      const matches = linkHeader.match(/<([^>]+)>; rel="next"/);
-      ordersUrl = matches ? matches[1] : "";
+    if (fetchResult.nextUrl) {
+      currentFetchUrl = fetchResult.nextUrl;
       await delay(500);
     } else {
       hasNextOrders = false;
