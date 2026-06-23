@@ -223,6 +223,16 @@ export async function fetchStoreOrdersCanonical(params: {
     requestUrlsSanitized: string[];
     responseBodyKeys: string[];
     responseHeaderKeys: string[];
+    revenueFieldSums: {
+      total_price: number;
+      current_total_price: number;
+      total_amount: number;
+      order_total: number;
+      subtotal_price: number;
+      current_subtotal_price: number;
+      net_subtotal_less_discount: number;
+    };
+    attributionFieldStats: Record<string, { count: number; total: number }>;
   };
 }> {
   const timezoneBefore = params.timezone;
@@ -306,7 +316,7 @@ export async function fetchStoreOrdersCanonical(params: {
     const cancelledAt = o.cancelled_at || null;
 
     const rawCreatedAt = o.created_at || null;
-    const rawPaidAt = o.paid_at || o.payment_details?.paid_at || (financialStatus === "paid" ? o.processed_at || o.created_at : null);
+    const rawPaidAt = o.paid_at || o.payment_details?.paid_at || null;
     const rawProcessedAt = o.processed_at || null;
     const rawCompletedAt = o.completed_at || o.closed_at || null;
     const rawUpdatedAt = o.updated_at || null;
@@ -362,7 +372,7 @@ export async function fetchStoreOrdersCanonical(params: {
 
   // Evaluate and rank attribution field & revenue field
   let bestAttributionField: typeof attributionCandidates[number] = "processed_at";
-  let bestRevenueField = "net_subtotal_less_discount";
+  let bestRevenueField = "total_price";
 
   if (params.baseline) {
     const baseOrders = params.baseline.orders ?? 0;
@@ -384,7 +394,7 @@ export async function fetchStoreOrdersCanonical(params: {
       });
 
       // 2. Score revenue candidates for this set
-      const revenueNames = ["total_price", "current_total_price", "total_amount", "net_subtotal_less_discount", "current_subtotal_price"] as const;
+      const revenueNames = ["total_price", "current_total_price", "total_amount", "order_total", "subtotal_price", "current_subtotal_price", "net_subtotal_less_discount"] as const;
       for (const revName of revenueNames) {
         const sumRev = ordersInRange.reduce((s, co) => s + (co.revenueCandidates[revName] || 0), 0);
         
@@ -402,16 +412,65 @@ export async function fetchStoreOrdersCanonical(params: {
     }
     console.log(`[Store Sync Core] Dynamic optimization matching baseline selected attribution: "${bestAttributionField}", revenue: "${bestRevenueField}"`);
   } else {
-    // Priority fallbacks if no baseline targets are given
-    // 2. 如果没有 baseline，优先级：paid_at, processed_at, completed_at, created_at, updated_at
+    // 2. 如果没有 baseline，使用指定默认优先级：
+    // attribution: paid_at if has any paid_at, else processed_at
     bestAttributionField = "paid_at";
-    // Check if we actually have paid_at in any record
     const hasPaidAt = convertedOrders.some(co => co.rawPaidAt);
     if (!hasPaidAt) {
       bestAttributionField = "processed_at";
     }
-    // Default revenue candidate is total_price, unless net_subtotal_less_discount is safer
-    bestRevenueField = params.platform === "shopline" ? "net_subtotal_less_discount" : "total_price";
+    // Default revenue candidate is total_price as required
+    bestRevenueField = "total_price";
+  }
+
+  // 3.3 and 3.4 calculations for sums & stats across target range
+  const revenueFieldSums = {
+    total_price: 0,
+    current_total_price: 0,
+    total_amount: 0,
+    order_total: 0,
+    subtotal_price: 0,
+    current_subtotal_price: 0,
+    net_subtotal_less_discount: 0
+  };
+
+  const convertedOrdersInRange = convertedOrders.filter(co => {
+    const rawTime = co.rawPaidAt || co.rawProcessedAt || co.rawCreatedAt;
+    if (!rawTime) return false;
+    const localDate = getStoreLocalDate(rawTime, storeTimezone);
+    return localDate >= params.startDate && localDate <= params.endDate && !isPaymentStatusExcluded(co.paymentStatus);
+  });
+
+  for (const co of convertedOrdersInRange) {
+    revenueFieldSums.total_price = Number((revenueFieldSums.total_price + (co.revenueCandidates.total_price || 0)).toFixed(2));
+    revenueFieldSums.current_total_price = Number((revenueFieldSums.current_total_price + (co.revenueCandidates.current_total_price || 0)).toFixed(2));
+    revenueFieldSums.total_amount = Number((revenueFieldSums.total_amount + (co.revenueCandidates.total_amount || 0)).toFixed(2));
+    revenueFieldSums.order_total = Number((revenueFieldSums.order_total + (co.revenueCandidates.order_total || 0)).toFixed(2));
+    revenueFieldSums.subtotal_price = Number((revenueFieldSums.subtotal_price + (co.revenueCandidates.subtotal_price || 0)).toFixed(2));
+    revenueFieldSums.current_subtotal_price = Number((revenueFieldSums.current_subtotal_price + (co.revenueCandidates.current_subtotal_price || 0)).toFixed(2));
+    revenueFieldSums.net_subtotal_less_discount = Number((revenueFieldSums.net_subtotal_less_discount + (co.revenueCandidates.net_subtotal_less_discount || 0)).toFixed(2));
+  }
+
+  const attributionFieldStats: Record<string, { count: number; total: number }> = {
+    created_at: { count: 0, total: 0 },
+    paid_at: { count: 0, total: 0 },
+    processed_at: { count: 0, total: 0 },
+    completed_at: { count: 0, total: 0 },
+    updated_at: { count: 0, total: 0 }
+  };
+
+  for (const attr of attributionCandidates) {
+    const ordersInRangeAttr = convertedOrders.filter(co => {
+      const rawTime = co[attr === "created_at" ? "rawCreatedAt" : attr === "paid_at" ? "rawPaidAt" : attr === "processed_at" ? "rawProcessedAt" : attr === "completed_at" ? "rawCompletedAt" : "rawUpdatedAt"] || co.rawCreatedAt;
+      if (!rawTime) return false;
+      const localDate = getStoreLocalDate(rawTime, storeTimezone);
+      return localDate >= params.startDate && localDate <= params.endDate && !isPaymentStatusExcluded(co.paymentStatus);
+    });
+
+    attributionFieldStats[attr] = {
+      count: ordersInRangeAttr.length,
+      total: Number(ordersInRangeAttr.reduce((s, co) => s + (co.revenueCandidates.total_price || 0), 0).toFixed(2))
+    };
   }
 
   // Construct final array of CanonicalOrders adhering strict to the target field selected
@@ -481,7 +540,9 @@ export async function fetchStoreOrdersCanonical(params: {
       revenueField: bestRevenueField,
       requestUrlsSanitized,
       responseBodyKeys: Array.from(responseBodyKeysSet),
-      responseHeaderKeys: Array.from(responseHeaderKeysSet)
+      responseHeaderKeys: Array.from(responseHeaderKeysSet),
+      revenueFieldSums,
+      attributionFieldStats
     }
   };
 }
@@ -495,16 +556,40 @@ export async function saveCanonicalOrdersToDb(
   fetched: number;
   saved: number;
   updated: number;
+  orderRowsWritten: number;
 }> {
-  let savedCount = 0;
-  let updatedCount = 0;
+  let uniqueOrdersInserted = 0;
+  let uniqueOrdersUpdated = 0;
+  let orderRowsWritten = 0;
 
   for (const o of orders) {
     if (!o.lineItems || o.lineItems.length === 0) continue;
 
-    // Helper functions to identify custom sub-store tags or attributes
     let targetStoreId = o.storeId;
-    
+
+    // Check if parent order already existed anywhere in db for this store
+    const existingOrderInDb = await prisma.order.findFirst({
+      where: {
+        storeId: targetStoreId,
+        orderId: o.orderId
+      }
+    });
+
+    if (existingOrderInDb) {
+      uniqueOrdersUpdated++;
+    } else {
+      uniqueOrdersInserted++;
+    }
+
+    // Clean up old rows for this store, order, and date to avoid conflicts
+    await prisma.order.deleteMany({
+      where: {
+        storeId: o.storeId,
+        orderId: o.orderId,
+        store_local_date: o.storeLocalDate
+      }
+    });
+
     // We update/upsert every lineItem row. Each row refers to the same parent orderId.
     for (const item of o.lineItems) {
       const productId = item.productId || `product-${o.orderId}`;
@@ -527,16 +612,6 @@ export async function saveCanonicalOrdersToDb(
       const orderLineId = `${o.orderId}-${item.lineItemId}`;
       const refunded = o.financialStatus === "refunded" || o.financialStatus === "partially_refunded";
       const refundedAt = refunded ? new Date(o.rawUpdatedAt || o.attributionTimeRaw) : null;
-
-      const existingOrder = await prisma.order.findUnique({
-        where: { id: orderLineId }
-      });
-
-      if (existingOrder) {
-        updatedCount++;
-      } else {
-        savedCount++;
-      }
 
       await prisma.order.upsert({
         where: { id: orderLineId },
@@ -575,12 +650,14 @@ export async function saveCanonicalOrdersToDb(
           store_local_datetime: o.storeLocalDatetime
         }
       });
+      orderRowsWritten++;
     }
   }
 
   return {
     fetched: orders.length,
-    saved: savedCount,
-    updated: updatedCount
+    saved: uniqueOrdersInserted,
+    updated: uniqueOrdersUpdated,
+    orderRowsWritten
   };
 }

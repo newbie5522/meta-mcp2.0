@@ -2,6 +2,7 @@ import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
 import { getTimezoneOffsetStr, isDemoDataEnabled, normalizeMetaAccountId } from "../utils.js";
+import { normalizeTimezone } from "../utils/timezone.js";
 
 const router = Router();
 const shoplineCache = new Map<string, { data: any; expiry: number }>();
@@ -66,39 +67,6 @@ router.get("/", async (req, res) => {
   }
 });
 
-function getOffsetByIana(ianaName: string): string {
-  try {
-    const date = new Date();
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: ianaName,
-      timeZoneName: 'longOffset'
-    });
-    const parts = formatter.formatToParts(date);
-    const offsetPart = parts.find(p => p.type === 'timeZoneName');
-    if (offsetPart) {
-      const val = offsetPart.value; // e.g. "GMT-05:00", "GMT+08:00", "GMT"
-      if (val === "GMT") return "UTC";
-      if (val.startsWith("GMT")) {
-        let off = val.replace("GMT", "");
-        const match = off.match(/([+-])(\d+):(\d+)/);
-        if (match) {
-          const sign = match[1];
-          const hrs = parseInt(match[2], 10);
-          const mins = parseInt(match[3], 10);
-          if (mins === 0) {
-            return `GMT${sign}${hrs}`;
-          } else {
-            return `GMT${sign}${hrs}:${mins}`;
-          }
-        }
-      }
-    }
-  } catch (e: any) {
-    console.error("[Tz Detection] Error formatting timezone using Intl", e.message);
-  }
-  return "GMT+8";
-}
-
 function isValidIanaTimezone(tz: string): boolean {
   try {
     if (!tz) return false;
@@ -107,65 +75,6 @@ function isValidIanaTimezone(tz: string): boolean {
   } catch (e) {
     return false;
   }
-}
-
-function parseOffsetHours(tzStr: string): number | null {
-  if (!tzStr) return null;
-  const match = tzStr.match(/([+-])(\d{1,2})/);
-  if (match) {
-    const sign = match[1] === '-' ? -1 : 1;
-    const hours = parseInt(match[2], 10);
-    return sign * hours;
-  }
-  return null;
-}
-
-function ianaTimezoneFromOffsetHours(hours: number): string {
-  switch (hours) {
-    case -11: return "Pacific/Midway";
-    case -10: return "Pacific/Honolulu";
-    case -9: return "America/Anchorage";
-    case -8: return "America/Los_Angeles";
-    case -7: return "America/Los_Angeles";
-    case -6: return "America/Chicago";
-    case -5: return "America/New_York";
-    case -4: return "America/Halifax";
-    case -3: return "America/Argentina/Buenos_Aires";
-    case -2: return "America/Noronha";
-    case -1: return "Atlantic/Cape_Verde";
-    case 0: return "UTC";
-    case 1: return "Europe/London";
-    case 2: return "Europe/Paris";
-    case 3: return "Europe/Moscow";
-    case 4: return "Asia/Dubai";
-    case 5: return "Asia/Karachi";
-    case 6: return "Asia/Almaty";
-    case 7: return "Asia/Bangkok";
-    case 8: return "Asia/Shanghai";
-    case 9: return "Asia/Tokyo";
-    case 10: return "Australia/Sydney";
-    case 11: return "Pacific/Guadalcanal";
-    case 12: return "Pacific/Auckland";
-    case 13: return "Pacific/Apia";
-    default: return hours > 0 ? "Asia/Shanghai" : "UTC";
-  }
-}
-
-function mapToIanaTimezone(tzStr: string | null | undefined): string {
-  if (!tzStr) return "Asia/Shanghai";
-  const trimmed = tzStr.trim();
-  if (isValidIanaTimezone(trimmed)) {
-    return trimmed;
-  }
-  const lower = trimmed.toLowerCase();
-  if (lower === "utc" || lower === "gmt" || lower === "z" || lower === "utc+0" || lower === "gmt+0") {
-    return "UTC";
-  }
-  const hours = parseOffsetHours(trimmed);
-  if (hours !== null) {
-    return ianaTimezoneFromOffsetHours(hours);
-  }
-  return "Asia/Shanghai";
 }
 
 async function detectStoreTimezone(
@@ -191,13 +100,9 @@ async function detectStoreTimezone(
         },
         timeout: 5000
       });
-      const ianaTz = response.data?.shop?.iana_timezone;
+      const ianaTz = response.data?.shop?.iana_timezone || response.data?.shop?.timezone;
       if (ianaTz) {
-        return mapToIanaTimezone(ianaTz);
-      }
-      const tzExpr = response.data?.shop?.timezone;
-      if (tzExpr) {
-        return mapToIanaTimezone(tzExpr);
+        return normalizeTimezone(ianaTz, { domain });
       }
     } catch (e: any) {
       console.warn(`[Tz Detection] Shopify Shop API failed:`, e.message);
@@ -211,7 +116,7 @@ async function detectStoreTimezone(
     ];
     for (const url of candidates) {
       try {
-        const response = await axios.get(url, {
+         const response = await axios.get(url, {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
@@ -220,7 +125,7 @@ async function detectStoreTimezone(
         });
         const tz = response.data?.shop?.iana_timezone || response.data?.shop?.timezone || response.data?.data?.timezone;
         if (tz) {
-          return mapToIanaTimezone(tz);
+          return normalizeTimezone(tz, { domain });
         }
       } catch (e: any) {
         console.warn(`[Tz Detection] Shopline candidate failed: ${url}`, e.message);
@@ -244,7 +149,7 @@ async function detectStoreTimezone(
         });
         const tz = response.data?.shop?.iana_timezone || response.data?.shop?.timezone;
         if (tz) {
-          return mapToIanaTimezone(tz);
+          return normalizeTimezone(tz, { domain });
         }
       } catch (e: any) {
         console.warn(`[Tz Detection] Shoplazza candidate failed: ${url}`, e.message);
@@ -253,12 +158,12 @@ async function detectStoreTimezone(
   }
 
   // 3. Fallback to existing timezone
-  if (existingTimezone && isValidIanaTimezone(existingTimezone)) {
-    return existingTimezone;
+  if (existingTimezone) {
+    return normalizeTimezone(existingTimezone, { domain });
   }
 
-  // 4. Default fallback: America/Los_Angeles or Asia/Shanghai depending on platform (safe standard backstops)
-  return platform === "shoplazza" ? "America/Los_Angeles" : "Asia/Shanghai";
+  // 4. Default fallback: America/Los_Angeles as required
+  return "America/Los_Angeles";
 }
 
 function getErrorMessage(error: unknown): string {
@@ -357,11 +262,11 @@ router.post("/", async (req, res) => {
     const token = submittedToken || existingToken;
 
     // Best-effort Timezone detection
-    let resolvedTimezone = "GMT+8";
+    let resolvedTimezone = "America/Los_Angeles";
     const warnings: string[] = [];
     try {
       if (token && normalizedDomain) {
-        const fallTz = timezone || existingStore?.timezone || "GMT+8";
+        const fallTz = timezone || existingStore?.timezone || "America/Los_Angeles";
         resolvedTimezone = await withTimeout(
           detectStoreTimezone(
             actualPlatform,
@@ -373,13 +278,18 @@ router.post("/", async (req, res) => {
           fallTz
         );
       } else {
-        resolvedTimezone = timezone || existingStore?.timezone || "GMT+8";
+        resolvedTimezone = timezone || existingStore?.timezone || "America/Los_Angeles";
       }
     } catch (tzErr) {
       warnings.push("Timezone detection failed, store was saved with fallback timezone.");
-      resolvedTimezone = timezone || existingStore?.timezone || "GMT+8";
+      resolvedTimezone = normalizeTimezone(timezone || existingStore?.timezone, { domain: normalizedDomain, name: normalizedName });
       console.error("[Stores Route] Timezone detection error:", tzErr);
     }
+
+    resolvedTimezone = normalizeTimezone(resolvedTimezone, {
+      domain: normalizedDomain,
+      name: normalizedName
+    });
 
     let savedStore: any = null;
     let responseMode: "created" | "updated_by_id" | "updated_existing_by_name" = "created";

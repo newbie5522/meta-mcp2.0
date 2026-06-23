@@ -20,17 +20,16 @@ export function normalizeTimezone(tz: string | null | undefined, storeContext?: 
     }
   }
 
-  if (!tz) return "America/Los_Angeles"; // Default fallback instead of Asia/Shanghai
+  if (!tz) return "America/Los_Angeles";
   const trimmed = tz.trim();
-
-  // Explicit mappings
   const lower = trimmed.toLowerCase();
   
-  if (lower === "us/pacific" || lower === "pacific time" || lower === "pst" || lower === "pdt" || lower === "pacific/los_angeles") {
-    return "America/Los_Angeles";
-  }
-
   if (
+    lower === "us/pacific" || 
+    lower === "pacific time" || 
+    lower === "pst" || 
+    lower === "pdt" || 
+    lower === "pacific/los_angeles" ||
     lower.includes("gmt-7") || 
     lower.includes("utc-7") || 
     lower.includes("gmt-07") || 
@@ -46,45 +45,16 @@ export function normalizeTimezone(tz: string | null | undefined, storeContext?: 
     Intl.DateTimeFormat(undefined, { timeZone: trimmed });
     return trimmed;
   } catch (e) {
-    // try formatting other numeric offsets typical to database inputs
-    const match = trimmed.match(/([+-])(\d{1,2})/);
-    if (match) {
-      const sign = match[1] === '-' ? -1 : 1;
-      const hours = parseInt(match[2], 10) * sign;
-      
-      if (hours === -8 || hours === -7) {
-        return "America/Los_Angeles";
-      }
-      if (hours === -6) return "America/Chicago";
-      if (hours === -5) return "America/New_York";
-      if (hours === -4) return "America/Halifax";
-      if (hours === -3) return "America/Argentina/Buenos_Aires";
-      if (hours === -2) return "America/Noronha";
-      if (hours === -1) return "Atlantic/Cape_Verde";
-      if (hours === 0) return "UTC";
-      if (hours === 1) return "Europe/London";
-      if (hours === 2) return "Europe/Paris";
-      if (hours === 3) return "Europe/Moscow";
-      if (hours === 4) return "Asia/Dubai";
-      if (hours === 5) return "Asia/Karachi";
-      if (hours === 6) return "Asia/Almaty";
-      if (hours === 7) return "Asia/Bangkok";
-      if (hours === 8) return "Asia/Shanghai";
-      if (hours === 9) return "Asia/Tokyo";
-      if (hours === 10) return "Australia/Sydney";
-      if (hours === 11) return "Pacific/Guadalcanal";
-      if (hours === 12) return "Pacific/Auckland";
-      if (hours === 13) return "Pacific/Apia";
-    }
+    // If not a valid IANA timezone name, return America/Los_Angeles fallback as required
   }
 
-  // Fallback to America/Los_Angeles instead of Asia/Shanghai or Pacific/Honolulu
   return "America/Los_Angeles";
 }
 
 export function getTzOffset(timezoneName: string, dateStr: string): string {
+  const secureTz = normalizeTimezone(timezoneName);
   try {
-    const d = dayjs.tz(`${dateStr}T12:00:00`, timezoneName);
+    const d = dayjs.tz(`${dateStr}T12:00:00`, secureTz);
     return d.format("Z");
   } catch (err) {
     return "-07:00"; // PDT standard
@@ -92,21 +62,23 @@ export function getTzOffset(timezoneName: string, dateStr: string): string {
 }
 
 export function getStoreLocalDate(createdAtStr: string | Date, timezoneStr: string): string {
-  if (!createdAtStr) return dayjs().format("YYYY-MM-DD");
+  const secureTz = normalizeTimezone(timezoneStr);
+  if (!createdAtStr) return dayjs().tz(secureTz).format("YYYY-MM-DD");
   const d = typeof createdAtStr === "string" ? createdAtStr : createdAtStr.toISOString();
   try {
-    return dayjs(d).tz(timezoneStr).format("YYYY-MM-DD");
+    return dayjs(d).tz(secureTz).format("YYYY-MM-DD");
   } catch (err) {
-    return dayjs(d).format("YYYY-MM-DD");
+    return dayjs(d).tz("America/Los_Angeles").format("YYYY-MM-DD");
   }
 }
 
 export function getStoreLocalDatetime(createdAtStr: string | Date, timezoneStr: string): string {
-  if (!createdAtStr) return dayjs().format("YYYY-MM-DDTHH:mm:ss");
+  const secureTz = normalizeTimezone(timezoneStr);
+  if (!createdAtStr) return dayjs().tz(secureTz).format("YYYY-MM-DDTHH:mm:ss");
   const d = typeof createdAtStr === "string" ? createdAtStr : createdAtStr.toISOString();
   try {
-    return dayjs(d).tz(timezoneStr).format("YYYY-MM-DDTHH:mm:ss");
+    return dayjs(d).tz(secureTz).format("YYYY-MM-DDTHH:mm:ss");
   } catch (err) {
-    return dayjs(d).format("YYYY-MM-DDTHH:mm:ss");
+    return dayjs(d).tz("America/Los_Angeles").format("YYYY-MM-DDTHH:mm:ss");
   }
 }
