@@ -949,7 +949,7 @@ router.get("/stores", async (req, res) => {
       const aov = orderSummary.aov;
 
       const lastSync = await prisma.syncLog.findFirst({
-        where: { storeId: String(store.id) },
+        where: { storeId: store.id },
         orderBy: { startedAt: "desc" }
       });
 

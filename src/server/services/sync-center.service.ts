@@ -72,6 +72,20 @@ async function safeEnsureAdSet(id: string, campaignId: string, accountId: string
   }
 }
 
+function normalizeSyncLogStoreId(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  if (!Number.isInteger(n)) return null;
+  return n;
+}
+
+function buildSummaryMetrics(payload: Record<string, unknown>) {
+  return JSON.stringify({
+    ...payload,
+    generatedAt: new Date().toISOString()
+  });
+}
+
 // Interfaces
 export interface TaskResult {
   recordsFetched: number;
@@ -93,16 +107,18 @@ export class SyncCenter {
     triggeredBy: string,
     taskChainId: string,
     parentTaskId: string | null = null,
-    storeId: string | null = null,
+    storeId: string | number | null = null,
     adAccountId: string | null = null,
     executor: () => Promise<TaskResult>
   ): Promise<string> {
     const taskId = generateUUID();
     console.log(`[Sync Center | chain:${taskChainId}] Task ${taskType} started...`);
 
+    const normalizedStoreId = normalizeSyncLogStoreId(storeId);
     const initialMetadata = {
       description: `Running task ${taskType}`,
-      parentTaskId
+      parentTaskId,
+      originalStoreId: storeId !== null && storeId !== undefined ? String(storeId) : null
     };
 
     try {
@@ -116,7 +132,7 @@ export class SyncCenter {
           sourceType,
           triggeredBy,
           taskChainId,
-          storeId,
+          storeId: normalizedStoreId,
           adAccountId,
           metadata: JSON.stringify(initialMetadata)
         }
@@ -138,6 +154,7 @@ export class SyncCenter {
           recordsSaved: result.recordsSaved,
           metadata: JSON.stringify({
             parentTaskId,
+            originalStoreId: storeId !== null && storeId !== undefined ? String(storeId) : null,
             ...result.metadata,
             completedAt: new Date().toISOString()
           })
@@ -161,6 +178,7 @@ export class SyncCenter {
           fbtraceId,
           metadata: JSON.stringify({
             parentTaskId,
+            originalStoreId: storeId !== null && storeId !== undefined ? String(storeId) : null,
             errorStack: err.stack,
             errorCode,
             fbtraceId,
@@ -630,6 +648,17 @@ export class SyncCenter {
               totalOrders++;
             });
 
+            const metrics = buildSummaryMetrics({
+              revenue,
+              orders: totalOrders,
+              spend: 0,
+              clicks: 0,
+              impressions: 0,
+              roas: 0,
+              metaRoas: 0,
+              source: "rebuildStoreSummary"
+            });
+
             await prisma.dailySummary.upsert({
               where: {
                 scope_scopeId_date: {
@@ -640,7 +669,8 @@ export class SyncCenter {
               },
               update: {
                 revenue,
-                orders: totalOrders
+                orders: totalOrders,
+                metrics
               },
               create: {
                 scope: "store",
@@ -652,7 +682,8 @@ export class SyncCenter {
                 clicks: 0,
                 impressions: 0,
                 roas: 0,
-                metaRoas: 0
+                metaRoas: 0,
+                metrics
               }
             });
             upsertedCount++;
@@ -702,6 +733,17 @@ export class SyncCenter {
             const purchases = insights.reduce((sum, item) => sum + (item.purchases || 0), 0);
             const metaRoas = spend > 0 ? (purchasesRevenue / spend) : 0;
 
+            const metrics = buildSummaryMetrics({
+              spend,
+              clicks,
+              impressions,
+              metaRoas,
+              revenue: purchasesRevenue,
+              orders: purchases,
+              roas: 0,
+              source: "rebuildMetaSummary"
+            });
+
             await prisma.dailySummary.upsert({
               where: {
                 scope_scopeId_date: {
@@ -716,7 +758,8 @@ export class SyncCenter {
                 impressions,
                 metaRoas,
                 revenue: purchasesRevenue,
-                orders: purchases
+                orders: purchases,
+                metrics
               },
               create: {
                 scope: "ad_account",
@@ -728,7 +771,8 @@ export class SyncCenter {
                 metaRoas,
                 revenue: purchasesRevenue,
                 orders: purchases,
-                roas: 0
+                roas: 0,
+                metrics
               }
             });
             upsertedCount++;
@@ -809,6 +853,17 @@ export class SyncCenter {
             const realRoas = mappedSpend > 0 ? (storeRevenue / mappedSpend) : 0;
             const metaRoas = mappedSpend > 0 ? (mappedMetaRevenue / mappedSpend) : 0;
 
+            const metrics = buildSummaryMetrics({
+              spend: mappedSpend,
+              clicks: mappedClicks,
+              impressions: mappedImpressions,
+              roas: hasMappings ? realRoas : 0,
+              metaRoas: hasMappings ? metaRoas : 0,
+              hasMapping: hasMappings,
+              mappedAccounts: mappedFbIds,
+              source: "rebuildRoasSummary"
+            });
+
             await prisma.dailySummary.upsert({
               where: {
                 scope_scopeId_date: {
@@ -821,9 +876,9 @@ export class SyncCenter {
                 spend: mappedSpend,
                 clicks: mappedClicks,
                 impressions: mappedImpressions,
-                roas: hasMappings ? realRoas : 0, // No ROAS if mapping is missing
+                roas: hasMappings ? realRoas : 0,
                 metaRoas: hasMappings ? metaRoas : 0,
-                metadata: JSON.stringify({ hasMapping: hasMappings, mappedAccounts: mappedFbIds })
+                metrics
               },
               create: {
                 scope: "store",
@@ -836,7 +891,7 @@ export class SyncCenter {
                 impressions: mappedImpressions,
                 roas: hasMappings ? realRoas : 0,
                 metaRoas: hasMappings ? metaRoas : 0,
-                metadata: JSON.stringify({ hasMapping: hasMappings, mappedAccounts: mappedFbIds })
+                metrics
               }
             });
             updatedCount++;
@@ -895,6 +950,17 @@ export class SyncCenter {
           const totalMetaRevenue = adAccountSummaries.reduce((sum, a) => sum + a.revenue, 0);
           const combinedMetaRoas = totalSpend > 0 ? (totalMetaRevenue / totalSpend) : 0;
 
+          const metrics = buildSummaryMetrics({
+            revenue: totalRevenue,
+            orders: totalOrders,
+            spend: totalSpend,
+            clicks: totalClicks,
+            impressions: totalImpressions,
+            roas: combinedRoas,
+            metaRoas: combinedMetaRoas,
+            source: "rebuildDashboardSummary"
+          });
+
           await prisma.dailySummary.upsert({
             where: {
               scope_scopeId_date: {
@@ -910,7 +976,8 @@ export class SyncCenter {
               clicks: totalClicks,
               impressions: totalImpressions,
               roas: combinedRoas,
-              metaRoas: combinedMetaRoas
+              metaRoas: combinedMetaRoas,
+              metrics
             },
             create: {
               scope: "dashboard",
@@ -922,7 +989,8 @@ export class SyncCenter {
               clicks: totalClicks,
               impressions: totalImpressions,
               roas: combinedRoas,
-              metaRoas: combinedMetaRoas
+              metaRoas: combinedMetaRoas,
+              metrics
             }
           });
           upsertedCount++;

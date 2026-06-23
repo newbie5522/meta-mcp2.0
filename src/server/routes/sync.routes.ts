@@ -287,7 +287,7 @@ router.get("/sync/logs", async (req, res) => {
         { taskType: type }
       ];
     }
-    if (storeId) whereClause.storeId = String(storeId);
+    if (storeId) whereClause.storeId = Number(storeId);
 
     const logs = await prisma.syncLog.findMany({
       where: whereClause,
