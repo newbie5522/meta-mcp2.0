@@ -148,6 +148,11 @@ model Order {
   store_local_datetime String?
   paymentStatus     String?   @default("paid")
   fulfillmentStatus String?   @default("fulfilled")
+  shippingCountryCode String?
+  shippingCountryName String?
+  billingCountryCode  String?
+  billingCountryName  String?
+  countrySource       String?
 }
 
 model Campaign {

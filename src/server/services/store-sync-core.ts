@@ -623,6 +623,58 @@ export async function fetchStoreOrdersCanonical(params: {
   };
 }
 
+export interface CountryFields {
+  shippingCountryCode: string | null;
+  shippingCountryName: string | null;
+  billingCountryCode: string | null;
+  billingCountryName: string | null;
+  countrySource: string;
+}
+
+export function parseOrderCountryFields(rawPayload: any): CountryFields {
+  if (!rawPayload) {
+    return {
+      shippingCountryCode: null,
+      shippingCountryName: null,
+      billingCountryCode: null,
+      billingCountryName: null,
+      countrySource: "unknown"
+    };
+  }
+
+  // Support typical Shopify / Shopline / Shoplazza keys (shipping_address / billing_address)
+  // Check both underscored and camel case format
+  const shipping = rawPayload.shipping_address || rawPayload.shippingAddress || {};
+  const billing = rawPayload.billing_address || rawPayload.billingAddress || {};
+
+  const shippingCountryCodeRaw = shipping.country_code || shipping.countryCode || null;
+  const shippingCountryNameRaw = shipping.country || shipping.countryName || null;
+  const billingCountryCodeRaw = billing.country_code || billing.countryCode || null;
+  const billingCountryNameRaw = billing.country || billing.countryName || null;
+
+  // Standardise country codes to uppercase 2 letters
+  const shippingCountryCode = typeof shippingCountryCodeRaw === "string" ? shippingCountryCodeRaw.trim().toUpperCase() : null;
+  const billingCountryCode = typeof billingCountryCodeRaw === "string" ? billingCountryCodeRaw.trim().toUpperCase() : null;
+
+  const shippingCountryName = typeof shippingCountryNameRaw === "string" ? shippingCountryNameRaw.trim() : null;
+  const billingCountryName = typeof billingCountryNameRaw === "string" ? billingCountryNameRaw.trim() : null;
+
+  let countrySource = "unknown";
+  if (shippingCountryCode || shippingCountryName) {
+    countrySource = "shipping";
+  } else if (billingCountryCode || billingCountryName) {
+    countrySource = "billing";
+  }
+
+  return {
+    shippingCountryCode,
+    shippingCountryName,
+    billingCountryCode,
+    billingCountryName,
+    countrySource
+  };
+}
+
 /**
  * Persists a list of CanonicalOrders to the SQLite/PostgreSQL Database atomically in a single session.
  */
@@ -685,6 +737,8 @@ export async function saveCanonicalOrdersToDb(
       deletedRows += deleted.count;
     }
 
+    const countries = parseOrderCountryFields(o.raw);
+
     for (const item of o.lineItems) {
       const productId = item.productId || `product-${o.orderId}`;
       const orderLineId = `${o.orderId}-${item.lineItemId}`;
@@ -724,7 +778,12 @@ export async function saveCanonicalOrdersToDb(
           fulfillmentStatus: o.fulfillmentStatus || "unfulfilled",
           created_at_utc: new Date(o.rawCreatedAt || o.attributionTimeRaw),
           store_timezone: o.storeTimezone,
-          store_local_datetime: o.storeLocalDatetime
+          store_local_datetime: o.storeLocalDatetime,
+          shippingCountryCode: countries.shippingCountryCode,
+          shippingCountryName: countries.shippingCountryName,
+          billingCountryCode: countries.billingCountryCode,
+          billingCountryName: countries.billingCountryName,
+          countrySource: countries.countrySource
         },
         create: {
           id: orderLineId,
@@ -742,7 +801,12 @@ export async function saveCanonicalOrdersToDb(
           fulfillmentStatus: o.fulfillmentStatus || "unfulfilled",
           created_at_utc: new Date(o.rawCreatedAt || o.attributionTimeRaw),
           store_timezone: o.storeTimezone,
-          store_local_datetime: o.storeLocalDatetime
+          store_local_datetime: o.storeLocalDatetime,
+          shippingCountryCode: countries.shippingCountryCode,
+          shippingCountryName: countries.shippingCountryName,
+          billingCountryCode: countries.billingCountryCode,
+          billingCountryName: countries.billingCountryName,
+          countrySource: countries.countrySource
         }
       });
 

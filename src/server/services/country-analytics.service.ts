@@ -164,7 +164,7 @@ export async function getCountryAnalytics(
     const mappedStoreId = aid ? adAccountStoreMap.get(aid) : undefined;
 
     // If storeId filter is active, check if it matches
-    if (filterStoreId) {
+    if (filterStoreId && filterStoreId !== "all") {
       const matchStoreId = Number(filterStoreId);
       if (mappedStoreId !== matchStoreId) {
         // Skip records that do not belong to the requested store
@@ -216,38 +216,123 @@ export async function getCountryAnalytics(
     if (mappedStoreId) group.mappedStoreIds.add(mappedStoreId);
   }
 
+  // 3. Query and aggregate real database order country performance
+  const orderWhereClause: any = {
+    store_local_date: {
+      gte: startDate,
+      lte: endDate
+    }
+  };
+  if (filterStoreId && filterStoreId !== "all") {
+    orderWhereClause.storeId = Number(filterStoreId);
+  }
+
+  const dbOrders = await prisma.order.findMany({
+    where: orderWhereClause
+  });
+
+  const orderCountryGroup: Record<string, {
+    countryCode: string;
+    revenue: number;
+    profit: number;
+    totalLines: number;
+    refundedCount: number;
+    uniqueOrderIds: Set<string>;
+    firstAt: Date | null;
+    lastAt: Date | null;
+  }> = {};
+
+  const totalUniqueOrderIdsOverall = new Set<string>();
+  let totalOrderRevenueOverall = 0;
+
+  for (const row of dbOrders) {
+    const rawCode = row.shippingCountryCode || row.billingCountryCode || "UNKNOWN";
+    const cCode = rawCode.trim().toUpperCase() || "UNKNOWN";
+
+    if (!orderCountryGroup[cCode]) {
+      orderCountryGroup[cCode] = {
+        countryCode: cCode,
+        revenue: 0,
+        profit: 0,
+        totalLines: 0,
+        refundedCount: 0,
+        uniqueOrderIds: new Set<string>(),
+        firstAt: null,
+        lastAt: null
+      };
+    }
+
+    const og = orderCountryGroup[cCode];
+    og.revenue += row.revenue || 0;
+    og.profit += row.profit || 0;
+    og.totalLines++;
+
+    if (row.orderId) {
+      og.uniqueOrderIds.add(row.orderId);
+      totalUniqueOrderIdsOverall.add(row.orderId);
+    }
+    totalOrderRevenueOverall += row.revenue || 0;
+
+    if (row.refunded) {
+      og.refundedCount++;
+    }
+
+    const dateObj = row.createdAt;
+    if (dateObj) {
+      if (!og.firstAt || dateObj < og.firstAt) og.firstAt = dateObj;
+      if (!og.lastAt || dateObj > og.lastAt) og.lastAt = dateObj;
+    }
+  }
+
+  // 4. Combine the Union of all countries
+  const allCountryCodes = Array.from(new Set([
+    ...Object.keys(countryBreakdownGroup),
+    ...Object.keys(orderCountryGroup)
+  ]));
+
   // Convert map to final rows with formula metrics
-  const mergedRows: MergedCountryRow[] = Object.values(countryBreakdownGroup)
-    .map(g => {
-      const countryCode = g.countryCode;
+  const mergedRows: MergedCountryRow[] = allCountryCodes
+    .map(countryCode => {
+      const g = countryBreakdownGroup[countryCode];
+      const og = orderCountryGroup[countryCode];
       const countryName = COUNTRY_NAME_MAP[countryCode] || countryCode;
 
-      const metaSpend = g.spend;
-      const metaImpressions = g.impressions;
-      const metaClicks = g.clicks;
-      const metaPurchases = g.purchases;
-      const metaPurchaseValue = g.purchaseValue;
+      const metaSpend = g ? g.spend : 0;
+      const metaImpressions = g ? g.impressions : 0;
+      const metaClicks = g ? g.clicks : 0;
+      const metaPurchases = g ? g.purchases : 0;
+      const metaPurchaseValue = g ? g.purchaseValue : 0;
 
       const metaRoas = metaSpend > 0 ? metaPurchaseValue / metaSpend : null;
       const ctr = metaImpressions > 0 ? metaClicks / metaImpressions : 0;
       const cpc = metaClicks > 0 ? metaSpend / metaClicks : 0;
       const cpm = metaImpressions > 0 ? (metaSpend / metaImpressions) * 1000 : 0;
 
+      const orderRevenue = og ? og.revenue : null;
+      const orderCount = og ? og.uniqueOrderIds.size : null;
+      const orderProfit = og ? og.profit : null;
+      const refundRate = og && og.uniqueOrderIds.size > 0 ? (og.refundedCount / og.uniqueOrderIds.size) : null;
+      const paidOrderCount = og ? og.uniqueOrderIds.size : null;
+      const averageOrderValue = og && og.uniqueOrderIds.size > 0 ? (og.revenue / og.uniqueOrderIds.size) : null;
+      const orderFirstAt = og && og.firstAt ? og.firstAt.toISOString() : null;
+      const orderLastAt = og && og.lastAt ? og.lastAt.toISOString() : null;
+
+      const accountIds = g ? Array.from(g.accountIds) : [];
+      const mappedStoreIds = g ? Array.from(g.mappedStoreIds) : [];
+
       return {
         countryCode,
         countryName,
         
-        // Order numbers are completely unavailable inside schema.
-        orderRevenue: null,
-        orderCount: null,
-        orderProfit: null,
-        refundRate: null,
-        paidOrderCount: null,
-        averageOrderValue: null,
-        orderFirstAt: null,
-        orderLastAt: null,
+        orderRevenue,
+        orderCount,
+        orderProfit,
+        refundRate,
+        paidOrderCount,
+        averageOrderValue,
+        orderFirstAt,
+        orderLastAt,
 
-        // Meta insights info block
         metaSpend,
         metaImpressions,
         metaClicks,
@@ -258,25 +343,35 @@ export async function getCountryAnalytics(
         cpc,
         cpm,
 
-        accountIds: Array.from(g.accountIds),
-        mappedStoreIds: Array.from(g.mappedStoreIds),
-        dataSourceExplain: "Meta country spend. Order fields not available in Prisma Order model."
+        accountIds,
+        mappedStoreIds,
+        dataSourceExplain: "Prisma Unified Country Aggregate (Order-resolved + Meta action-insights)"
       };
     })
-    // Filter out rows by minSpend parameter
-    .filter(row => row.metaSpend >= minSpend);
+    // Filter out rows by minSpend or minOrders parameter
+    .filter(row => {
+      const spendOk = row.metaSpend >= minSpend;
+      const ordersOk = (row.orderCount || 0) >= minOrders;
+      return spendOk && ordersOk;
+    });
 
-  // Sort rows by metaSpend descending
-  mergedRows.sort((a, b) => b.metaSpend - a.metaSpend);
+  // Sort rows by metaSpend or orderRevenue descending
+  mergedRows.sort((a, b) => {
+    const spendDiff = b.metaSpend - a.metaSpend;
+    if (Math.abs(spendDiff) > 0.01) return spendDiff;
+    return (b.orderRevenue || 0) - (a.orderRevenue || 0);
+  });
 
   const countriesCount = mergedRows.length;
+  const orderCountriesCount = mergedRows.filter(r => (r.orderCount || 0) > 0).length;
+  const metaCountriesCount = mergedRows.filter(r => r.metaSpend > 0).length;
+
   const unmappedSpendRate = totalMetaSpendOverall > 0 
     ? unmappedMetaSpendOverall / totalMetaSpendOverall 
     : 0;
 
   // Set up health and warnings
   const warnings: string[] = [];
-  warnings.push("Order table lacks country, shipping, and billing address fields. Order country metrics are unavailable.");
   if (unmappedSpendRate > 0.05) {
     warnings.push(`High share of unmapped Meta Ad Account Spend: ${(unmappedSpendRate * 100).toFixed(1)}% of spend is associated with unmapped accounts.`);
   }
@@ -285,10 +380,10 @@ export async function getCountryAnalytics(
     rows: mergedRows,
     summary: {
       countriesCount,
-      orderCountriesCount: 0, // Order country data unavailable
-      metaCountriesCount: countriesCount,
-      totalOrderRevenue: null,
-      totalOrderCount: null,
+      orderCountriesCount,
+      metaCountriesCount,
+      totalOrderRevenue: totalOrderRevenueOverall,
+      totalOrderCount: totalUniqueOrderIdsOverall.size,
       totalMetaSpend: totalMetaSpendOverall,
       totalMetaPurchases: totalMetaPurchasesOverall,
       totalMetaPurchaseValue: totalMetaPurchaseValueOverall,
@@ -296,7 +391,7 @@ export async function getCountryAnalytics(
       unmappedMetaSpendRate: unmappedSpendRate
     },
     dataHealth: {
-      orderCountryAvailable: false,
+      orderCountryAvailable: dbOrders.length > 0,
       metaCountryAvailable: rawBreakdowns.length > 0,
       unmappedAccountsCount: uniqueUnmappedAccountIds.size,
       unmappedSpendRate,
@@ -309,8 +404,8 @@ export async function getCountryAnalytics(
       dailySummaryUsed: false,
       storeMappingUsed: true,
       countryJoinKey: "countryCode",
-      storeRoasMeaning: "Unavailable due to Order country data absence.",
-      orderUnavailableReason: "Order model schema lacks shippingCountry or equivalent fields."
+      storeRoasMeaning: "Total order revenue divided by Meta country spend.",
+      orderUnavailableReason: dbOrders.length > 0 ? "OK" : "No country-related orders parsed for this store range."
     }
   };
 }

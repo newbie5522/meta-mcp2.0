@@ -404,7 +404,18 @@ export async function runDataCenterAudit(params: {
   if (fSpend > 0 && audienceRows.length === 0) {
     warnings.push("Meta 主成效已同步，但受众 breakdown 未同步，国家/年龄/平台分析不可用。");
   }
-  warnings.push("当前国家数据来自 Meta 受众国家，不代表真实订单国家。");
+
+  // Country Data Completeness & Consistency checks
+  const ordersWithCountry = orderRows.filter(r => r.shippingCountryCode || r.billingCountryCode).length;
+  const orderCountryCoverageRate = orderRows.length > 0 ? (ordersWithCountry / orderRows.length) : 0;
+  if (orderRows.length > 0 && orderCountryCoverageRate < 1.0) {
+    warnings.push(`订单国家覆盖不完整: 有 ${( (1.0 - orderCountryCoverageRate) * 100 ).toFixed(1)}% 的订单存在国家字段缺失。建议运行 backfill 历史国别回填任务。`);
+  }
+  if (orderRows.length > 0 && audienceRows.length === 0) {
+    warnings.push("店铺订单国家数据（通过 shipping/billing 地址）已可读，但 Meta 国别受众 breakdown 暂未同步。建议触发 Meta 受众同步进行双向比对。");
+  }
+
+  warnings.push("已接通订单与 Meta 广告国家级细分链路，支持在 [受众 / 国家] 界面进行双向归属比对。");
 
   // Sync Log Diagnoses
   if (recentFailedLogs.length > 0) {

@@ -23,7 +23,8 @@
     "trace:shopline-dashboard-day": "tsx src/server/scripts/trace-shopline-dashboard-day.ts",
     "trace:store-revenue-source": "tsx src/server/scripts/trace-store-revenue-source.ts",
     "trace:data-realtime": "tsx src/server/scripts/trace-data-realtime.ts",
-    "rebuild:store-ledger": "tsx src/server/scripts/rebuild-store-ledger.ts"
+    "rebuild:store-ledger": "tsx src/server/scripts/rebuild-store-ledger.ts",
+    "backfill:order-country": "tsx src/server/scripts/backfill-order-country-fields.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
