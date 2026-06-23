@@ -118,17 +118,8 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
-  useEffect(() => {
-    axios.get("/api/data-center/max-date")
-      .then(res => {
-        if (res.data && res.data.maxDate) {
-          const maxDateStr = String(res.data.maxDate).slice(0, 10);
-          setEndDate(businessDateStringToSafeDate(maxDateStr));
-          setStartDate(businessDateStringToSafeDate(dayjs(maxDateStr).subtract(29, "day").format("YYYY-MM-DD")));
-        }
-      })
-      .catch(err => console.warn("Failed to fetch database max date:", err));
-  }, []);
+  // 默认日期只由 getBusinessDateRange("past_30") 决定。
+  // /api/data-center/max-date 只能用于数据健康提示，不允许自动覆盖用户筛选日期。
 
   const fetchMappings = async () => {
     try {

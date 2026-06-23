@@ -102,7 +102,7 @@ export function DateFilter({
 
         <div className="text-[11px] text-indigo-600 bg-indigo-50/70 px-2.5 py-1 rounded-full inline-flex items-center gap-1 font-medium font-sans border border-indigo-100 ml-auto mr-1 shadow-sm">
           <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
-          当前系统业务时区：{getBusinessTimezone()}
+          业务时区：{getBusinessTimezone()}｜快捷周期默认不含今天，按平台闭合业务日统计
         </div>
       </div>
       
