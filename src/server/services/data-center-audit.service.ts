@@ -74,22 +74,34 @@ export async function runDataCenterAudit(params: {
     }
   }
   const uniqueStoreAccountIds = Array.from(new Set(storeAccountIds.filter(Boolean)));
+  const uniqueStoreAccountIdsCanonical = uniqueStoreAccountIds.map(id => normalizeMetaAccountId(id));
+  const uniqueStoreAccountIdsNumeric = uniqueStoreAccountIdsCanonical.map(id => id.replace(/^act_/, ""));
+  const uniqueStoreAccountIdsAll = Array.from(new Set([
+    ...uniqueStoreAccountIdsCanonical,
+    ...uniqueStoreAccountIdsNumeric
+  ]));
 
   // Setup queries
   const factMetaPerformanceFilters: any = {
     date: { gte: startDate, lte: endDate }
   };
   if (accountId) {
-    factMetaPerformanceFilters.account_id = accountId;
+    const canonicalAccountId = normalizeMetaAccountId(params.accountId);
+    const numericAccountId = canonicalAccountId.replace(/^act_/, "");
+    factMetaPerformanceFilters.account_id = {
+      in: [canonicalAccountId, numericAccountId]
+    };
   } else if (storeId) {
-    factMetaPerformanceFilters.account_id = { in: uniqueStoreAccountIds };
+    factMetaPerformanceFilters.account_id = { in: uniqueStoreAccountIdsAll };
   }
 
   const dcMetaAccountDailyFilters: any = {
     date: { gte: startDate, lte: endDate }
   };
   if (accountId) {
-    dcMetaAccountDailyFilters.accountId = accountId;
+    const canonicalAccountId = normalizeMetaAccountId(params.accountId);
+    const numericAccountId = canonicalAccountId.replace(/^act_/, "");
+    dcMetaAccountDailyFilters.accountId = { in: [canonicalAccountId, numericAccountId] };
   } else if (storeId) {
     dcMetaAccountDailyFilters.storeId = storeId;
   }
@@ -112,9 +124,11 @@ export async function runDataCenterAudit(params: {
     date: { gte: startDate, lte: endDate }
   };
   if (accountId) {
-    audienceFilters.account_id = accountId;
+    const canonicalAccountId = normalizeMetaAccountId(params.accountId);
+    const numericAccountId = canonicalAccountId.replace(/^act_/, "");
+    audienceFilters.account_id = { in: [canonicalAccountId, numericAccountId] };
   } else if (storeId) {
-    audienceFilters.account_id = { in: uniqueStoreAccountIds };
+    audienceFilters.account_id = { in: uniqueStoreAccountIdsAll };
   }
 
   // Query actual records safely
@@ -177,11 +191,48 @@ export async function runDataCenterAudit(params: {
   }
 
   // 2. Process Store Orders Fact vs Store Daily Ledger
-  const uniqueOrdersSet = new Set(orderRows.map(o => o.orderId || o.id));
-  const uniqueOrders = uniqueOrdersSet.size;
+  const uniqueOrderMap = new Map<string, {
+    orderTotal: number;
+    lineRevenue: number;
+    rows: number;
+  }>();
+
+  for (const o of orderRows) {
+    const orderKey = String(o.orderId || o.id);
+    if (!uniqueOrderMap.has(orderKey)) {
+      uniqueOrderMap.set(orderKey, {
+        orderTotal: Number(o.orderTotal || 0),
+        lineRevenue: 0,
+        rows: 0
+      });
+    }
+
+    const item = uniqueOrderMap.get(orderKey)!;
+    item.rows += 1;
+    item.lineRevenue += Number(o.revenue || 0);
+
+    if ((!item.orderTotal || item.orderTotal <= 0) && o.orderTotal && Number(o.orderTotal) > 0) {
+      item.orderTotal = Number(o.orderTotal);
+    }
+  }
+
+  const uniqueOrders = uniqueOrderMap.size;
+  const orderTotalRevenue = Number(
+    Array.from(uniqueOrderMap.values())
+      .reduce((s, o) => s + (o.orderTotal > 0 ? o.orderTotal : o.lineRevenue), 0)
+      .toFixed(2)
+  );
+
+  const lineRevenue = Number(
+    Array.from(uniqueOrderMap.values())
+      .reduce((s, o) => s + o.lineRevenue, 0)
+      .toFixed(2)
+  );
+
+  const ordersWithMultipleRowsCount = Array.from(uniqueOrderMap.values())
+    .filter(o => o.rows > 1).length;
+
   const oRevenue = Number(orderRows.filter(o => !o.refunded).reduce((s, o) => s + (o.revenue || 0), 0).toFixed(2));
-  const orderTotalRevenue = Number(orderRows.reduce((s, o) => s + (o.orderTotal || o.revenue || 0), 0).toFixed(2));
-  const lineRevenue = Number(orderRows.reduce((s, o) => s + (o.revenue || 0), 0).toFixed(2));
 
   const missingStoreLocalDateCount = modelCheck.Order.exists ? await prisma.order.count({
     where: {
@@ -226,7 +277,9 @@ export async function runDataCenterAudit(params: {
 
   // 4. Mapping stats
   const storesCount = stores.length;
-  const productionStoresCount = stores.filter(s => s.mode === "production" || s.mode !== "sandbox").length;
+  const productionStoresCount = stores.filter(s =>
+    s.mode === "production" || s.mode === "生产"
+  ).length;
   const storesWithTokenCount = stores.filter(s => !!(s.shopline_token || s.shopify_token || s.shoplazza_token)).length;
 
   const mappingFacts = await getAccountMappingFacts({
@@ -260,22 +313,42 @@ export async function runDataCenterAudit(params: {
   }) : [];
 
   const lastMetaFactSync = modelCheck.SyncLog.exists ? await prisma.syncLog.findFirst({
-    where: { type: "sync_meta_insights" },
+    where: {
+      OR: [
+        { type: "sync_meta_insights" },
+        { taskType: "sync_meta_insights" }
+      ]
+    },
     orderBy: { startedAt: "desc" }
   }) : null;
 
   const lastMetaLedgerRefresh = modelCheck.SyncLog.exists ? await prisma.syncLog.findFirst({
-    where: { type: { contains: "refresh-meta" } },
+    where: {
+      OR: [
+        { type: { contains: "refresh-meta" } },
+        { taskType: { contains: "refresh-meta" } }
+      ]
+    },
     orderBy: { startedAt: "desc" }
   }) : null;
 
   const lastStoreOrderSync = modelCheck.SyncLog.exists ? await prisma.syncLog.findFirst({
-    where: { type: { in: ["shopify_orders", "shopline_orders", "shoplazza_orders", "sync_store_orders"] } },
+    where: {
+      OR: [
+        { type: { in: ["shopify_orders", "shopline_orders", "shoplazza_orders", "sync_store_orders"] } },
+        { taskType: { in: ["shopify_orders", "shopline_orders", "shoplazza_orders", "sync_store_orders"] } }
+      ]
+    },
     orderBy: { startedAt: "desc" }
   }) : null;
 
   const lastStoreLedgerRefresh = modelCheck.SyncLog.exists ? await prisma.syncLog.findFirst({
-    where: { type: { contains: "refresh-store" } },
+    where: {
+      OR: [
+        { type: { contains: "refresh-store" } },
+        { taskType: { contains: "refresh-store" } }
+      ]
+    },
     orderBy: { startedAt: "desc" }
   }) : null;
 
@@ -401,6 +474,7 @@ export async function runDataCenterAudit(params: {
         revenue: oRevenue,
         orderTotalRevenue,
         lineRevenue,
+        ordersWithMultipleRowsCount,
         missingStoreLocalDateCount,
         latestStoreLocalDate,
         latestCreatedAt

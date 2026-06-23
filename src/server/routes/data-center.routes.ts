@@ -14,6 +14,7 @@ import { getMetaAccountPerformanceFacts, getMetaPerformanceSummary } from "../se
 import { getAccountMappingFacts, resolveAccountStoreBinding } from "../services/mapping-fact.service.js";
 import { runDataPipelineAudit } from "../services/data-pipeline-audit.service.js";
 import { runDataCenterAudit } from "../services/data-center-audit.service.js";
+import { runDataCenterRebuild } from "../services/data-center-rebuild.service.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -2106,6 +2107,48 @@ router.get("/audit", async (req, res) => {
     res.json(auditResult);
   } catch (err: any) {
     res.status(500).json({ error: "Data Center Audit failed", details: err.message });
+  }
+});
+
+// 8. Data Center Rebuild endpoint
+router.post("/rebuild", async (req, res) => {
+  try {
+    const {
+      startDate,
+      endDate,
+      storeId,
+      accountId,
+      includeMetaAccounts = true,
+      includeMetaStructure = true,
+      includeMetaRawFacts = true,
+      includeMetaLedger = true,
+      includeAudience = true,
+      includeStoreOrders = true,
+      includeStoreLedger = true,
+      rebuildStoreOrders = false
+    } = req.body;
+
+    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
+    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+
+    const result = await runDataCenterRebuild({
+      startDate: startStr,
+      endDate: endStr,
+      storeId: storeId ? String(storeId) : undefined,
+      accountId: accountId ? String(accountId) : undefined,
+      includeMetaAccounts: includeMetaAccounts !== false,
+      includeMetaStructure: includeMetaStructure !== false,
+      includeMetaRawFacts: includeMetaRawFacts !== false,
+      includeMetaLedger: includeMetaLedger !== false,
+      includeAudience: includeAudience !== false,
+      includeStoreOrders: includeStoreOrders !== false,
+      includeStoreLedger: includeStoreLedger !== false,
+      rebuildStoreOrders: !!rebuildStoreOrders
+    });
+
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: "Data Center Rebuild failed", details: err.message });
   }
 });
 
