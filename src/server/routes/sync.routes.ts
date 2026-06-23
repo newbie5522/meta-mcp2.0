@@ -6,6 +6,8 @@ import { getMetaToken, normalizeMetaAccountId } from "../utils.js";
 import { syncStoreData } from "../services/store-sync.service.js";
 import { syncMetaInsightsForActiveAccounts } from "../services/meta-insights.service.js";
 import dayjs from "dayjs";
+import { syncMetaAccountSpendRealtime } from "../services/meta-realtime-sync.service.js";
+import { getStoreOrderSummary } from "../services/order-fact.service.js";
 
 const router = Router();
 
@@ -354,6 +356,121 @@ router.get("/sync/chains", async (req, res) => {
     res.json(chainsList);
   } catch (error: any) {
     res.status(500).json({ error: "Failed to load grouped task chains", details: error.message });
+  }
+});
+
+router.post("/sync/store-realtime", async (req, res) => {
+  try {
+    const {
+      storeId,
+      startDate,
+      endDate,
+      baselineRevenue,
+      baselineOrders,
+      rebuild = true
+    } = req.body;
+
+    if (!storeId || !startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: "MISSING_REQUIRED_PARAMS",
+        message: "storeId/startDate/endDate are required."
+      });
+    }
+
+    const results = await syncStoreData(startDate, endDate, String(storeId), {
+      rebuild: rebuild === true || rebuild === "true",
+      baselineRevenue: baselineRevenue !== undefined ? Number(baselineRevenue) : undefined,
+      baselineOrders: baselineOrders !== undefined ? Number(baselineOrders) : undefined
+    });
+
+    const result = results[Number(storeId)];
+
+    const summary = await getStoreOrderSummary({
+      startDate,
+      endDate,
+      storeId: String(storeId),
+      includeLegacyCreatedAtFallback: false
+    });
+
+    const orderRows = summary.orders.length;
+    const uniqueOrderCount = summary.ordersCount;
+    const orderTotalSum = summary.totalSales;
+    const lineRevenueSum = Number(summary.orders.reduce((s, o) => s + Number(o.revenue || 0), 0).toFixed(2));
+
+    return res.json({
+      success: true,
+      mode: "store_realtime_order_level",
+      result,
+      recordsFetched: result?.recordsFetched || 0,
+      recordsSaved: result?.recordsSaved || 0,
+      recordsUpdated: result?.recordsUpdated || 0,
+      deletedRows: result?.deletedRows || 0,
+      orderRows,
+      uniqueOrderCount,
+      orderTotalSum,
+      lineRevenueSum,
+      revenueField: result?.diagnostics?.revenueField,
+      dateField: result?.diagnostics?.attributionField,
+      dataCenterRevenue: orderTotalSum,
+      reconciliation: {
+        orderRows,
+        uniqueOrderCount,
+        orderTotalSum,
+        lineRevenueSum,
+        revenueField: result?.diagnostics?.revenueField,
+        dateField: result?.diagnostics?.attributionField,
+        revenueFieldSums: result?.diagnostics?.revenueFieldSums,
+        attributionFieldStats: result?.diagnostics?.attributionFieldStats
+      }
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      error: "STORE_REALTIME_SYNC_FAILED",
+      message: error?.message || String(error)
+    });
+  }
+});
+
+router.post("/sync/meta-realtime", async (req, res) => {
+  try {
+    const {
+      startDate,
+      endDate,
+      accountIds,
+      storeId,
+      includeUnmapped = true
+    } = req.body;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: "MISSING_DATE_RANGE",
+        message: "startDate and endDate are required."
+      });
+    }
+
+    const result = await syncMetaAccountSpendRealtime({
+      startDate,
+      endDate,
+      accountIds,
+      storeId: storeId ? Number(storeId) : null,
+      includeUnmapped: includeUnmapped === true || includeUnmapped === "true",
+      triggeredBy: "frontend_realtime"
+    });
+
+    return res.json({
+      success: true,
+      mode: "meta_realtime_account_level",
+      ...result
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      error: "META_REALTIME_SYNC_FAILED",
+      message: error?.message || String(error)
+    });
   }
 });
 

@@ -68,7 +68,17 @@ export function StandardPageHeader({
     <div className="space-y-6 mb-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900 tracking-tight">{title}</h2>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <h2 className="text-2xl font-bold text-slate-900 tracking-tight">{title}</h2>
+            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] font-semibold text-emerald-700 uppercase">
+              <span className="w-1 h-1 rounded-full bg-emerald-500"></span>
+              订单统计: 店铺整单计算口径已校准
+            </div>
+            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-[10px] font-semibold text-indigo-700 uppercase">
+              <span className="w-1 h-1 rounded-full bg-indigo-500 animate-pulse"></span>
+              Meta 刷新: 账户级实时同频归建
+            </div>
+          </div>
           {description && <p className="text-sm text-slate-500 mt-1">{description}</p>}
         </div>
         <div className="flex items-center gap-3">

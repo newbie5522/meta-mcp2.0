@@ -355,7 +355,12 @@ export async function syncStoreData(
         baseline
       });
 
-      const writeStats = await saveCanonicalOrdersToDb(canonical.orders);
+      const writeStats = await saveCanonicalOrdersToDb(canonical.orders, {
+        rebuild: Boolean(options?.rebuild),
+        storeId: store.id,
+        startDate,
+        endDate
+      });
 
       results[store.id] = {
         storeId: store.id,
@@ -371,6 +376,8 @@ export async function syncStoreData(
         recordsFetched: canonical.diagnostics.apiOrdersCount,
         recordsSaved: writeStats.saved,
         recordsUpdated: writeStats.updated,
+        deletedRows: writeStats.deletedRows,
+        orderRowsWritten: writeStats.orderRowsWritten,
         recordsSkipped: canonical.diagnostics.apiOrdersCount - canonical.diagnostics.validOrdersCount,
         skippedReasons: [],
         duplicateCount: writeStats.updated,

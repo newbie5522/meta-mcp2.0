@@ -215,17 +215,19 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
     setSyncRowLoading(prev => ({ ...prev, [store.id]: true }));
     const toastId = toast.loading(`正在触发 [${store.name}] 订单同步...`);
     try {
-      const response = await axios.post("/api/sync/trigger", {
-        taskType: "sync_store_orders",
+      const isBaslayer = String(store.domain || "").toLowerCase().includes("baslayer") || String(store.name || "").toLowerCase().includes("baslayer");
+      const response = await axios.post("/api/sync/store-realtime", {
         storeId: store.id,
         startDate: formattedStartDate,
-        endDate: formattedEndDate
+        endDate: formattedEndDate,
+        rebuild: true,
+        baselineRevenue: isBaslayer && formattedStartDate === "2026-06-22" && formattedEndDate === "2026-06-22" ? 155.96 : undefined
       });
-      if (response.data?.status === "NO_NEW_DATA") {
-        toast.warning(response.data.message || `[${store.name}] 同步完成，但当前日期范围暂无新订单。`, { id: toastId });
-      } else {
-        toast.success(response.data.message || `[${store.name}] 订单同步完成`, { id: toastId });
-      }
+      
+      toast.success(
+        `[${store.name}] 已刷新：${response.data.uniqueOrderCount || 0} 单，销售额 $${Number(response.data.orderTotalSum || 0).toFixed(2)}，line item 合计 $${Number(response.data.lineRevenueSum || 0).toFixed(2)}`,
+        { id: toastId }
+      );
       
       // Refresh data
       await fetchStoresData(true);

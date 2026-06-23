@@ -56,6 +56,38 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   // Status Filter state: "spend" | "active" | "all" | "unmapped"
   const [statusFilter, setStatusFilter] = useState<"spend" | "active" | "all" | "unmapped">("all");
   const [syncing, setSyncing] = useState(false);
+  const [metaSyncing, setMetaSyncing] = useState(false);
+
+  const handleMetaRealtimeSync = async () => {
+    setMetaSyncing(true);
+    const toastId = toast.loading("正在为当前日期加载 Meta 进行账户级实时刷新...");
+    try {
+      const startStr = format(startDate, "yyyy-MM-dd");
+      const endStr = format(endDate, "yyyy-MM-dd");
+
+      const response = await axios.post("/api/sync/meta-realtime", {
+        startDate: startStr,
+        endDate: endStr,
+        storeId: storeFilter === "all" ? undefined : storeFilter,
+        includeUnmapped: true
+      });
+
+      if (response.data?.success) {
+        toast.success(
+          `Meta 实时拉取成功：共对账 ${response.data.accountsSynced || 0} 个账户，新增 ${response.data.recordsSaved || 0} 天记录，更新 ${response.data.recordsUpdated || 0} 天记录。`,
+          { id: toastId, duration: 5000 }
+        );
+      } else {
+        toast.error("Meta 实时拉取未完全成功", { id: toastId });
+      }
+      await loadData();
+    } catch (error: any) {
+      console.error("Meta realtime sync error:", error);
+      toast.error(`实时刷新失败: ${getApiErrorMessage(error)}`, { id: toastId });
+    } finally {
+      setMetaSyncing(false);
+    }
+  };
 
   // Sorting configurations
   const [sortField, setSortField] = useState<string>("spend");
@@ -203,9 +235,14 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       
       {/* Sleek Mini Footprint Status Info Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 font-medium">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 font-medium">
           <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></span>
+            <span className={cn(
+              "w-1.5 h-1.5 rounded-full animate-pulse",
+              (data.metaFreshness?.secondsSinceLatestSync !== null && data.metaFreshness?.secondsSinceLatestSync > 1800)
+                ? "bg-orange-500"
+                : "bg-blue-500"
+            )}></span>
             <span>最近同步时间: <strong className="text-slate-800 font-mono">{lastSyncTimeVal}</strong></span>
           </div>
           <div>
@@ -213,6 +250,12 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
             <span className="mx-2 text-slate-300">|</span>
             <span>有消耗账户数量: <strong className="text-blue-600 font-mono">{withSpendCount}</strong></span>
           </div>
+          {data.metaFreshness?.latestFactDate && (
+            <div>
+              <span className="text-slate-300">|</span>
+              <span className="ml-2">最新事实日期: <strong className="text-emerald-700 font-mono">{data.metaFreshness.latestFactDate}</strong></span>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -220,23 +263,52 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
             size="sm"
             className="h-7 text-[11px] px-2.5 font-medium border-slate-200 bg-white hover:bg-slate-50 transition shadow-sm"
             onClick={loadData}
-            disabled={loading || syncing}
+            disabled={loading || syncing || metaSyncing}
           >
             <RefreshCcw className={cn("w-3 h-3 text-slate-500", loading && "animate-spin")} />
             刷新数据
           </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-[11px] px-2.5 font-medium border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 transition shadow-sm"
+            onClick={handleMetaRealtimeSync}
+            disabled={loading || syncing || metaSyncing}
+          >
+            <RefreshCcw className={cn("w-3 h-3", metaSyncing && "animate-spin")} />
+            实时刷新 Meta 消耗
+          </Button>
+
           <Button
             variant="outline"
             size="sm"
             className="h-7 text-[11px] px-2.5 font-medium border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition shadow-sm"
             onClick={handleSyncAccounts}
-            disabled={loading || syncing}
+            disabled={loading || syncing || metaSyncing}
           >
             <RefreshCcw className={cn("w-3 h-3", syncing && "animate-spin")} />
             同步 Meta 表现
           </Button>
         </div>
       </div>
+
+      {/* Meta Freshness Warning Alert Box */}
+      {data.metaFreshness && (data.metaFreshness.warning || (data.metaFreshness.secondsSinceLatestSync !== null && data.metaFreshness.secondsSinceLatestSync > 1800)) && (
+        <div className="flex items-start gap-3 p-4 bg-orange-50/60 border border-orange-200 rounded-xl text-slate-850 text-xs shadow-sm">
+          <AlertTriangle className="w-4 h-4 text-orange-500 shrink-0 mt-0.5 animate-pulse" />
+          <div className="space-y-1 text-left flex-1">
+            <h5 className="font-bold text-orange-950">Meta 消耗数据过期提醒</h5>
+            <p className="text-orange-900 font-medium leading-relaxed">
+              {data.metaFreshness.warning || "Meta 消耗数据已过期，建议立即触发实时刷新。"}
+            </p>
+            <p className="text-slate-500 leading-relaxed text-[11.5px]">
+              说明：由于 Meta API 有频控，本功能将直接对 Meta 广告账户并发请求 account level 增量成效数据，直接使用 Meta 提供的 API 起始日 date_start 覆写 SOT。为了安全与性能，建议高频更新时限定为单店铺或限定账户。
+              {(data.metaFreshness.secondsSinceLatestSync !== null) && ` (当前已延迟 ${Math.floor(data.metaFreshness.secondsSinceLatestSync / 60)} 分钟)`}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Constant required prompt of mapping and ROAS constraint */}
       <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-slate-800 text-xs shadow-sm">

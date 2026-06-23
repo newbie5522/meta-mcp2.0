@@ -87,6 +87,25 @@ export function isPaymentStatusExcluded(status: string | null | undefined): bool
   return ["waiting", "unpaid", "pending", "cancelled", "voided"].includes(s);
 }
 
+function money(value: any): number {
+  if (value === null || value === undefined || value === "") return 0;
+  const n = Number.parseFloat(String(value));
+  return Number.isFinite(n) ? Number(n.toFixed(2)) : 0;
+}
+
+function sumMoney(values: number[]): number {
+  return Number(values.reduce((s, v) => s + money(v), 0).toFixed(2));
+}
+
+function getRawTimeByAttribution(co: any, attr: string): string | null {
+  if (attr === "created_at") return co.rawCreatedAt || null;
+  if (attr === "paid_at") return co.rawPaidAt || null;
+  if (attr === "processed_at") return co.rawProcessedAt || null;
+  if (attr === "completed_at") return co.rawCompletedAt || null;
+  if (attr === "updated_at") return co.rawUpdatedAt || null;
+  return null;
+}
+
 /**
  * Normalizes an API response to standard arrays of orders and returns next url details.
  */
@@ -397,7 +416,7 @@ export async function fetchStoreOrdersCanonical(params: {
     // Line items parser
     const lineItemsArray = Array.isArray(o.line_items) ? o.line_items : [];
     const lineItems = lineItemsArray.map((li: any) => {
-      const uPrice = parseFloat(li.price || 0);
+      const uPrice = money(li.price);
       const qty = parseInt(li.quantity || 1, 10);
       return {
         lineItemId: String(li.id),
@@ -406,20 +425,23 @@ export async function fetchStoreOrdersCanonical(params: {
         name: li.title || li.name || "Unknown Item",
         quantity: qty,
         unitPrice: uPrice,
-        revenue: uPrice * qty
+        revenue: money(uPrice * qty)
       };
     });
 
-    const lineItemsSum = lineItems.reduce((acc: number, item: any) => acc + (item.revenue || 0), 0);
+    const lineItemsSum = lineItems.reduce((acc: number, item: any) => acc + money(item.revenue), 0);
     const revenueCandidates = {
-      total_price: parseFloat(o.total_price || 0),
-      current_total_price: parseFloat(o.current_total_price || 0),
-      total_amount: parseFloat(o.total_amount || 0),
-      order_total: parseFloat(o.order_total || 0),
-      subtotal_price: parseFloat(o.subtotal_price || 0),
-      current_subtotal_price: parseFloat(o.current_subtotal_price || 0),
-      net_subtotal_less_discount: parseFloat(o.current_subtotal_price || o.total_line_items_price || o.subtotal_price || 0) - parseFloat(o.total_discounts || 0),
-      line_items_sum: parseFloat(lineItemsSum.toFixed(2))
+      total_price: money(o.total_price ?? o.totalPrice ?? o.total?.price ?? o.total?.amount),
+      current_total_price: money(o.current_total_price ?? o.currentTotalPrice),
+      total_amount: money(o.total_amount ?? o.totalAmount ?? o.amount),
+      order_total: money(o.order_total ?? o.orderTotal),
+      subtotal_price: money(o.subtotal_price ?? o.subtotalPrice),
+      current_subtotal_price: money(o.current_subtotal_price ?? o.currentSubtotalPrice),
+      net_subtotal_less_discount: money(
+        money(o.current_subtotal_price ?? o.subtotal_price ?? o.total_line_items_price) -
+        money(o.total_discounts ?? o.totalDiscounts ?? o.discount_amount)
+      ),
+      line_items_sum: money(lineItemsSum)
     };
 
     return {
@@ -435,7 +457,7 @@ export async function fetchStoreOrdersCanonical(params: {
       paymentStatus: financialStatus,
       fulfillmentStatus,
       cancelledAt,
-      refundedAmount: parseFloat(o.total_refunded_amount || 0),
+      refundedAmount: money(o.total_refunded_amount || 0),
       lineItems,
       revenueCandidates,
       raw: o
@@ -491,8 +513,16 @@ export async function fetchStoreOrdersCanonical(params: {
     if (!hasPaidAt) {
       bestAttributionField = "processed_at";
     }
-    // Default revenue candidate is total_price as required
+    const defaultOrderLevelFields = ["total_price", "current_total_price", "total_amount", "order_total"] as const;
     bestRevenueField = "total_price";
+
+    for (const field of defaultOrderLevelFields) {
+      const sum = convertedOrders.reduce((s, co) => s + money(co.revenueCandidates[field]), 0);
+      if (sum > 0) {
+        bestRevenueField = field;
+        break;
+      }
+    }
   }
 
   // 3.3 and 3.4 calculations for sums & stats across target range
@@ -507,14 +537,14 @@ export async function fetchStoreOrdersCanonical(params: {
     line_items_sum: 0
   };
 
-  const convertedOrdersInRange = convertedOrders.filter(co => {
-    const rawTime = co.rawPaidAt || co.rawProcessedAt || co.rawCreatedAt;
+  const convertedOrdersInSelectedRange = convertedOrders.filter(co => {
+    const rawTime = getRawTimeByAttribution(co, bestAttributionField);
     if (!rawTime) return false;
     const localDate = getStoreLocalDate(rawTime, storeTimezone);
     return localDate >= params.startDate && localDate <= params.endDate && !isPaymentStatusExcluded(co.paymentStatus);
   });
 
-  for (const co of convertedOrdersInRange) {
+  for (const co of convertedOrdersInSelectedRange) {
     revenueFieldSums.total_price = Number((revenueFieldSums.total_price + (co.revenueCandidates.total_price || 0)).toFixed(2));
     revenueFieldSums.current_total_price = Number((revenueFieldSums.current_total_price + (co.revenueCandidates.current_total_price || 0)).toFixed(2));
     revenueFieldSums.total_amount = Number((revenueFieldSums.total_amount + (co.revenueCandidates.total_amount || 0)).toFixed(2));
@@ -525,17 +555,17 @@ export async function fetchStoreOrdersCanonical(params: {
     revenueFieldSums.line_items_sum = Number((revenueFieldSums.line_items_sum + (co.revenueCandidates.line_items_sum || 0)).toFixed(2));
   }
 
-  const attributionFieldStats: Record<string, { count: number; total: number }> = {
-    created_at: { count: 0, total: 0 },
-    paid_at: { count: 0, total: 0 },
-    processed_at: { count: 0, total: 0 },
-    completed_at: { count: 0, total: 0 },
-    updated_at: { count: 0, total: 0 }
+  const attributionFieldStats: Record<string, any> = {
+    created_at: {},
+    paid_at: {},
+    processed_at: {},
+    completed_at: {},
+    updated_at: {}
   };
 
   for (const attr of attributionCandidates) {
     const ordersInRangeAttr = convertedOrders.filter(co => {
-      const rawTime = co[attr === "created_at" ? "rawCreatedAt" : attr === "paid_at" ? "rawPaidAt" : attr === "processed_at" ? "rawProcessedAt" : attr === "completed_at" ? "rawCompletedAt" : "rawUpdatedAt"] || co.rawCreatedAt;
+      const rawTime = getRawTimeByAttribution(co, attr) || co.rawCreatedAt;
       if (!rawTime) return false;
       const localDate = getStoreLocalDate(rawTime, storeTimezone);
       return localDate >= params.startDate && localDate <= params.endDate && !isPaymentStatusExcluded(co.paymentStatus);
@@ -543,7 +573,14 @@ export async function fetchStoreOrdersCanonical(params: {
 
     attributionFieldStats[attr] = {
       count: ordersInRangeAttr.length,
-      total: Number(ordersInRangeAttr.reduce((s, co) => s + (co.revenueCandidates.total_price || 0), 0).toFixed(2))
+      total_price: sumMoney(ordersInRangeAttr.map(co => co.revenueCandidates.total_price)),
+      current_total_price: sumMoney(ordersInRangeAttr.map(co => co.revenueCandidates.current_total_price)),
+      total_amount: sumMoney(ordersInRangeAttr.map(co => co.revenueCandidates.total_amount)),
+      order_total: sumMoney(ordersInRangeAttr.map(co => co.revenueCandidates.order_total)),
+      subtotal_price: sumMoney(ordersInRangeAttr.map(co => co.revenueCandidates.subtotal_price)),
+      current_subtotal_price: sumMoney(ordersInRangeAttr.map(co => co.revenueCandidates.current_subtotal_price)),
+      net_subtotal_less_discount: sumMoney(ordersInRangeAttr.map(co => co.revenueCandidates.net_subtotal_less_discount)),
+      line_items_sum: sumMoney(ordersInRangeAttr.map(co => co.revenueCandidates.line_items_sum))
     };
   }
 
@@ -641,23 +678,43 @@ export async function fetchStoreOrdersCanonical(params: {
  * Persists a list of CanonicalOrders to the SQLite/PostgreSQL Database atomically in a single session.
  */
 export async function saveCanonicalOrdersToDb(
-  orders: CanonicalOrder[]
+  orders: CanonicalOrder[],
+  options?: {
+    rebuild?: boolean;
+    storeId?: number;
+    startDate?: string;
+    endDate?: string;
+  }
 ): Promise<{
   fetched: number;
   saved: number;
   updated: number;
   orderRowsWritten: number;
+  deletedRows: number;
 }> {
   let uniqueOrdersInserted = 0;
   let uniqueOrdersUpdated = 0;
   let orderRowsWritten = 0;
+  let deletedRows = 0;
+
+  if (options?.rebuild && options.storeId && options.startDate && options.endDate) {
+    const deleted = await prisma.order.deleteMany({
+      where: {
+        storeId: options.storeId,
+        store_local_date: {
+          gte: options.startDate,
+          lte: options.endDate
+        }
+      }
+    });
+    deletedRows += deleted.count;
+  }
 
   for (const o of orders) {
     if (!o.lineItems || o.lineItems.length === 0) continue;
 
-    let targetStoreId = o.storeId;
+    const targetStoreId = o.storeId;
 
-    // Check if parent order already existed anywhere in db for this store
     const existingOrderInDb = await prisma.order.findFirst({
       where: {
         storeId: targetStoreId,
@@ -665,49 +722,48 @@ export async function saveCanonicalOrdersToDb(
       }
     });
 
-    if (existingOrderInDb) {
-      uniqueOrdersUpdated++;
-    } else {
-      uniqueOrdersInserted++;
+    if (existingOrderInDb) uniqueOrdersUpdated++;
+    else uniqueOrdersInserted++;
+
+    if (!options?.rebuild) {
+      const deleted = await prisma.order.deleteMany({
+        where: {
+          storeId: o.storeId,
+          orderId: o.orderId,
+          store_local_date: o.storeLocalDate
+        }
+      });
+      deletedRows += deleted.count;
     }
 
-    // Clean up old rows for this store, order, and date to avoid conflicts
-    await prisma.order.deleteMany({
-      where: {
-        storeId: o.storeId,
-        orderId: o.orderId,
-        store_local_date: o.storeLocalDate
-      }
-    });
-
-    // We update/upsert every lineItem row. Each row refers to the same parent orderId.
     for (const item of o.lineItems) {
       const productId = item.productId || `product-${o.orderId}`;
-      
-      // Ensure product exists before upserting order
-      const existingProd = await prisma.product.findUnique({ where: { id: productId } });
-      if (!existingProd) {
-        await prisma.product.create({
-          data: {
-            id: productId,
-            storeId: targetStoreId,
-            name: item.name || "Unknown Product",
-            sku: item.sku || "",
-            category: "Uncategorized",
-            inventory: 0
-          }
-        });
-      }
-
       const orderLineId = `${o.orderId}-${item.lineItemId}`;
       const refunded = o.financialStatus === "refunded" || o.financialStatus === "partially_refunded";
       const refundedAt = refunded ? new Date(o.rawUpdatedAt || o.attributionTimeRaw) : null;
+
+      await prisma.product.upsert({
+        where: { id: productId },
+        update: {
+          storeId: targetStoreId,
+          name: item.name || "Unknown Product",
+          sku: item.sku || "",
+        },
+        create: {
+          id: productId,
+          storeId: targetStoreId,
+          name: item.name || "Unknown Product",
+          sku: item.sku || "",
+          category: "Uncategorized",
+          inventory: 0
+        }
+      });
 
       await prisma.order.upsert({
         where: { id: orderLineId },
         update: {
           storeId: targetStoreId,
-          productId: productId,
+          productId,
           revenue: item.revenue,
           profit: item.revenue * 0.4,
           refunded,
@@ -724,7 +780,7 @@ export async function saveCanonicalOrdersToDb(
         create: {
           id: orderLineId,
           storeId: targetStoreId,
-          productId: productId,
+          productId,
           revenue: item.revenue,
           profit: item.revenue * 0.4,
           refunded,
@@ -740,6 +796,7 @@ export async function saveCanonicalOrdersToDb(
           store_local_datetime: o.storeLocalDatetime
         }
       });
+
       orderRowsWritten++;
     }
   }
@@ -748,6 +805,7 @@ export async function saveCanonicalOrdersToDb(
     fetched: orders.length,
     saved: uniqueOrdersInserted,
     updated: uniqueOrdersUpdated,
-    orderRowsWritten
+    orderRowsWritten,
+    deletedRows
   };
 }

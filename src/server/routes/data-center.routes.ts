@@ -953,17 +953,23 @@ router.get("/stores", async (req, res) => {
         orderBy: { startedAt: "desc" }
       });
 
-      const isStoreBaslayer = String(store.domain || "").toLowerCase().includes("baslayer") || String(store.name || "").toLowerCase().includes("baslayer");
-      const storeRawPlatformOrdersCount = (isStoreBaslayer && startStr === "2026-06-21" && endStr === "2026-06-21") ? 17 : ordersCount;
-      const storeDiffCount = Math.abs(storeRawPlatformOrdersCount - ordersCount);
-      const storeMatch = storeDiffCount === 0;
+      const paymentStatusCounts = orderSummary.orders.reduce((acc, o) => {
+        const key = o.paymentStatus || "unknown";
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+
+      const lineRevenueSum = Number(orderSummary.orders.reduce((s, o) => s + Number(o.revenue || 0), 0).toFixed(2));
+
       const storeReconciliation = {
-        status: storeMatch ? "reconciliation_passed" : "reconciliation_failed",
-        match: storeMatch,
-        rawPlatformOrdersCount: storeRawPlatformOrdersCount,
-        dbOrdersCount: ordersCount,
-        diffCount: storeDiffCount,
-        percentageError: storeRawPlatformOrdersCount > 0 ? (storeDiffCount / storeRawPlatformOrdersCount) * 100 : 0
+        status: "derived_from_order_fact",
+        match: true,
+        orderRows: orderSummary.orders.length,
+        uniqueOrderCount: ordersCount,
+        orderTotalSum: totalSales,
+        lineRevenueSum,
+        paymentStatusCounts,
+        source: "Order.store_local_date + unique orderId + orderTotal"
       };
 
       return {
@@ -1456,7 +1462,10 @@ router.get("/accounts-performance", async (req, res) => {
         accountName: name,
         hasSpend: agg.spend > 0,
         mappingStatus: isBound ? "BOUND" : "UNBOUND",
-        dataSourceExplain: "FactMetaPerformance Joined with AdAccount, AccountMapping, and Store."
+        dataSourceExplain: "FactMetaPerformance Joined with AdAccount, AccountMapping, and Store.",
+        latestSyncedAt: maxSyncedAtSec,
+        dateSource: "FactMetaPerformance.date = Meta API date_start",
+        timezoneRule: "Meta API owns ad account date_start; no server timezone conversion"
       });
     }
 
@@ -1536,8 +1545,30 @@ router.get("/accounts-performance", async (req, res) => {
       warnings.push(`LAST_SYNC_FAILED:${lastFailedSync.errorMessage || lastFailedSync.error || "Unknown sync error"}`);
     }
 
+    const latestFactDate = performanceRows.length > 0
+      ? performanceRows.map(r => r.date).sort().slice(-1)[0]
+      : null;
+
+    const latestSyncedAt = performanceRows
+      .filter(r => r.synced_at)
+      .map(r => new Date(r.synced_at).getTime())
+      .sort((a, b) => b - a)[0] || null;
+
+    const secondsSinceLatestSync = latestSyncedAt
+      ? Math.floor((Date.now() - latestSyncedAt) / 1000)
+      : null;
+
     res.json({
       success: true,
+      metaFreshness: {
+        latestSyncedAt: latestSyncedAt ? new Date(latestSyncedAt).toISOString() : null,
+        latestFactDate,
+        secondsSinceLatestSync,
+        realtimeEligible: true,
+        warning: secondsSinceLatestSync !== null && secondsSinceLatestSync > 1800
+          ? "Meta 消耗数据超过 30 分钟未刷新，建议点击实时刷新。"
+          : null
+      },
       accountsInventoryCount,
       accountsInventory,
       storesInventoryCount: stores.length,

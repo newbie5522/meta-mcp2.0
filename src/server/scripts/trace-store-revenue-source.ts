@@ -105,9 +105,9 @@ total_amount: ${co.revenueCandidates.total_amount}
 order_total: ${co.revenueCandidates.order_total}
 subtotal_price: ${co.revenueCandidates.subtotal_price}
 current_subtotal_price: ${co.revenueCandidates.current_subtotal_price}
-total_discounts: ${co.revenueCandidates.total_discounts}
-shipping_total: ${co.revenueCandidates.shipping_total}
-total_tax: ${co.revenueCandidates.total_tax}
+total_discounts: ${parseFloat(co.raw.total_discounts || co.raw.totalDiscounts || 0)}
+shipping_total: ${parseFloat(co.raw.total_shipping || co.raw.shipping_total || 0)}
+total_tax: ${parseFloat(co.raw.total_tax || 0)}
 line_items_sum: ${co.revenueCandidates.line_items_sum}
 current Order.orderTotal: ${currentOrderTotalVal}
 current line revenue sum: ${currentLineRevenueSumVal}
