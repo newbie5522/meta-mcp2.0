@@ -32,9 +32,15 @@ router.post("/sync/data-center/refresh-store", async (req, res) => {
       endDate
     });
 
+    const orderCount = result.snapshots?.reduce((s: number, r: any) => s + Number(r.orderCount || 0), 0) || 0;
+    const grossSales = Number((result.snapshots?.reduce((s: number, r: any) => s + Number(r.grossSales || 0), 0) || 0).toFixed(2));
+
     return res.json({
       success: true,
       source: "DataCenterStoreDaily",
+      orderCount,
+      grossSales,
+      snapshotsCount: result.snapshots?.length || 0,
       ...result
     });
   } catch (error: any) {

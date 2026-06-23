@@ -242,16 +242,25 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
 
   // 4. Sync All Stores Orders Action
   const handleSyncAllStores = async () => {
-    if (stores.length === 0) {
-      toast.error("当前无已配置的可同步店铺。");
-      return;
-    }
     setSyncAllLoading(true);
     const toastId = toast.loading("开始刷新全局店铺 DataCenter 主链记账快照...");
     try {
-      const promises = stores.map(store => 
+      const response = await axios.get("/api/data-center/stores", {
+        params: {
+          startDate: formattedStartDate,
+          endDate: formattedEndDate
+        }
+      });
+      const storesToRefresh = response.data?.stores || [];
+      if (storesToRefresh.length === 0) {
+        toast.error("未获取到店铺库存，请检查 Store 配置接口。", { id: toastId });
+        setSyncAllLoading(false);
+        return;
+      }
+
+      const promises = storesToRefresh.map((store: any) => 
         axios.post("/api/sync/data-center/refresh-store", {
-          storeId: store.id,
+          storeId: store.id || store.storeId,
           startDate: formattedStartDate,
           endDate: formattedEndDate
         })
@@ -272,16 +281,25 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
 
   // 5. Rebuild All Stores Aggregation Summaries
   const handleRebuildStoreSummary = async () => {
-    if (stores.length === 0) {
-      toast.error("当前无已配置的可重建店铺。");
-      return;
-    }
     setRebuildLoading(true);
     const toastId = toast.loading("正在全面清除并重构 DataCenter 主链路每日账目记账快照...");
     try {
-      const promises = stores.map(store => 
+      const response = await axios.get("/api/data-center/stores", {
+        params: {
+          startDate: formattedStartDate,
+          endDate: formattedEndDate
+        }
+      });
+      const storesToRefresh = response.data?.stores || [];
+      if (storesToRefresh.length === 0) {
+        toast.error("未获取到店铺库存，请检查 Store 配置接口。", { id: toastId });
+        setRebuildLoading(false);
+        return;
+      }
+
+      const promises = storesToRefresh.map((store: any) => 
         axios.post("/api/sync/data-center/refresh-store", {
-          storeId: store.id,
+          storeId: store.id || store.storeId,
           startDate: formattedStartDate,
           endDate: formattedEndDate
         })

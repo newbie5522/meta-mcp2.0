@@ -88,21 +88,18 @@ async function resolveAccounts(params: {
   }
 
   if (params.storeId) {
-    const direct = await prisma.adAccount.findMany({
-      where: { storeId: Number(params.storeId) },
-      include: { store: true }
-    });
-
     const mappings = await prisma.accountMapping.findMany({
       where: { storeId: Number(params.storeId) }
     });
 
-    const mappingIds = mappings.map(m => normalizeMetaAccountId(m.fbAccountId));
+    const mappingIdsCanonical = mappings.map(m => normalizeMetaAccountId(m.fbAccountId));
+    const mappingIdsNumeric = mappingIdsCanonical.map(id => getNumericAccountId(id));
 
     let accounts = await prisma.adAccount.findMany({
       where: {
         OR: [
-          { fb_account_id: { in: mappingIds } },
+          { fb_account_id: { in: mappingIdsCanonical } },
+          { fb_account_id: { in: mappingIdsNumeric } },
           { storeId: Number(params.storeId) }
         ]
       },
@@ -158,6 +155,26 @@ export async function refreshMetaDataCenterLedger(params: {
   let recordsSaved = 0;
   let recordsUpdated = 0;
   const failedAccounts: any[] = [];
+
+  // Audit missing mapping accounts
+  if (params.storeId) {
+    const mappings = await prisma.accountMapping.findMany({
+      where: { storeId: Number(params.storeId) }
+    });
+    const mappingIdsCanonical = mappings.map(m => normalizeMetaAccountId(m.fbAccountId));
+    const foundIds = new Set(accounts.map(a => normalizeMetaAccountId(a.fb_account_id)));
+    const missingMappedAccounts = mappingIdsCanonical.filter(id => !foundIds.has(id));
+
+    for (const missingId of missingMappedAccounts) {
+      const mappingObj = mappings.find(m => normalizeMetaAccountId(m.fbAccountId) === missingId);
+      failedAccounts.push({
+        accountId: missingId,
+        message: `Account mapping exists but no corresponding AdAccount record is found in local metadata. Mapping name: ${mappingObj?.name || 'Unknown'}.`,
+        code: "LOCAL_METADATA_MISSING",
+        isMissingInventory: true
+      });
+    }
+  }
 
   const batchSize = 5;
 

@@ -13,6 +13,7 @@ import { getStoreOrderFacts, getStoreOrderSummary } from "../services/order-fact
 import { getMetaAccountPerformanceFacts, getMetaPerformanceSummary } from "../services/meta-performance-fact.service.js";
 import { getAccountMappingFacts, resolveAccountStoreBinding } from "../services/mapping-fact.service.js";
 import { runDataPipelineAudit } from "../services/data-pipeline-audit.service.js";
+import { runDataCenterAudit } from "../services/data-center-audit.service.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -894,9 +895,14 @@ router.get("/stores", async (req, res) => {
     const rows = await prisma.dataCenterStoreDaily.findMany({ where });
 
     // 1. Get all stores and their account mappings to calculate spend and ROAS
-    const storesToAggregate = await prisma.store.findMany({
-      include: { accounts: true, accountMappings: true }
+    let storesInventory = await prisma.store.findMany({
+      include: { accounts: true, accountMappings: true },
+      orderBy: { id: "asc" }
     });
+
+    if (storeId) {
+      storesInventory = storesInventory.filter(s => s.id === storeId);
+    }
 
     // 2. Load meta ledger rows in that range to compute mapped spend
     const metaRows = await prisma.dataCenterMetaAccountDaily.findMany({
@@ -908,95 +914,75 @@ router.get("/stores", async (req, res) => {
       }
     });
 
-    const grouped = new Map();
-
+    const rowsByStore = new Map<number, any[]>();
     for (const row of rows) {
-      if (!grouped.has(row.storeId)) {
-        const storeEntity = storesToAggregate.find(s => s.id === row.storeId);
-        
-        const mappedFbAccountIds = new Set<string>();
-        if (storeEntity) {
-          storeEntity.accounts?.forEach(acc => mappedFbAccountIds.add(normalizeMetaAccountId(acc.fb_account_id)));
-          storeEntity.accountMappings?.forEach(m => {
-            if (m.fbAccountId) mappedFbAccountIds.add(normalizeMetaAccountId(m.fbAccountId));
-          });
-        }
-        const uniqueMappedIds = Array.from(mappedFbAccountIds);
-
-        grouped.set(row.storeId, {
-          id: row.storeId,
-          storeId: row.storeId,
-          name: row.storeName || (storeEntity ? storeEntity.name : `Store #${row.storeId}`),
-          storeName: row.storeName || (storeEntity ? storeEntity.name : `Store #${row.storeId}`),
-          platform: row.platform,
-          domain: row.domain,
-          orderCount: 0,
-          ordersCount: 0,
-          revenue: 0,
-          sales: 0,
-          totalSales: 0,
-          totalRefunded: 0,
-          aov: 0,
-          adSpend: 0,
-          roas: 0,
-          realRoas: null,
-          currency: row.currency,
-          mappedAccountCount: uniqueMappedIds.length,
-          accountsCount: uniqueMappedIds.length,
-          hasMappedAccounts: uniqueMappedIds.length > 0,
-          latestFetchedAt: row.apiFetchedAt,
-          source: "DataCenterStoreDaily",
-          mode: "DATACENTER_LEDGER",
-          reconciliation: {
-            status: "derived_from_datacenter_ledger",
-            match: true,
-            orderRows: row.orderCount,
-            uniqueOrderCount: row.orderCount,
-            orderTotalSum: row.grossSales,
-            lineRevenueSum: row.grossSales,
-            paymentStatusCounts: {},
-            source: "DataCenterStoreDaily snapshot table"
-          }
-        });
-      }
-
-      const item = grouped.get(row.storeId);
-      item.orderCount += row.orderCount;
-      item.ordersCount = item.orderCount;
-      item.revenue = Number((item.revenue + row.grossSales).toFixed(2));
-      item.sales = item.revenue;
-      item.totalSales = item.revenue;
-      item.latestFetchedAt = row.apiFetchedAt > item.latestFetchedAt ? row.apiFetchedAt : item.latestFetchedAt;
+      if (!rowsByStore.has(row.storeId)) rowsByStore.set(row.storeId, []);
+      rowsByStore.get(row.storeId)!.push(row);
     }
 
-    // Now compute the mapped spend and ROAS for each grouped store
-    const storesList = Array.from(grouped.values()).map(s => {
-      const storeEntity = storesToAggregate.find(x => x.id === s.storeId);
-      let adSpend = 0;
-      if (storeEntity) {
-        const mappedFbAccountIds = new Set<string>();
-        storeEntity.accounts?.forEach(acc => mappedFbAccountIds.add(normalizeMetaAccountId(acc.fb_account_id)));
-        storeEntity.accountMappings?.forEach(m => {
-          if (m.fbAccountId) mappedFbAccountIds.add(normalizeMetaAccountId(m.fbAccountId));
-        });
-        const uniqueMappedIds = Array.from(mappedFbAccountIds);
-        
-        adSpend = metaRows
-          .filter(r => uniqueMappedIds.includes(normalizeMetaAccountId(r.accountId)))
-          .reduce((sum, r) => sum + r.spend, 0);
-      }
+    const storesList = storesInventory.map(store => {
+      const storeRows = rowsByStore.get(store.id) || [];
 
-      const totalSales = s.revenue;
-      const roas = adSpend > 0 ? Number((totalSales / adSpend).toFixed(4)) : 0;
+      const orderCount = storeRows.reduce((s, r) => s + Number(r.orderCount || 0), 0);
+      const revenue = Number(storeRows.reduce((s, r) => s + Number(r.grossSales || 0), 0).toFixed(2));
+      const latestFetchedAt = storeRows
+        .map(r => r.apiFetchedAt)
+        .sort((a, b) => b.getTime() - a.getTime())[0] || null;
+
+      const mappedFbAccountIds = new Set<string>();
+      store.accounts?.forEach(acc => mappedFbAccountIds.add(normalizeMetaAccountId(acc.fb_account_id)));
+      store.accountMappings?.forEach(m => {
+        if (m.fbAccountId) mappedFbAccountIds.add(normalizeMetaAccountId(m.fbAccountId));
+      });
+      const uniqueMappedIds = Array.from(mappedFbAccountIds);
+
+      const adSpend = metaRows
+        .filter(r => uniqueMappedIds.includes(normalizeMetaAccountId(r.accountId)))
+        .reduce((sum, r) => sum + r.spend, 0);
+
+      const roas = adSpend > 0 ? Number((revenue / adSpend).toFixed(4)) : 0;
 
       return {
-        ...s,
+        id: store.id,
+        storeId: store.id,
+        name: store.name,
+        storeName: store.name,
+        platform: store.platform,
+        domain: store.domain,
+        timezone: store.timezone,
+        orderCount,
+        ordersCount: orderCount,
+        revenue,
+        sales: revenue,
+        totalSales: revenue,
+        totalRefunded: 0,
+        avgOrderValue: orderCount > 0 ? Number((revenue / orderCount).toFixed(2)) : 0,
+        aov: orderCount > 0 ? Number((revenue / orderCount).toFixed(2)) : 0,
         adSpend: Number(adSpend.toFixed(2)),
         roas,
         realRoas: adSpend > 0 ? roas : null,
-        avgOrderValue: s.ordersCount > 0 ? Number((totalSales / s.ordersCount).toFixed(2)) : 0,
-        aov: s.ordersCount > 0 ? Number((totalSales / s.ordersCount).toFixed(2)) : 0,
-        hasOrders: s.ordersCount > 0
+        hasOrders: orderCount > 0,
+        currency: storeRows[0]?.currency || "USD",
+        latestFetchedAt,
+        source: "DataCenterStoreDaily",
+        mode: "DATACENTER_LEDGER",
+        snapshotRows: storeRows.length,
+        hasSnapshot: storeRows.length > 0,
+        mappedAccountCount: uniqueMappedIds.length,
+        accountsCount: uniqueMappedIds.length,
+        hasMappedAccounts: uniqueMappedIds.length > 0,
+        needsRefresh: storeRows.length === 0,
+        syncStatus: storeRows.length > 0 ? "READY" : "EMPTY_LEDGER",
+        reconciliation: {
+          status: "derived_from_datacenter_ledger",
+          match: true,
+          orderRows: orderCount,
+          uniqueOrderCount: orderCount,
+          orderTotalSum: revenue,
+          lineRevenueSum: revenue,
+          paymentStatusCounts: {},
+          source: "DataCenterStoreDaily snapshot table"
+        }
       };
     });
 
@@ -1005,7 +991,7 @@ router.get("/stores", async (req, res) => {
 
     // Calculate unmapped accounts summary
     const allMappedFbAccountIds = new Set<string>();
-    storesToAggregate.forEach(s => {
+    storesInventory.forEach(s => {
       s.accounts?.forEach(acc => allMappedFbAccountIds.add(normalizeMetaAccountId(acc.fb_account_id)));
       s.accountMappings?.forEach(m => {
         if (m.fbAccountId) allMappedFbAccountIds.add(normalizeMetaAccountId(m.fbAccountId));
@@ -1218,70 +1204,100 @@ router.get("/accounts-performance", async (req, res) => {
       }
     };
 
-    if (storeIdParam !== "all" && storeIdParam !== "undefined" && storeIdParam !== "null") {
-      where.storeId = Number(storeIdParam);
-    }
+    const [adAccounts, mappings] = await Promise.all([
+      prisma.adAccount.findMany({ include: { store: true }, orderBy: { updatedAt: "desc" } }),
+      prisma.accountMapping.findMany({ include: { store: true } })
+    ]);
 
     const rows = await prisma.dataCenterMetaAccountDaily.findMany({ where });
 
-    const grouped = new Map();
-
+    const rowsByAccount = new Map<string, any[]>();
     for (const row of rows) {
-      if (!grouped.has(row.accountId)) {
-        grouped.set(row.accountId, {
-          id: row.accountId,
-          fb_account_id: row.accountId,
-          fb_account_name: row.accountName,
-          accountId: row.accountId,
-          accountName: row.accountName,
-          storeId: row.storeId,
-          storeName: row.storeName || "未关联店铺",
-          isBound: !!row.storeId,
-          spend: 0,
-          impressions: 0,
-          reach: 0,
-          clicks: 0,
-          purchases: 0,
-          purchase_value: 0,
-          purchaseValue: 0,
-          roas: 0,
-          currency: row.currency,
-          timezone: row.timezone,
-          latestFetchedAt: row.apiFetchedAt,
-          source: "DataCenterMetaAccountDaily",
-          mode: "DATACENTER_LEDGER",
-          mappingStatus: row.storeId ? "BOUND" : "UNBOUND"
-        });
-      }
-
-      const item = grouped.get(row.accountId);
-      item.spend = Number((item.spend + row.spend).toFixed(2));
-      item.impressions += row.impressions;
-      item.reach += row.reach;
-      item.clicks += row.clicks;
-      item.purchases += row.purchases;
-      item.purchase_value = Number((item.purchase_value + row.purchaseValue).toFixed(2));
-      item.purchaseValue = item.purchase_value;
-      item.latestFetchedAt = row.apiFetchedAt > item.latestFetchedAt ? row.apiFetchedAt : item.latestFetchedAt;
+      const id = normalizeMetaAccountId(row.accountId);
+      if (!rowsByAccount.has(id)) rowsByAccount.set(id, []);
+      rowsByAccount.get(id)!.push(row);
     }
 
-    const results = Array.from(grouped.values()).map(a => {
-      const ctr = a.impressions > 0 ? Number(((a.clicks / a.impressions) * 100).toFixed(4)) : 0;
-      const cpc = a.clicks > 0 ? Number((a.spend / a.clicks).toFixed(4)) : 0;
-      const cpm = a.impressions > 0 ? Number(((a.spend / a.impressions) * 1000).toFixed(4)) : 0;
-      const roas = a.spend > 0 ? Number((a.purchase_value / a.spend).toFixed(4)) : 0;
+    const inventoryMap = new Map<string, any>();
+
+    for (const acc of adAccounts) {
+      const id = normalizeMetaAccountId(acc.fb_account_id);
+      inventoryMap.set(id, {
+        fb_account_id: id,
+        fb_account_name: acc.fb_account_name,
+        storeId: acc.storeId || null,
+        storeName: acc.store?.name || null,
+        timezone: acc.timezone,
+        currency: acc.currency || "USD",
+        sourceInventory: "AdAccount"
+      });
+    }
+
+    for (const m of mappings) {
+      const id = normalizeMetaAccountId(m.fbAccountId);
+      if (!inventoryMap.has(id)) {
+        inventoryMap.set(id, {
+          fb_account_id: id,
+          fb_account_name: m.name || id,
+          storeId: m.storeId || null,
+          storeName: m.store?.name || null,
+          timezone: null,
+          currency: "USD",
+          sourceInventory: "AccountMapping"
+        });
+      } else {
+        const item = inventoryMap.get(id);
+        if (!item.storeId && m.storeId) {
+          item.storeId = m.storeId;
+          item.storeName = m.store?.name || item.storeName;
+        }
+      }
+    }
+
+    let results = Array.from(inventoryMap.values()).map(acc => {
+      const accountRows = rowsByAccount.get(normalizeMetaAccountId(acc.fb_account_id)) || [];
+
+      const spend = Number(accountRows.reduce((s, r) => s + Number(r.spend || 0), 0).toFixed(2));
+      const impressions = accountRows.reduce((s, r) => s + Number(r.impressions || 0), 0);
+      const reach = accountRows.reduce((s, r) => s + Number(r.reach || 0), 0);
+      const clicks = accountRows.reduce((s, r) => s + Number(r.clicks || 0), 0);
+      const purchases = accountRows.reduce((s, r) => s + Number(r.purchases || 0), 0);
+      const purchaseValue = Number(accountRows.reduce((s, r) => s + Number(r.purchaseValue || 0), 0).toFixed(2));
+
+      const latestFetchedAt = accountRows
+        .map(r => r.apiFetchedAt)
+        .sort((a, b) => b.getTime() - a.getTime())[0] || null;
 
       return {
-        ...a,
-        ctr,
-        cpc,
-        cpm,
-        roas,
-        meta_roas: roas,
-        hasSpend: a.spend > 0,
-        isUnmappedWithSpend: !a.isBound && a.spend > 0
+        ...acc,
+        id: acc.fb_account_id,
+        accountId: acc.fb_account_id,
+        accountName: acc.fb_account_name,
+        spend,
+        impressions,
+        reach,
+        clicks,
+        purchases,
+        purchase_value: purchaseValue,
+        purchaseValue,
+        ctr: impressions > 0 ? Number(((clicks / impressions) * 100).toFixed(4)) : 0,
+        cpc: clicks > 0 ? Number((spend / clicks).toFixed(4)) : 0,
+        cpm: impressions > 0 ? Number(((spend / impressions) * 1000).toFixed(4)) : 0,
+        roas: spend > 0 ? Number((purchaseValue / spend).toFixed(4)) : 0,
+        latestFetchedAt,
+        source: "DataCenterMetaAccountDaily",
+        mode: "DATACENTER_LEDGER",
+        snapshotRows: accountRows.length,
+        hasSnapshot: accountRows.length > 0,
+        isBound: !!acc.storeId,
+        mappingStatus: acc.storeId ? "BOUND" : "UNBOUND",
+        needsRefresh: accountRows.length === 0
       };
     });
+
+    if (storeIdParam !== "all" && storeIdParam !== "undefined" && storeIdParam !== "null") {
+      results = results.filter(a => Number(a.storeId) === Number(storeIdParam));
+    }
 
     results.sort((a, b) => b.spend - a.spend);
 
@@ -2070,6 +2086,26 @@ router.get("/pipeline-audit", async (req, res) => {
     res.json(auditResult);
   } catch (err: any) {
     res.status(500).json({ error: "Pipeline audit failed", details: err.message });
+  }
+});
+
+// 7. Data Center Audit diagnostic endpoint matching SPEC
+router.get("/audit", async (req, res) => {
+  try {
+    const { startDate, endDate, storeId, accountId } = req.query;
+    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
+    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+
+    const auditResult = await runDataCenterAudit({
+      startDate: startStr,
+      endDate: endStr,
+      storeId: storeId ? String(storeId) : undefined,
+      accountId: accountId ? String(accountId) : undefined
+    });
+
+    res.json(auditResult);
+  } catch (err: any) {
+    res.status(500).json({ error: "Data Center Audit failed", details: err.message });
   }
 });
 
