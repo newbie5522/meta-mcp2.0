@@ -999,9 +999,33 @@ router.get("/stores", async (req, res) => {
       });
     });
 
+    const adAccounts = await prisma.adAccount.findMany({
+      select: {
+        fb_account_id: true,
+        fb_account_name: true
+      }
+    });
+
+    const adAccountNames = new Map<string, string>();
+    adAccounts.forEach(a => {
+      adAccountNames.set(normalizeMetaAccountId(a.fb_account_id), a.fb_account_name);
+    });
+
     const unmappedMetaRows = metaRows.filter(r => !allMappedFbAccountIds.has(normalizeMetaAccountId(r.accountId)));
     const unmappedSpend = Number(unmappedMetaRows.reduce((sum, r) => sum + r.spend, 0).toFixed(2));
     const unmappedCount = new Set(unmappedMetaRows.map(r => r.accountId)).size;
+
+    const unmappedAccountsSpendsMap = new Map<string, number>();
+    unmappedMetaRows.forEach(row => {
+      const id = normalizeMetaAccountId(row.accountId);
+      unmappedAccountsSpendsMap.set(id, (unmappedAccountsSpendsMap.get(id) || 0) + row.spend);
+    });
+
+    const unmappedAccountsList = Array.from(unmappedAccountsSpendsMap.entries()).map(([accountId, spend]) => ({
+      accountId,
+      name: adAccountNames.get(accountId) || `未知账户 (${accountId})`,
+      spend: Number(spend.toFixed(2))
+    })).sort((a, b) => b.spend - a.spend);
 
     return res.json({
       source: "DataCenterStoreDaily",
@@ -1015,6 +1039,7 @@ router.get("/stores", async (req, res) => {
       unmappedAccountsSummary: {
         count: unmappedCount,
         spend: unmappedSpend,
+        accounts: unmappedAccountsList,
         message: `当前有 ${unmappedCount} 个广告账户尚未绑定店铺且产生消耗，这些账户的花费 $${unmappedSpend} 不会计入任何店铺真实 ROAS。`
       },
       dataHealth: {

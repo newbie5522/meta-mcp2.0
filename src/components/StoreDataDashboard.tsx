@@ -63,6 +63,11 @@ interface UnmappedAccountsSummary {
   count: number;
   spend: number;
   message: string;
+  accounts?: Array<{
+    accountId: string;
+    name: string;
+    spend: number;
+  }>;
 }
 
 interface DataHealth {
@@ -531,12 +536,44 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
               {dataHealth.status === "EMPTY_FACTS" ? "店铺已配置，但当前日期范围暂无订单事实数据" : "最近一次店铺/同步任务失败"}
             </h5>
             <p className="text-amber-800 leading-relaxed">
-              {dataHealth.message || "已配置店铺会继续显示在下方列表中；订单数、销售额和 AOV 在事实表为空时按 0 展示。"}
+              {dataHealth.message || "已配置店铺会继续显示在下方列表中；订单数、销售额 and AOV 在事实表为空时按 0 展示。"}
             </p>
             {dataHealth.lastFailedSync?.errorMessage && (
               <p className="text-rose-700 leading-relaxed">
                 最近失败原因：{dataHealth.lastFailedSync.errorMessage}
               </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {unmappedSummary.count > 0 && unmappedSummary.spend > 0 && !loading && (
+        <div className="flex items-start gap-3 p-4 bg-rose-50 border border-rose-200 rounded-xl text-slate-800 text-xs shadow-sm mb-4">
+          <AlertTriangle className="w-4.5 h-4.5 text-rose-500 shrink-0 mt-0.5" />
+          <div className="space-y-1.5 text-left w-full">
+            <h5 className="font-bold text-rose-900 flex items-center justify-between sm:justify-start gap-2">
+              <span>⚠️ 漏油风险审计：发现未映射（未绑定）但有消耗的 Meta 广告账户</span>
+              <span className="px-2 py-0.5 bg-rose-100 text-rose-800 text-[9px] rounded-md font-bold uppercase tracking-wider">归因不完整</span>
+            </h5>
+            <p className="text-rose-700 leading-relaxed">
+              当前有 <strong className="font-mono text-red-700">{unmappedSummary.count}</strong> 个未映射广告账户产生了花费，总计额外消耗 <strong className="font-mono text-rose-900 font-bold">${unmappedSummary.spend.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>。这部分花费<strong>未计入任何店铺的真实 ROAS 计算中</strong>，导致整店 ROAS 归因判断不完整！
+            </p>
+            {unmappedSummary.accounts && unmappedSummary.accounts.length > 0 && (
+              <div className="mt-2 bg-white/70 border border-rose-150 rounded-lg p-3 max-h-48 overflow-y-auto">
+                <p className="text-rose-900 font-bold mb-1.5 text-[11px]">未绑定的有消耗 Meta 广告账户明细：</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                  {unmappedSummary.accounts.map((acc) => (
+                    <div key={acc.accountId} className="bg-white/90 border border-slate-100 rounded p-1.5 px-2 flex justify-between items-center text-[11px] shadow-xs">
+                      <span className="text-slate-700 font-medium truncate max-w-[140px] md:max-w-[180px]" title={acc.name}>
+                        {acc.name}
+                      </span>
+                      <span className="text-rose-600 font-mono font-bold shrink-0">
+                        ${acc.spend.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         </div>
