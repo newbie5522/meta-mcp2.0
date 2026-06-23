@@ -231,13 +231,22 @@ export async function getCountryAnalytics(
     where: orderWhereClause
   });
 
+  // Group line items by unique orderId (or fallback to id if orderId is missing)
+  const ordersGroupedById = new Map<string, any[]>();
+  for (const row of dbOrders) {
+    const key = row.orderId || row.id;
+    if (!ordersGroupedById.has(key)) {
+      ordersGroupedById.set(key, []);
+    }
+    ordersGroupedById.get(key)!.push(row);
+  }
+
   const orderCountryGroup: Record<string, {
     countryCode: string;
     revenue: number;
     profit: number;
-    totalLines: number;
+    totalOrders: number;
     refundedCount: number;
-    uniqueOrderIds: Set<string>;
     firstAt: Date | null;
     lastAt: Date | null;
   }> = {};
@@ -245,42 +254,71 @@ export async function getCountryAnalytics(
   const totalUniqueOrderIdsOverall = new Set<string>();
   let totalOrderRevenueOverall = 0;
 
-  for (const row of dbOrders) {
-    const rawCode = row.shippingCountryCode || row.billingCountryCode || "UNKNOWN";
-    const cCode = rawCode.trim().toUpperCase() || "UNKNOWN";
+  for (const [oId, rows] of ordersGroupedById.entries()) {
+    // 1. Determine country prioritizing shippingCountryCode, then billingCountryCode, else UNKNOWN
+    let resolvedCountryCode = "UNKNOWN";
+    let resolvedCountryName = "Unknown Country";
 
-    if (!orderCountryGroup[cCode]) {
-      orderCountryGroup[cCode] = {
-        countryCode: cCode,
+    for (const r of rows) {
+      if (r.shippingCountryCode) {
+        resolvedCountryCode = r.shippingCountryCode.trim().toUpperCase();
+        resolvedCountryName = r.shippingCountryName || COUNTRY_NAME_MAP[resolvedCountryCode] || resolvedCountryCode;
+        break;
+      }
+    }
+
+    if (resolvedCountryCode === "UNKNOWN") {
+      for (const r of rows) {
+        if (r.billingCountryCode) {
+          resolvedCountryCode = r.billingCountryCode.trim().toUpperCase();
+          resolvedCountryName = r.billingCountryName || COUNTRY_NAME_MAP[resolvedCountryCode] || resolvedCountryCode;
+          break;
+        }
+      }
+    }
+
+    // 2. Determine revenue prioritizing orderTotal else sum of line revenues
+    let orderTotalVal: number | null = null;
+    for (const r of rows) {
+      if (r.orderTotal !== null && r.orderTotal !== undefined) {
+        orderTotalVal = r.orderTotal;
+        break;
+      }
+    }
+
+    const calculatedRevenue = orderTotalVal !== null ? orderTotalVal : rows.reduce((sum, r) => sum + (r.revenue || 0), 0);
+    const calculatedProfit = rows.reduce((sum, r) => sum + (r.profit || 0), 0) || (calculatedRevenue * 0.4);
+    const hasRefund = rows.some(r => r.refunded);
+
+    totalUniqueOrderIdsOverall.add(oId);
+    totalOrderRevenueOverall += calculatedRevenue;
+
+    if (!orderCountryGroup[resolvedCountryCode]) {
+      orderCountryGroup[resolvedCountryCode] = {
+        countryCode: resolvedCountryCode,
         revenue: 0,
         profit: 0,
-        totalLines: 0,
+        totalOrders: 0,
         refundedCount: 0,
-        uniqueOrderIds: new Set<string>(),
         firstAt: null,
         lastAt: null
       };
     }
 
-    const og = orderCountryGroup[cCode];
-    og.revenue += row.revenue || 0;
-    og.profit += row.profit || 0;
-    og.totalLines++;
-
-    if (row.orderId) {
-      og.uniqueOrderIds.add(row.orderId);
-      totalUniqueOrderIdsOverall.add(row.orderId);
-    }
-    totalOrderRevenueOverall += row.revenue || 0;
-
-    if (row.refunded) {
+    const og = orderCountryGroup[resolvedCountryCode];
+    og.revenue += calculatedRevenue;
+    og.profit += calculatedProfit;
+    og.totalOrders++;
+    if (hasRefund) {
       og.refundedCount++;
     }
 
-    const dateObj = row.createdAt;
-    if (dateObj) {
-      if (!og.firstAt || dateObj < og.firstAt) og.firstAt = dateObj;
-      if (!og.lastAt || dateObj > og.lastAt) og.lastAt = dateObj;
+    for (const r of rows) {
+      const dateObj = r.createdAt;
+      if (dateObj) {
+        if (!og.firstAt || dateObj < og.firstAt) og.firstAt = dateObj;
+        if (!og.lastAt || dateObj > og.lastAt) og.lastAt = dateObj;
+      }
     }
   }
 
@@ -309,11 +347,11 @@ export async function getCountryAnalytics(
       const cpm = metaImpressions > 0 ? (metaSpend / metaImpressions) * 1000 : 0;
 
       const orderRevenue = og ? og.revenue : null;
-      const orderCount = og ? og.uniqueOrderIds.size : null;
+      const orderCount = og ? og.totalOrders : null;
       const orderProfit = og ? og.profit : null;
-      const refundRate = og && og.uniqueOrderIds.size > 0 ? (og.refundedCount / og.uniqueOrderIds.size) : null;
-      const paidOrderCount = og ? og.uniqueOrderIds.size : null;
-      const averageOrderValue = og && og.uniqueOrderIds.size > 0 ? (og.revenue / og.uniqueOrderIds.size) : null;
+      const refundRate = og && og.totalOrders > 0 ? (og.refundedCount / og.totalOrders) : null;
+      const paidOrderCount = og ? og.totalOrders : null;
+      const averageOrderValue = og && og.totalOrders > 0 ? (og.revenue / og.totalOrders) : null;
       const orderFirstAt = og && og.firstAt ? og.firstAt.toISOString() : null;
       const orderLastAt = og && og.lastAt ? og.lastAt.toISOString() : null;
 
@@ -345,7 +383,7 @@ export async function getCountryAnalytics(
 
         accountIds,
         mappedStoreIds,
-        dataSourceExplain: "Prisma Unified Country Aggregate (Order-resolved + Meta action-insights)"
+        dataSourceExplain: `Prisma Unified Country Aggregate (Order-resolved + Meta action-insights). resolved via Order.${og?.totalOrders ? "shippingCountryCode/billingCountryCode" : "none"}`
       };
     })
     // Filter out rows by minSpend or minOrders parameter
@@ -376,6 +414,13 @@ export async function getCountryAnalytics(
     warnings.push(`High share of unmapped Meta Ad Account Spend: ${(unmappedSpendRate * 100).toFixed(1)}% of spend is associated with unmapped accounts.`);
   }
 
+  const hasCountryFieldData = dbOrders.some(r => r.shippingCountryCode || r.billingCountryCode);
+  if (dbOrders.length > 0 && !hasCountryFieldData) {
+    warnings.push("ORDER_COUNTRY_BACKFILL_REQUIRED");
+  }
+
+  const orderCountryAvailable = dbOrders.length > 0 && hasCountryFieldData;
+
   return {
     rows: mergedRows,
     summary: {
@@ -391,21 +436,21 @@ export async function getCountryAnalytics(
       unmappedMetaSpendRate: unmappedSpendRate
     },
     dataHealth: {
-      orderCountryAvailable: dbOrders.length > 0,
+      orderCountryAvailable,
       metaCountryAvailable: rawBreakdowns.length > 0,
       unmappedAccountsCount: uniqueUnmappedAccountIds.size,
       unmappedSpendRate,
       warnings
     },
     dataSourceExplain: {
-      orderPrimarySource: "Order",
+      orderPrimarySource: hasCountryFieldData ? "Order.shippingCountryCode" : "none",
       metaPrimarySource: "FactAudienceBreakdown",
       adInsightUsed: false,
       dailySummaryUsed: false,
       storeMappingUsed: true,
       countryJoinKey: "countryCode",
       storeRoasMeaning: "Total order revenue divided by Meta country spend.",
-      orderUnavailableReason: dbOrders.length > 0 ? "OK" : "No country-related orders parsed for this store range."
+      orderUnavailableReason: dbOrders.length > 0 ? (hasCountryFieldData ? "OK" : "ORDER_COUNTRY_BACKFILL_REQUIRED") : "No country-related orders parsed for this store range."
     }
   };
 }

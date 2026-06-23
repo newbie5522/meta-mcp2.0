@@ -34,6 +34,11 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   const [data, setData] = useState<any[]>([]);
   const [summary, setSummary] = useState<any | null>(null);
   const [dataHealth, setDataHealth] = useState<any | null>(null);
+
+  // Order Country Rows
+  const [orderCountryRows, setOrderCountryRows] = useState<any[]>([]);
+  const [countriesLoading, setCountriesLoading] = useState(false);
+  const [countriesHealth, setCountriesHealth] = useState<any | null>(null);
   
   // Local/Backend Sorting
   const [sortBy, setSortBy] = useState<string>("spend");
@@ -89,11 +94,46 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         setSummary(null);
         setDataHealth(null);
       }
+
+      // If active tab is country, load order countries list from database
+      if (activeTab === "country") {
+        setCountriesLoading(true);
+        try {
+          const countriesRes = await axios.get("/api/data-center/countries", {
+            params: {
+              startDate: startStr,
+              endDate: endStr,
+              storeId: selectedStore,
+              minSpend: minSpend || undefined,
+              includeUnmappedSpend: "true"
+            }
+          });
+          if (countriesRes.data) {
+            setOrderCountryRows(countriesRes.data.rows || []);
+            setCountriesHealth(countriesRes.data.dataHealth || null);
+          } else {
+            setOrderCountryRows([]);
+            setCountriesHealth(null);
+          }
+        } catch (countriesErr) {
+          console.error("Failed to fetch order country statistics", countriesErr);
+          setOrderCountryRows([]);
+          setCountriesHealth(null);
+        } finally {
+          setCountriesLoading(false);
+        }
+      } else {
+        setOrderCountryRows([]);
+        setCountriesHealth(null);
+      }
+
     } catch (err: any) {
       console.error("Failed to fetch audience insights", err);
       setData([]);
       setSummary(null);
       setDataHealth(null);
+      setOrderCountryRows([]);
+      setCountriesHealth(null);
       toast.error("加载受众成效分析发生错误");
     } finally {
       setLoading(false);
@@ -589,12 +629,14 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       </div>
 
       {/* 15 维受众表现智能交叉比对表 */}
-      <Card className="border-slate-200 shadow-sm">
+      <Card className="border-slate-200 shadow-sm mt-6">
         <CardHeader className="p-5 border-b flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 bg-slate-50/30">
           <div>
             <CardTitle className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
               <SlidersHorizontal className="w-4 h-4 text-indigo-600" />
-              11 维受众分析智能交叉决策底表 (Deterministic Demographic Attributes)
+              {activeTab === "country" 
+                ? "Meta 广告物理地理受众国家分布 (Meta Audience Country Delivery)" 
+                : "11 维受众分析智能交叉决策底表 (Deterministic Demographic Attributes)"}
             </CardTitle>
             <p className="text-[11px] text-slate-400 mt-1">
               表格默认按 Spend DESC 排序。点击字段表头可切换为 Purchases、ROAS、CPA、CTR 高效排序。
@@ -623,7 +665,9 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
               <Table className="text-[11px]">
                 <TableHeader className="bg-slate-50/40">
                   <TableRow>
-                    <TableHead className="py-3 h-11 text-slate-700 font-semibold text-left whitespace-nowrap">维度值名称</TableHead>
+                     <TableHead className="py-3 h-11 text-slate-700 font-semibold text-left whitespace-nowrap">
+                       {activeTab === "country" ? "Meta 交付国家/地区" : "维度值名称"}
+                     </TableHead>
                     <TableHead className="text-slate-700 font-semibold text-right cursor-pointer hover:bg-slate-100/50" onClick={() => handleSortToggle("spend")}>
                       <div className="flex items-center justify-end gap-1 select-none">
                         广告花费 {sortBy === "spend" && <span className="text-indigo-600 font-extrabold font-mono">↓</span>}
@@ -707,17 +751,17 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                         )}>
                           {row.roas.toFixed(2)}
                         </TableCell>
-                        <TableCell className="text-right text-slate-400 font-mono">
+                        <TableCell className="text-right text-slate-400 font-mono font-semibold">
                           {rowSpendRatio.toFixed(1)}%
                         </TableCell>
-                        <TableCell className="text-right text-slate-400 font-mono">
+                        <TableCell className="text-right text-slate-400 font-mono font-semibold">
                           {rowPurchaseRatio.toFixed(1)}%
                         </TableCell>
                         <TableCell className="text-right text-slate-500 font-mono">
                           {row.accountsCount}
                         </TableCell>
                         <TableCell className="text-center text-slate-400 font-mono text-[10px]">
-                          {format(new Date(row.lastSyncedAt), "yyyy-MM-dd HH:mm")}
+                          {row.lastSyncedAt ? format(new Date(row.lastSyncedAt), "yyyy-MM-dd HH:mm") : "-"}
                         </TableCell>
                         <TableCell className="text-center">
                           <span className={cn(
@@ -750,7 +794,93 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
           )}
         </CardContent>
       </Card>
-      
+
+      {/* Store Real Order Destination Country Table */}
+      {activeTab === "country" && (
+        <Card className="border-slate-200 shadow-sm mt-6">
+          <CardHeader className="p-5 border-b flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 bg-emerald-50/10">
+            <div>
+              <CardTitle className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
+                <MapPin className="w-4 h-4 text-emerald-600" />
+                主站真实交易订单收货国家分布 (Store Order Destination Countries)
+              </CardTitle>
+              <p className="text-[11px] text-slate-400 mt-1">
+                数据直接读取自主站真实交易订单 Shipping & Billing 地址解析。统计均已按 unique orderId 去重。
+              </p>
+            </div>
+            <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 px-3 py-1 rounded-full font-mono">
+              对应订单收货国家: {orderCountryRows.length} 个
+            </span>
+          </CardHeader>
+          <CardContent className="p-0">
+            {countriesLoading ? (
+              <div className="p-16 flex flex-col items-center justify-center text-slate-400">
+                <Loader2 className="w-6 h-6 animate-spin text-emerald-500 mb-2" />
+                <p className="text-xs font-semibold">主站订单国家数据分析中...</p>
+              </div>
+            ) : orderCountryRows.length === 0 ? (
+              <div className="p-8 text-center text-slate-500 bg-slate-50/20 rounded-xl my-4 flex flex-col items-center justify-center max-w-lg mx-auto">
+                <AlertTriangle className="w-6 h-6 text-amber-500 mb-1" />
+                <p className="text-xs font-semibold font-bold text-slate-700">订单国家数据未完成回填</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table className="text-[11px]">
+                  <TableHeader className="bg-slate-50/40">
+                    <TableRow>
+                      <TableHead className="py-3 h-11 text-slate-700 font-semibold text-left whitespace-nowrap">收货国家 (Country)</TableHead>
+                      <TableHead className="text-slate-700 font-semibold text-right">已付款订单量 (Unique Orders)</TableHead>
+                      <TableHead className="text-slate-700 font-semibold text-right font-bold text-emerald-600">净销售总额 (Order Revenue)</TableHead>
+                      <TableHead className="text-slate-700 font-semibold text-right">平均客单价 (AOV)</TableHead>
+                      <TableHead className="text-slate-700 font-semibold text-right">关联 Meta 广告花费</TableHead>
+                      <TableHead className="text-slate-700 font-semibold text-right">首单物理时间</TableHead>
+                      <TableHead className="text-slate-700 font-semibold text-right">末单物理时间</TableHead>
+                      <TableHead className="text-slate-700 font-semibold text-center">数据源解析说明</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {orderCountryRows.map((row) => {
+                      const formattedFirst = row.orderFirstAt ? format(new Date(row.orderFirstAt), "yyyy-MM-dd HH:mm") : "-";
+                      const formattedLast = row.orderLastAt ? format(new Date(row.orderLastAt), "yyyy-MM-dd HH:mm") : "-";
+                      return (
+                        <TableRow key={`order-country-${row.countryCode}`} className="hover:bg-slate-50/80 border-b">
+                          <TableCell className="font-extrabold text-slate-800 whitespace-nowrap pr-4 flex items-center gap-1.5">
+                            <span className="w-4 h-4 bg-slate-100 rounded text-[9px] flex items-center justify-center font-mono font-bold text-slate-600">
+                              {row.countryCode}
+                            </span>
+                            {row.countryName || row.countryCode}
+                          </TableCell>
+                          <TableCell className="text-right font-bold text-slate-900 font-mono">
+                            {row.orderCount || 0} 单
+                          </TableCell>
+                          <TableCell className="text-right font-black text-emerald-600 font-mono">
+                            ${(row.orderRevenue || 0).toFixed(2)}
+                          </TableCell>
+                          <TableCell className="text-right text-slate-600 font-mono">
+                            ${(row.averageOrderValue || 0).toFixed(2)}
+                          </TableCell>
+                          <TableCell className="text-right text-slate-500 font-mono font-bold">
+                            ${(row.metaSpend || 0).toFixed(2)}
+                          </TableCell>
+                          <TableCell className="text-right text-slate-400 font-mono text-[10px]">
+                            {formattedFirst}
+                          </TableCell>
+                          <TableCell className="text-right text-slate-400 font-mono text-[10px]">
+                            {formattedLast}
+                          </TableCell>
+                          <TableCell className="text-center text-slate-400 font-mono text-[10px] max-w-[200px] truncate" title={row.dataSourceExplain}>
+                            {row.dataSourceExplain || "系统自动流映射"}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
