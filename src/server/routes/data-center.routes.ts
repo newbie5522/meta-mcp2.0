@@ -1192,7 +1192,7 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       }
     });
 
-    const uniqueOrdersMap = new Map<string, { orderTotal: number }>();
+    const uniqueOrdersMap = new Map<string, { orderTotal: number, items: any[] }>();
     ordersInDb.forEach(o => {
       // Exclude unpaid, pending, cancelled, or waiting orders from registered system totals
       const paymentStatus = o.paymentStatus ? String(o.paymentStatus).toLowerCase() : "";
@@ -1202,13 +1202,15 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       const oId = o.orderId || o.id;
       if (!uniqueOrdersMap.has(oId)) {
         uniqueOrdersMap.set(oId, {
-          orderTotal: o.orderTotal != null && o.orderTotal > 0 ? o.orderTotal : (o.revenue || 0)
+          orderTotal: o.orderTotal != null && o.orderTotal > 0 ? o.orderTotal : (o.revenue || 0),
+          items: [o]
         });
       } else {
         const existing = uniqueOrdersMap.get(oId)!;
-        if (o.orderTotal == null || o.orderTotal === 0) {
-          existing.orderTotal += (o.revenue || 0);
+        if ((existing.orderTotal === 0 || existing.orderTotal === (existing.items[0]?.revenue || 0)) && o.orderTotal != null && o.orderTotal > 0) {
+          existing.orderTotal = o.orderTotal;
         }
+        existing.items.push(o);
       }
     });
 

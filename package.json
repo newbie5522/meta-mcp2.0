@@ -20,7 +20,9 @@
     "trace:meta-api-read": "tsx src/server/scripts/trace-meta-api-read.ts",
     "trace:store-api-read": "tsx src/server/scripts/trace-store-api-read.ts",
     "trace:meta-spend-coverage": "tsx src/server/scripts/trace-meta-spend-coverage.ts",
-    "trace:shopline-dashboard-day": "tsx src/server/scripts/trace-shopline-dashboard-day.ts"
+    "trace:shopline-dashboard-day": "tsx src/server/scripts/trace-shopline-dashboard-day.ts",
+    "trace:store-revenue-source": "tsx src/server/scripts/trace-store-revenue-source.ts",
+    "trace:data-realtime": "tsx src/server/scripts/trace-data-realtime.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

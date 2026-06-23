@@ -257,7 +257,15 @@ async function findStoreIdForOrder(storeIdValue: string, defaultStoreId: number)
   return defaultStoreId;
 }
 
-export async function syncStoreData(startDate: string, endDate: string, storeIdentifier?: string): Promise<Record<number, StoreSyncResult>> {
+export async function syncStoreData(
+  startDate: string,
+  endDate: string,
+  storeIdentifier?: string,
+  options?: {
+    baselineRevenue?: number;
+    rebuild?: boolean;
+  }
+): Promise<Record<number, StoreSyncResult>> {
   let stores;
   if (storeIdentifier) {
     const isNumeric = !isNaN(parseInt(storeIdentifier, 10)) && /^\d+$/.test(storeIdentifier);
@@ -312,14 +320,28 @@ export async function syncStoreData(startDate: string, endDate: string, storeIde
         });
       }
 
+      if (options?.rebuild) {
+        console.log(`[Store Sync] REBUILD MODE: Deleting legacy Order rows for storeId=${store.id} in range ${startDate} to ${endDate}`);
+        await prisma.order.deleteMany({
+          where: {
+            storeId: store.id,
+            store_local_date: {
+              gte: startDate,
+              lte: endDate
+            }
+          }
+        });
+      }
+
       const isBaslayer =
         String(store.domain || "").toLowerCase().includes("baslayer") ||
         String(store.name || "").toLowerCase().includes("baslayer");
 
-      const baseline =
-        isBaslayer && startDate === "2026-06-21" && endDate === "2026-06-21"
-          ? { orders: 17, revenue: 715.78 }
-          : undefined;
+      const baseline = (options?.baselineRevenue !== undefined)
+        ? { orders: undefined, revenue: options.baselineRevenue }
+        : (isBaslayer && startDate === "2026-06-21" && endDate === "2026-06-21"
+           ? { orders: 17, revenue: 715.78 }
+           : undefined);
 
       const canonical = await fetchStoreOrdersCanonical({
         platform,

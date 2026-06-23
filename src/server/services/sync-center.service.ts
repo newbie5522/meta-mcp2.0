@@ -240,7 +240,11 @@ export class SyncCenter {
     parentTaskId: string | null = null,
     days: number = 90,
     startDateOverride: string | null = null,
-    endDateOverride: string | null = null
+    endDateOverride: string | null = null,
+    options?: {
+      baselineRevenue?: number;
+      rebuild?: boolean;
+    }
   ): Promise<string> {
     return this.runTask(
       "sync_store_orders",
@@ -257,8 +261,8 @@ export class SyncCenter {
         const endDate = endDateOverride || dayjs().format("YYYY-MM-DD");
         const startDate = startDateOverride || dayjs(endDate).subtract(days, "day").format("YYYY-MM-DD");
 
-        console.log(`[Sync Center] Running syncStoreData for ${store.name} (${startDate} to ${endDate})`);
-        const syncResults = await syncStoreData(startDate, endDate, String(storeId));
+        console.log(`[Sync Center] Running syncStoreData for ${store.name} (${startDate} to ${endDate}) with options: ${JSON.stringify(options || {})}`);
+        const syncResults = await syncStoreData(startDate, endDate, String(storeId), options);
         const res = syncResults[storeId] || {
           storeId,
           storeName: store.name,

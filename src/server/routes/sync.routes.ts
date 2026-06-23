@@ -363,7 +363,7 @@ router.get("/sync/chains", async (req, res) => {
  * Dangerous/admin tasks continue to the guarded route below.
  */
 router.post("/sync/trigger", async (req, res, next) => {
-  const { taskType, storeId, accountId, accountIds, startDate, endDate, days, limit } = req.body;
+  const { taskType, storeId, accountId, accountIds, startDate, endDate, days, limit, rebuild, baselineRevenue } = req.body;
 
   const validSafeTypes = [
     "sync_meta_insights",
@@ -458,7 +458,11 @@ router.post("/sync/trigger", async (req, res, next) => {
           lastTaskId,
           range.days,
           range.startDate,
-          range.endDate
+          range.endDate,
+          {
+            baselineRevenue: baselineRevenue !== undefined ? parseFloat(baselineRevenue) : undefined,
+            rebuild: rebuild === true || rebuild === "true"
+          }
         );
         taskIds.push(taskId);
         lastTaskId = taskId;

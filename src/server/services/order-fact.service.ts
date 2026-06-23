@@ -66,8 +66,8 @@ export async function getStoreOrderSummary(params: OrderFactParams): Promise<Ord
       });
     } else {
       const existing = uniqueOrdersMap.get(oId)!;
-      if (o.orderTotal == null || o.orderTotal === 0) {
-        existing.orderTotal += (o.revenue || 0);
+      if ((existing.orderTotal === 0 || existing.orderTotal === (existing.items[0]?.revenue || 0)) && o.orderTotal != null && o.orderTotal > 0) {
+        existing.orderTotal = o.orderTotal;
       }
       existing.items.push(o);
     }

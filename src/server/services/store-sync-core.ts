@@ -37,7 +37,17 @@ export type CanonicalOrder = {
 
   revenueField: string;
   orderTotal: number;
-  revenueCandidates: Record<string, number>;
+  orderTotalSource: string;
+  revenueCandidates: {
+    total_price: number;
+    current_total_price: number;
+    total_amount: number;
+    order_total: number;
+    subtotal_price: number;
+    current_subtotal_price: number;
+    net_subtotal_less_discount: number;
+    line_items_sum: number;
+  };
 
   lineItems: Array<{
     lineItemId: string;
@@ -400,17 +410,16 @@ export async function fetchStoreOrdersCanonical(params: {
       };
     });
 
-    const revenueCandidates: Record<string, number> = {
+    const lineItemsSum = lineItems.reduce((acc: number, item: any) => acc + (item.revenue || 0), 0);
+    const revenueCandidates = {
       total_price: parseFloat(o.total_price || 0),
       current_total_price: parseFloat(o.current_total_price || 0),
       total_amount: parseFloat(o.total_amount || 0),
       order_total: parseFloat(o.order_total || 0),
       subtotal_price: parseFloat(o.subtotal_price || 0),
       current_subtotal_price: parseFloat(o.current_subtotal_price || 0),
-      total_discounts: parseFloat(o.total_discounts || 0),
-      shipping_total: parseFloat(o.total_shipping || o.shipping_total || 0),
-      total_tax: parseFloat(o.total_tax || 0),
-      net_subtotal_less_discount: parseFloat(o.current_subtotal_price || o.total_line_items_price || o.subtotal_price || 0) - parseFloat(o.total_discounts || 0)
+      net_subtotal_less_discount: parseFloat(o.current_subtotal_price || o.total_line_items_price || o.subtotal_price || 0) - parseFloat(o.total_discounts || 0),
+      line_items_sum: parseFloat(lineItemsSum.toFixed(2))
     };
 
     return {
@@ -456,8 +465,8 @@ export async function fetchStoreOrdersCanonical(params: {
         return validRange && validStatus;
       });
 
-      // 2. Score revenue candidates for this set
-      const revenueNames = ["total_price", "current_total_price", "total_amount", "order_total", "subtotal_price", "current_subtotal_price", "net_subtotal_less_discount"] as const;
+      // 2. Score revenue candidates for this set - strictly order-level fields as specified by choice rules
+      const revenueNames = ["total_price", "current_total_price", "total_amount", "order_total"] as const;
       for (const revName of revenueNames) {
         const sumRev = ordersInRange.reduce((s, co) => s + (co.revenueCandidates[revName] || 0), 0);
         
@@ -494,7 +503,8 @@ export async function fetchStoreOrdersCanonical(params: {
     order_total: 0,
     subtotal_price: 0,
     current_subtotal_price: 0,
-    net_subtotal_less_discount: 0
+    net_subtotal_less_discount: 0,
+    line_items_sum: 0
   };
 
   const convertedOrdersInRange = convertedOrders.filter(co => {
@@ -512,6 +522,7 @@ export async function fetchStoreOrdersCanonical(params: {
     revenueFieldSums.subtotal_price = Number((revenueFieldSums.subtotal_price + (co.revenueCandidates.subtotal_price || 0)).toFixed(2));
     revenueFieldSums.current_subtotal_price = Number((revenueFieldSums.current_subtotal_price + (co.revenueCandidates.current_subtotal_price || 0)).toFixed(2));
     revenueFieldSums.net_subtotal_less_discount = Number((revenueFieldSums.net_subtotal_less_discount + (co.revenueCandidates.net_subtotal_less_discount || 0)).toFixed(2));
+    revenueFieldSums.line_items_sum = Number((revenueFieldSums.line_items_sum + (co.revenueCandidates.line_items_sum || 0)).toFixed(2));
   }
 
   const attributionFieldStats: Record<string, { count: number; total: number }> = {
@@ -566,6 +577,7 @@ export async function fetchStoreOrdersCanonical(params: {
       refundedAmount: co.refundedAmount,
       revenueField: bestRevenueField,
       orderTotal,
+      orderTotalSource: bestRevenueField,
       revenueCandidates: co.revenueCandidates,
       lineItems: co.lineItems,
       raw: co.raw
