@@ -60,25 +60,25 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
 
   const handleMetaRealtimeSync = async () => {
     setMetaSyncing(true);
-    const toastId = toast.loading("正在为当前日期加载 Meta 进行账户级实时刷新...");
+    const toastId = toast.loading("正在触发 DataCenter 广告主链记账刷新和投流对齐...");
     try {
       const startStr = format(startDate, "yyyy-MM-dd");
       const endStr = format(endDate, "yyyy-MM-dd");
 
-      const response = await axios.post("/api/sync/meta-realtime", {
+      const response = await axios.post("/api/sync/data-center/refresh-meta", {
         startDate: startStr,
         endDate: endStr,
-        storeId: storeFilter === "all" ? undefined : storeFilter,
+        storeId: storeFilter === "all" ? null : Number(storeFilter),
         includeUnmapped: true
       });
 
       if (response.data?.success) {
         toast.success(
-          `Meta 实时拉取成功：共对账 ${response.data.accountsSynced || 0} 个账户，新增 ${response.data.recordsSaved || 0} 天记录，更新 ${response.data.recordsUpdated || 0} 天记录。`,
+          `DataCenter Meta 记账快照刷新成功！广告投放花费及多维转化指标重新对齐。`,
           { id: toastId, duration: 5000 }
         );
       } else {
-        toast.error("Meta 实时拉取未完全成功", { id: toastId });
+        toast.error("Meta 记账快照刷新未成功", { id: toastId });
       }
       await loadData();
     } catch (error: any) {
@@ -174,21 +174,22 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
 
   const handleSyncAccounts = async () => {
     setSyncing(true);
-    const toastId = toast.loading("正在通过 SyncCenter 同步 Meta 广告表现...");
+    const toastId = toast.loading("开始为全局广告账户重构 DataCenter 记账快照...");
     try {
       const startStr = format(startDate, "yyyy-MM-dd");
       const endStr = format(endDate, "yyyy-MM-dd");
 
-      const response = await axios.post("/api/sync/trigger", {
-        taskType: "sync_meta_insights",
+      const response = await axios.post("/api/sync/data-center/refresh-meta", {
         startDate: startStr,
-        endDate: endStr
+        endDate: endStr,
+        storeId: storeFilter === "all" ? null : Number(storeFilter),
+        includeUnmapped: true
       });
 
-      if (response.data?.status === "NO_NEW_DATA") {
-        toast.warning(response.data.message || "同步完成，但当前日期范围暂无新的广告表现数据。", { id: toastId });
+      if (response.data?.success) {
+        toast.success("Meta 广告账户 DataCenter 快照刷新及降维指标核实完成！", { id: toastId });
       } else {
-        toast.success(response.data?.message || "Meta 广告表现同步完成。", { id: toastId });
+        toast.success("Meta 广告表现同步完成。", { id: toastId });
       }
       await loadData();
     } catch (error: any) {

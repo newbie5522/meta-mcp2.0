@@ -30,7 +30,6 @@ export function DateFilter({
     { id: 'last_week', label: '上周' },
     { id: 'this_month', label: '本月' },
     { id: 'last_month', label: '上月' },
-    { id: 'audit_day', label: '对账专属日 (6/21)' },
     { id: 'custom', label: '自定义' },
   ];
 
@@ -46,9 +45,7 @@ export function DateFilter({
       return startStr === r.startDateStr && endStr === r.endDateStr;
     };
 
-    if (startStr === "2026-06-21" && endStr === "2026-06-21") {
-      setActiveShortcut('audit_day');
-    } else if (checkMatch('today')) {
+    if (checkMatch('today')) {
       setActiveShortcut('today');
     } else if (checkMatch('yesterday')) {
       setActiveShortcut('yesterday');
@@ -74,12 +71,6 @@ export function DateFilter({
   const handleShortcut = (id: string) => {
     if (id === 'custom') {
       setActiveShortcut('custom');
-      return;
-    }
-
-    if (id === 'audit_day') {
-      onStartDateChange(businessDateStringToSafeDate("2026-06-21"));
-      onEndDateChange(businessDateStringToSafeDate("2026-06-21"));
       return;
     }
 

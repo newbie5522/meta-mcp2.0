@@ -14,6 +14,12 @@ export async function getMetaAccountPerformanceFacts(params: MetaPerformanceFact
 
   const whereClause: any = {
     level: "account",
+    account_id: {
+      startsWith: "act_"
+    },
+    entity_id: {
+      startsWith: "act_"
+    },
     date: {
       gte: startDate,
       lte: endDate,
@@ -22,6 +28,7 @@ export async function getMetaAccountPerformanceFacts(params: MetaPerformanceFact
 
   if (accountId && accountId !== "all" && accountId !== "undefined") {
     whereClause.account_id = normalizeMetaAccountId(accountId);
+    whereClause.entity_id = normalizeMetaAccountId(accountId);
   }
 
   return prisma.factMetaPerformance.findMany({

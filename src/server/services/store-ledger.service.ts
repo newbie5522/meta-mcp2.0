@@ -45,36 +45,13 @@ export function extractOrderLedgerAmount(platform: string, raw: any) {
 
   let priority: Array<{ field: string; value: number }> = [];
 
-  if (p === "shopline") {
-    priority = [
-      { field: "paid_total", value: candidates.paid_total },
-      { field: "payment_total", value: candidates.payment_total },
-      { field: "total_price", value: candidates.total_price },
-      { field: "total_amount", value: candidates.total_amount },
-      { field: "order_total", value: candidates.order_total },
-      { field: "current_total_price", value: candidates.current_total_price },
-      { field: "subtotal_price", value: candidates.subtotal_price },
-      { field: "current_subtotal_price", value: candidates.current_subtotal_price },
-      { field: "LINE_ITEM_FALLBACK", value: candidates.line_items_sum }
-    ];
-  } else if (p === "shopify") {
-    priority = [
-      { field: "total_price", value: candidates.total_price },
-      { field: "current_total_price", value: candidates.current_total_price },
-      { field: "total_amount", value: candidates.total_amount },
-      { field: "order_total", value: candidates.order_total },
-      { field: "subtotal_price", value: candidates.subtotal_price },
-      { field: "LINE_ITEM_FALLBACK", value: candidates.line_items_sum }
-    ];
-  } else {
-    priority = [
-      { field: "total_price", value: candidates.total_price },
-      { field: "total_amount", value: candidates.total_amount },
-      { field: "order_total", value: candidates.order_total },
-      { field: "subtotal_price", value: candidates.subtotal_price },
-      { field: "LINE_ITEM_FALLBACK", value: candidates.line_items_sum }
-    ];
-  }
+  priority = [
+    { field: "current_total_price", value: candidates.current_total_price },
+    { field: "total_price", value: candidates.total_price },
+    { field: "total_amount", value: candidates.total_amount },
+    { field: "order_total", value: candidates.order_total },
+    { field: "LINE_ITEM_FALLBACK", value: candidates.line_items_sum }
+  ];
 
   const selected = firstPositiveCandidate(priority);
 

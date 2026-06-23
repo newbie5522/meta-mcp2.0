@@ -213,17 +213,16 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
   // 3. Sync Single Store Orders Action
   const handleSingleStoreSync = async (store: StoreMetric) => {
     setSyncRowLoading(prev => ({ ...prev, [store.id]: true }));
-    const toastId = toast.loading(`正在触发 [${store.name}] 订单同步...`);
+    const toastId = toast.loading(`正在触发 [${store.name}] DataCenter 账目刷新和核算...`);
     try {
-      const response = await axios.post("/api/sync/store-realtime", {
+      const response = await axios.post("/api/sync/data-center/refresh-store", {
         storeId: store.id,
         startDate: formattedStartDate,
-        endDate: formattedEndDate,
-        rebuild: true
+        endDate: formattedEndDate
       });
       
       toast.success(
-        `[${store.name}] 已刷新：${response.data.uniqueOrderCount || 0} 单，销售额 $${Number(response.data.orderTotalSum || 0).toFixed(2)}，line item 合计 $${Number(response.data.lineRevenueSum || 0).toFixed(2)}`,
+        `[${store.name}] 账目已刷新：${response.data.orderCount || 0} 单，收入 $${Number(response.data.grossSales || 0).toFixed(2)}`,
         { id: toastId }
       );
       
@@ -243,19 +242,22 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
 
   // 4. Sync All Stores Orders Action
   const handleSyncAllStores = async () => {
+    if (stores.length === 0) {
+      toast.error("当前无已配置的可同步店铺。");
+      return;
+    }
     setSyncAllLoading(true);
-    const toastId = toast.loading("开始为全局店铺启动拉取和订单增量抓取流...");
+    const toastId = toast.loading("开始刷新全局店铺 DataCenter 主链记账快照...");
     try {
-      const response = await axios.post("/api/sync/trigger", {
-        taskType: "sync_store_orders",
-        startDate: formattedStartDate,
-        endDate: formattedEndDate
-      });
-      if (response.data?.status === "NO_NEW_DATA") {
-        toast.warning(response.data.message || "同步完成，但当前日期范围暂无新的店铺订单。", { id: toastId });
-      } else {
-        toast.success(response.data.message || "店铺订单同步完成", { id: toastId });
-      }
+      const promises = stores.map(store => 
+        axios.post("/api/sync/data-center/refresh-store", {
+          storeId: store.id,
+          startDate: formattedStartDate,
+          endDate: formattedEndDate
+        })
+      );
+      await Promise.all(promises);
+      toast.success("所有店铺 DataCenter 账目快照已刷新成功！", { id: toastId });
       await fetchStoresData();
       if (selectedStoreForRecon) {
         await loadReconciliation(selectedStoreForRecon);
@@ -270,18 +272,29 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
 
   // 5. Rebuild All Stores Aggregation Summaries
   const handleRebuildStoreSummary = async () => {
+    if (stores.length === 0) {
+      toast.error("当前无已配置的可重建店铺。");
+      return;
+    }
     setRebuildLoading(true);
-    const toastId = toast.loading("正在清除本地 daily 聚合层并重构日期切片指标...");
+    const toastId = toast.loading("正在全面清除并重构 DataCenter 主链路每日账目记账快照...");
     try {
-      const response = await axios.post("/api/summary/stores/rebuild");
-      toast.success(response.data.message || "已触发店铺归档汇总重建", { id: toastId });
+      const promises = stores.map(store => 
+        axios.post("/api/sync/data-center/refresh-store", {
+          storeId: store.id,
+          startDate: formattedStartDate,
+          endDate: formattedEndDate
+        })
+      );
+      await Promise.all(promises);
+      toast.success("DataCenter 店铺归档主链账目快照已全部重构重组成功！", { id: toastId });
       await fetchStoresData();
       if (selectedStoreForRecon) {
         await loadReconciliation(selectedStoreForRecon);
       }
     } catch (error: any) {
       console.error("Rebuild stores summary error:", error);
-      toast.error(`重建汇总失败: ${getApiErrorMessage(error)}`, { id: toastId });
+      toast.error(`重构快照失败: ${getApiErrorMessage(error)}`, { id: toastId });
     } finally {
       setRebuildLoading(false);
     }

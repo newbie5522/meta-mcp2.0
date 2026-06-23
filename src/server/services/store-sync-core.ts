@@ -459,63 +459,17 @@ export async function fetchStoreOrdersCanonical(params: {
 
   // Evaluate and rank attribution field & revenue field
   let bestAttributionField: typeof attributionCandidates[number] = "processed_at";
-  let bestRevenueField = "total_price";
+  let bestRevenueField = "current_total_price";
 
-  if (params.baseline) {
-    const baseOrders = params.baseline.orders ?? 0;
-    const baseRev = params.baseline.revenue ?? 0;
-    
-    let bestScore = Infinity;
-    
-    // Test each combination of attribution field & revenue field
-    for (const attr of attributionCandidates) {
-      // 1. Filter orders in target start/end range using this attribution field
-      const ordersInRange = convertedOrders.filter(co => {
-        const rawTime = co[attr === "created_at" ? "rawCreatedAt" : attr === "paid_at" ? "rawPaidAt" : attr === "processed_at" ? "rawProcessedAt" : attr === "completed_at" ? "rawCompletedAt" : "rawUpdatedAt"] || co.rawCreatedAt;
-        if (!rawTime) return false;
-        
-        const localDate = getStoreLocalDate(rawTime, storeTimezone);
-        const validRange = localDate >= params.startDate && localDate <= params.endDate;
-        const validStatus = !isPaymentStatusExcluded(co.paymentStatus);
-        return validRange && validStatus;
-      });
-
-      // 2. Score revenue candidates for this set - strictly order-level fields as specified by choice rules
-      const revenueNames = ["total_price", "current_total_price", "total_amount", "order_total"] as const;
-      for (const revName of revenueNames) {
-        const sumRev = ordersInRange.reduce((s, co) => s + (co.revenueCandidates[revName] || 0), 0);
-        
-        // Loss metric
-        const ordersError = Math.abs(ordersInRange.length - baseOrders);
-        const revError = Math.abs(sumRev - baseRev);
-        const score = ordersError * 1000 + revError; // higher weight on order count accuracy
-
-        if (score < bestScore) {
-          bestScore = score;
-          bestAttributionField = attr;
-          bestRevenueField = revName;
-        }
-      }
-    }
-    console.log(`[Store Sync Core] Dynamic optimization matching baseline selected attribution: "${bestAttributionField}", revenue: "${bestRevenueField}"`);
-  } else {
-    // 2. 如果没有 baseline，使用指定默认优先级：
-    // attribution: paid_at if has any paid_at, else processed_at
+  // Unified priority: attribution defaults to created_at/processed_at
+  bestAttributionField = "created_at";
+  const hasProcessedAt = convertedOrders.some(co => co.rawProcessedAt);
+  if (hasProcessedAt) {
+    bestAttributionField = "processed_at";
+  }
+  const hasPaidAt = convertedOrders.some(co => co.rawPaidAt);
+  if (hasPaidAt) {
     bestAttributionField = "paid_at";
-    const hasPaidAt = convertedOrders.some(co => co.rawPaidAt);
-    if (!hasPaidAt) {
-      bestAttributionField = "processed_at";
-    }
-    const defaultOrderLevelFields = ["total_price", "current_total_price", "total_amount", "order_total"] as const;
-    bestRevenueField = "total_price";
-
-    for (const field of defaultOrderLevelFields) {
-      const sum = convertedOrders.reduce((s, co) => s + money(co.revenueCandidates[field]), 0);
-      if (sum > 0) {
-        bestRevenueField = field;
-        break;
-      }
-    }
   }
 
   // 3.3 and 3.4 calculations for sums & stats across target range

@@ -13,7 +13,8 @@ import {
   Sliders,
   Sparkles,
   Layers,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Calendar
 } from "lucide-react";
 
 interface SyncStatus {
@@ -66,6 +67,12 @@ export function SyncCenterPage() {
   const [infoMessage, setInfoMessage] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
   const [showConfirmRebuild, setShowConfirmRebuild] = useState(false);
 
+  // Ledger Rebuild states
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
+  const [rebuildStartDate, setRebuildStartDate] = useState(dayjs().subtract(7, "day").format("YYYY-MM-DD"));
+  const [rebuildEndDate, setRebuildEndDate] = useState(dayjs().format("YYYY-MM-DD"));
+
   // Load Status and Logs
   const fetchStatusAndData = async () => {
     try {
@@ -87,8 +94,74 @@ export function SyncCenterPage() {
       if (storesData.length > 0 && !selectedStoreId) {
         setSelectedStoreId(String(storesData[0].id));
       }
+
+      // Load available Facebook/Meta Accounts
+      const accountsRes = await fetch("/api/accounts");
+      const accountsData = await accountsRes.json();
+      if (Array.isArray(accountsData)) {
+        setAccounts(accountsData);
+        if (accountsData.length > 0 && !selectedAccountId) {
+          setSelectedAccountId(accountsData[0].id);
+        }
+      }
     } catch (err) {
       console.error("Failed to load Sync Center indices:", err);
+    }
+  };
+
+  const handleRebuildStoreLedger = async () => {
+    if (!selectedStoreId) return;
+    setIsTriggering("rebuild_store_ledger");
+    setInfoMessage(null);
+    try {
+      const response = await fetch("/api/sync/rebuild-store-ledger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storeId: selectedStoreId,
+          startDate: rebuildStartDate,
+          endDate: rebuildEndDate
+        })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setInfoMessage({ text: "店铺销售账目重构级联刷流与汇总数据对齐完成！", type: "success" });
+        fetchStatusAndData();
+      } else {
+        setInfoMessage({ text: data.error || data.details || "重构店铺账目失败", type: "error" });
+      }
+    } catch (err: any) {
+      setInfoMessage({ text: err.message || "请求异常", type: "error" });
+    } finally {
+      setIsTriggering(null);
+    }
+  };
+
+  const handleRebuildMetaLedger = async () => {
+    if (!selectedAccountId) return;
+    setIsTriggering("rebuild_meta_ledger");
+    setInfoMessage(null);
+    try {
+      const response = await fetch("/api/sync/rebuild-meta-ledger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountId: selectedAccountId,
+          startDate: rebuildStartDate,
+          endDate: rebuildEndDate
+        })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setInfoMessage({ text: "Meta 广告消耗账目强制清洗、API重拉与级联数据对齐完成！", type: "success" });
+        fetchStatusAndData();
+      } else {
+        setInfoMessage({ text: data.error || data.details || "重构 Meta 账目失败", type: "error" });
+      }
+    } catch (err: any) {
+      setInfoMessage({ text: err.message || "请求异常", type: "error" });
+    } finally {
+      setIsTriggering(null);
     }
   };
 
@@ -356,7 +429,7 @@ export function SyncCenterPage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
             
             {/* Meta Control Blocks */}
             <div className="bg-slate-50/60 p-4 rounded-xl border border-slate-100 space-y-3">
@@ -440,6 +513,98 @@ export function SyncCenterPage() {
                   <Sparkles className="w-3.5 h-3.5 text-amber-500" />
                 </button>
               </div>
+            </div>
+
+            {/* Ledger Rebuild Control Blocks */}
+            <div className="bg-slate-50/60 p-4 rounded-xl border border-slate-100 flex flex-col justify-between h-full space-y-4 col-span-1">
+              <div>
+                <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-2">
+                  <span className="w-1.5 h-3 bg-rose-600 rounded"></span>
+                  对账清洗与账目重构 / Ledgers
+                </div>
+                <p className="text-[11px] text-slate-500 leading-normal mb-3">
+                  抹除历史错误事实并重新拉取 API 对账入账。
+                </p>
+
+                {/* Range Filters */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">开始日期</label>
+                    <input
+                      type="date"
+                      value={rebuildStartDate}
+                      onChange={(e) => setRebuildStartDate(e.target.value)}
+                      className="w-full text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">结束日期</label>
+                    <input
+                      type="date"
+                      value={rebuildEndDate}
+                      onChange={(e) => setRebuildEndDate(e.target.value)}
+                      className="w-full text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t border-slate-200/60 pt-3 space-y-3">
+                {/* Store Rebuild Action */}
+                <div className="space-y-1">
+                  <span className="block text-[10px] text-slate-400 font-semibold">1. 店铺级额度重组</span>
+                  <div className="flex gap-1.5">
+                    <select
+                      value={selectedStoreId}
+                      onChange={(e) => setSelectedStoreId(e.target.value)}
+                      className="flex-1 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none max-w-[110px]"
+                    >
+                      {stores.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                      {stores.length === 0 && <option value="">暂无店铺</option>}
+                    </select>
+                    <button
+                      onClick={handleRebuildStoreLedger}
+                      disabled={!!isTriggering || !selectedStoreId}
+                      className="flex-1 truncate flex items-center justify-center gap-1 px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isTriggering === "rebuild_store_ledger" ? "animate-spin" : ""}`} />
+                      重构店铺
+                    </button>
+                  </div>
+                </div>
+
+                {/* Meta Rebuild Action */}
+                <div className="space-y-1">
+                  <span className="block text-[10px] text-slate-400 font-semibold">2. Meta 消耗重组</span>
+                  <div className="flex gap-1.5">
+                    <select
+                      value={selectedAccountId}
+                      onChange={(e) => setSelectedAccountId(e.target.value)}
+                      className="flex-1 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none max-w-[110px]"
+                    >
+                      {accounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.name || acc.id}
+                        </option>
+                      ))}
+                      {accounts.length === 0 && <option value="">暂无账户</option>}
+                    </select>
+                    <button
+                      onClick={handleRebuildMetaLedger}
+                      disabled={!!isTriggering || !selectedAccountId}
+                      className="flex-1 truncate flex items-center justify-center gap-1 px-2.5 py-1.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-xs font-bold transition disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isTriggering === "rebuild_meta_ledger" ? "animate-spin" : ""}`} />
+                      重构广告
+                    </button>
+                  </div>
+                </div>
+              </div>
+
             </div>
 
           </div>

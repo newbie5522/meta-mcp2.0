@@ -5,11 +5,78 @@ import { SyncCenter } from "../services/sync-center.service.js";
 import { getMetaToken, normalizeMetaAccountId } from "../utils.js";
 import { syncStoreData } from "../services/store-sync.service.js";
 import { syncMetaInsightsForActiveAccounts } from "../services/meta-insights.service.js";
+import { rebuiltStoreOrderSummary, rebuildStoreLedgerForRange } from "../services/store-ledger.service.js";
+import { cleanMetaAccountFactsForRange } from "../services/meta-ledger.service.js";
 import dayjs from "dayjs";
 import { syncMetaAccountSpendRealtime } from "../services/meta-realtime-sync.service.js";
 import { getStoreOrderSummary } from "../services/order-fact.service.js";
+import { refreshStoreDataCenterLedger } from "../services/datacenter-store-ledger.service.js";
+import { refreshMetaDataCenterLedger } from "../services/datacenter-meta-ledger.service.js";
 
 const router = Router();
+
+router.post("/sync/data-center/refresh-store", async (req, res) => {
+  try {
+    const { storeId, startDate, endDate } = req.body;
+
+    if (!storeId || !startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: "MISSING_PARAMS"
+      });
+    }
+
+    const result = await refreshStoreDataCenterLedger({
+      storeId: Number(storeId),
+      startDate,
+      endDate
+    });
+
+    return res.json({
+      success: true,
+      source: "DataCenterStoreDaily",
+      ...result
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      error: "REFRESH_STORE_LEDGER_FAILED",
+      message: error?.message || String(error)
+    });
+  }
+});
+
+router.post("/sync/data-center/refresh-meta", async (req, res) => {
+  try {
+    const { storeId, startDate, endDate, includeUnmapped = true } = req.body;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: "MISSING_DATE_RANGE"
+      });
+    }
+
+    const result = await refreshMetaDataCenterLedger({
+      storeId: storeId ? Number(storeId) : null,
+      startDate,
+      endDate,
+      includeUnmapped: includeUnmapped === true || includeUnmapped === "true"
+    });
+
+    return res.json({
+      success: true,
+      source: "DataCenterMetaAccountDaily",
+      ...result
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      error: "REFRESH_META_LEDGER_FAILED",
+      message: error?.message || String(error)
+    });
+  }
+});
 
 function isManualSyncEnabled(): boolean {
   return process.env.ENABLE_MANUAL_SYNC === "true";
@@ -953,6 +1020,95 @@ router.post("/summary/stores/rebuild", requireManualSyncEnabled, async (req, res
   } catch (error: any) {
     console.error("Rebuild store summary error:", error);
     res.status(500).json({ error: "Failed to rebuild store summary", details: error.message });
+  }
+});
+
+/**
+ * POST /api/sync/rebuild-store-ledger
+ * Rebuild specified store order facts ledger in range
+ */
+router.post("/sync/rebuild-store-ledger", requireManualSyncEnabled, async (req, res) => {
+  const { storeId, startDate, endDate } = req.body;
+  if (!storeId || !startDate || !endDate) {
+    return res.status(400).json({ error: "Missing storeId, startDate, or endDate" });
+  }
+
+  const chainId = "rebuild-store-ledger-" + Math.random().toString(36).substring(2, 8);
+  try {
+    const result = await rebuildStoreLedgerForRange({
+      storeId: parseInt(storeId, 10),
+      startDate,
+      endDate,
+      syncStoreData
+    });
+
+    const diffDays = dayjs(endDate).diff(dayjs(startDate), "day") + 1;
+    await SyncCenter.rebuildStoreSummary(chainId, "ledger_rebuild", null, diffDays);
+    await SyncCenter.rebuildDashboardSummary(chainId, "ledger_rebuild", null, diffDays);
+
+    res.json({
+      success: true,
+      result,
+      taskChainId: chainId
+    });
+  } catch (err: any) {
+    console.error("Rebuild store ledger error:", err);
+    res.status(500).json({ error: "Failed to rebuild store ledger", details: err?.message || String(err) });
+  }
+});
+
+/**
+ * POST /api/sync/rebuild-meta-ledger
+ * Rebuild specified meta accounts performance facts ledger in range
+ */
+router.post("/sync/rebuild-meta-ledger", requireManualSyncEnabled, async (req, res) => {
+  const { accountId, accountIds, startDate, endDate } = req.body;
+  const startStr = startDate || dayjs().subtract(7, "day").format("YYYY-MM-DD");
+  const endStr = endDate || dayjs().format("YYYY-MM-DD");
+
+  const targetAccountIds = Array.isArray(accountIds) 
+    ? accountIds 
+    : accountId 
+      ? [accountId] 
+      : [];
+
+  if (targetAccountIds.length === 0) {
+    return res.status(400).json({ error: "Missing accountId or accountIds" });
+  }
+
+  const chainId = "rebuild-meta-ledger-" + Math.random().toString(36).substring(2, 8);
+  try {
+    const cleanResult = await cleanMetaAccountFactsForRange({
+      accountIds: targetAccountIds,
+      startDate: startStr,
+      endDate: endStr
+    });
+
+    const syncResults = [];
+    for (const id of targetAccountIds) {
+      const stats = await syncMetaInsightsForActiveAccounts({
+        startDate: startStr,
+        endDate: endStr,
+        accountId: id,
+        taskChainId: chainId,
+        triggeredBy: "rebuild_meta_ledger"
+      });
+      syncResults.push({ accountId: id, stats });
+    }
+
+    const diffDays = dayjs(endStr).diff(dayjs(startStr), "day") + 1;
+    await SyncCenter.rebuildMetaSummary(chainId, "ledger_rebuild", null, diffDays);
+    await SyncCenter.rebuildDashboardSummary(chainId, "ledger_rebuild", null, diffDays);
+
+    res.json({
+      success: true,
+      cleanResult,
+      syncResults,
+      taskChainId: chainId
+    });
+  } catch (err: any) {
+    console.error("Rebuild meta ledger error:", err);
+    res.status(500).json({ error: "Failed to rebuild meta ledger", details: err?.message || String(err) });
   }
 });
 

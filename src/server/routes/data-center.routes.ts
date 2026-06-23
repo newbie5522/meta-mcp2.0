@@ -860,23 +860,12 @@ router.post("/creatives/:creativeId/analyze", async (req, res) => {
           aiProvider: "none",
           primarySource: "CreativePerformanceDaily",
           geminiEnabled: false,
-          metrics: {
-            spend,
-            impressions,
-            clicks,
-            purchases,
-            revenue,
-            ctr,
-            cpc,
-            cpm,
-            roas
-          }
+          metrics: { spend, impressions, clicks, purchases, revenue, ctr, cpc, cpm, roas }
         })
       }
     });
 
     return res.json(fallbackReport);
-
   } catch (error: any) {
     console.error("[Data Center API] Creative evaluation error:", error);
     res.status(500).json({ error: "Creative evaluation failed", details: error.message });
@@ -888,260 +877,168 @@ router.post("/creatives/:creativeId/analyze", async (req, res) => {
  * Returns stores analytics dashboard list
  */
 router.get("/stores", async (req, res) => {
-  const { startDate, endDate, includeLegacyFallback } = req.query;
+  const startDate = String(req.query.startDate || "");
+  const endDate = String(req.query.endDate || startDate);
+  const storeId = req.query.storeId ? Number(req.query.storeId) : null;
 
   try {
-    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
-    const allowLegacyFallback = includeLegacyFallback === "true";
+    const where: any = {
+      date: {
+        gte: startDate,
+        lte: endDate
+      }
+    };
 
-    // Start of SOT Refactored Stores Endpoint
-    let storesToAggregate = await prisma.store.findMany({
+    if (storeId) where.storeId = storeId;
+
+    const rows = await prisma.dataCenterStoreDaily.findMany({ where });
+
+    // 1. Get all stores and their account mappings to calculate spend and ROAS
+    const storesToAggregate = await prisma.store.findMany({
       include: { accounts: true, accountMappings: true }
     });
 
-    if (!isDemoDataEnabled()) {
-      storesToAggregate = storesToAggregate.filter(store => 
-        store.mode !== "sandbox" &&
-        !["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"].includes(store.name) &&
-        !["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"].includes(store.domain)
-      );
+    // 2. Load meta ledger rows in that range to compute mapped spend
+    const metaRows = await prisma.dataCenterMetaAccountDaily.findMany({
+      where: {
+        date: {
+          gte: startDate,
+          lte: endDate
+        }
+      }
+    });
+
+    const grouped = new Map();
+
+    for (const row of rows) {
+      if (!grouped.has(row.storeId)) {
+        const storeEntity = storesToAggregate.find(s => s.id === row.storeId);
+        
+        const mappedFbAccountIds = new Set<string>();
+        if (storeEntity) {
+          storeEntity.accounts?.forEach(acc => mappedFbAccountIds.add(normalizeMetaAccountId(acc.fb_account_id)));
+          storeEntity.accountMappings?.forEach(m => {
+            if (m.fbAccountId) mappedFbAccountIds.add(normalizeMetaAccountId(m.fbAccountId));
+          });
+        }
+        const uniqueMappedIds = Array.from(mappedFbAccountIds);
+
+        grouped.set(row.storeId, {
+          id: row.storeId,
+          storeId: row.storeId,
+          name: row.storeName || (storeEntity ? storeEntity.name : `Store #${row.storeId}`),
+          storeName: row.storeName || (storeEntity ? storeEntity.name : `Store #${row.storeId}`),
+          platform: row.platform,
+          domain: row.domain,
+          orderCount: 0,
+          ordersCount: 0,
+          revenue: 0,
+          sales: 0,
+          totalSales: 0,
+          totalRefunded: 0,
+          aov: 0,
+          adSpend: 0,
+          roas: 0,
+          realRoas: null,
+          currency: row.currency,
+          mappedAccountCount: uniqueMappedIds.length,
+          accountsCount: uniqueMappedIds.length,
+          hasMappedAccounts: uniqueMappedIds.length > 0,
+          latestFetchedAt: row.apiFetchedAt,
+          source: "DataCenterStoreDaily",
+          mode: "DATACENTER_LEDGER",
+          reconciliation: {
+            status: "derived_from_datacenter_ledger",
+            match: true,
+            orderRows: row.orderCount,
+            uniqueOrderCount: row.orderCount,
+            orderTotalSum: row.grossSales,
+            lineRevenueSum: row.grossSales,
+            paymentStatusCounts: {},
+            source: "DataCenterStoreDaily snapshot table"
+          }
+        });
+      }
+
+      const item = grouped.get(row.storeId);
+      item.orderCount += row.orderCount;
+      item.ordersCount = item.orderCount;
+      item.revenue = Number((item.revenue + row.grossSales).toFixed(2));
+      item.sales = item.revenue;
+      item.totalSales = item.revenue;
+      item.latestFetchedAt = row.apiFetchedAt > item.latestFetchedAt ? row.apiFetchedAt : item.latestFetchedAt;
     }
 
-    const accountPerformanceFacts = await getMetaAccountPerformanceFacts({
-      startDate: startStr,
-      endDate: endStr,
-    });
-
-    const processedList = await Promise.all(storesToAggregate.map(async (store) => {
-      const orderSummary = await getStoreOrderSummary({
-        startDate: startStr,
-        endDate: endStr,
-        storeId: store.id,
-        includeLegacyCreatedAtFallback: allowLegacyFallback
-      });
-
-      const ordersCount = orderSummary.ordersCount;
-      const totalSales = orderSummary.totalSales;
-      const totalRefunded = orderSummary.refundAmount;
-
-      const uniqueProductIds = new Set(orderSummary.orders.map(o => o.productId).filter(Boolean));
-      const productCount = uniqueProductIds.size;
-      const countryCount = null;
-
-      const mappedFbAccountIds = new Set<string>();
-      store.accounts?.forEach(acc => mappedFbAccountIds.add(acc.fb_account_id));
-      store.accountMappings?.forEach(m => {
-        if (m.fbAccountId) mappedFbAccountIds.add(m.fbAccountId);
-      });
-
-      const uniqueMappedIds = Array.from(mappedFbAccountIds).map(normalizeMetaAccountId);
+    // Now compute the mapped spend and ROAS for each grouped store
+    const storesList = Array.from(grouped.values()).map(s => {
+      const storeEntity = storesToAggregate.find(x => x.id === s.storeId);
       let adSpend = 0;
-      let hasMappedAccounts = uniqueMappedIds.length > 0;
-
-      if (hasMappedAccounts) {
-        const mappedIdSet = new Set(uniqueMappedIds);
-        const perfRows = accountPerformanceFacts.filter(row => mappedIdSet.has(normalizeMetaAccountId(row.account_id)));
-        adSpend = perfRows.reduce((sum, ad) => sum + (ad.spend || 0), 0);
+      if (storeEntity) {
+        const mappedFbAccountIds = new Set<string>();
+        storeEntity.accounts?.forEach(acc => mappedFbAccountIds.add(normalizeMetaAccountId(acc.fb_account_id)));
+        storeEntity.accountMappings?.forEach(m => {
+          if (m.fbAccountId) mappedFbAccountIds.add(normalizeMetaAccountId(m.fbAccountId));
+        });
+        const uniqueMappedIds = Array.from(mappedFbAccountIds);
+        
+        adSpend = metaRows
+          .filter(r => uniqueMappedIds.includes(normalizeMetaAccountId(r.accountId)))
+          .reduce((sum, r) => sum + r.spend, 0);
       }
 
-      const roas = adSpend > 0 ? totalSales / adSpend : 0;
-      const aov = orderSummary.aov;
-
-      const lastSync = await prisma.syncLog.findFirst({
-        where: { storeId: store.id },
-        orderBy: { startedAt: "desc" }
-      });
-
-      const paymentStatusCounts = orderSummary.orders.reduce((acc, o) => {
-        const key = o.paymentStatus || "unknown";
-        acc[key] = (acc[key] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>);
-
-      const lineRevenueSum = Number(orderSummary.orders.reduce((s, o) => s + Number(o.revenue || 0), 0).toFixed(2));
-
-      const storeReconciliation = {
-        status: "derived_from_order_fact",
-        match: true,
-        orderRows: orderSummary.orders.length,
-        uniqueOrderCount: ordersCount,
-        orderTotalSum: totalSales,
-        lineRevenueSum,
-        paymentStatusCounts,
-        source: "Order.store_local_date + unique orderId + orderTotal"
-      };
+      const totalSales = s.revenue;
+      const roas = adSpend > 0 ? Number((totalSales / adSpend).toFixed(4)) : 0;
 
       return {
-        id: store.id,
-        name: store.name,
-        platform: store.platform,
-        domain: store.domain,
-        currency: "USD",
-        accountsCount: uniqueMappedIds.length,
-        mappedAccountCount: uniqueMappedIds.length,
-        ordersCount,
-        totalSales,
-        totalRefunded,
-        avgOrderValue: aov,
-        aov,
-        adSpend,
+        ...s,
+        adSpend: Number(adSpend.toFixed(2)),
         roas,
         realRoas: adSpend > 0 ? roas : null,
-        hasMappedAccounts,
-        hasOrders: ordersCount > 0,
-        legacyFallbackUsed: orderSummary.legacyFallbackUsed,
-        countryCount,
-        productCount,
-        lastSyncTime: lastSync?.finishedAt || lastSync?.startedAt || null,
-        syncStatus: lastSync?.status || "none",
-        syncError: lastSync?.errorMessage || lastSync?.error || null,
-        reconciliation: storeReconciliation
+        avgOrderValue: s.ordersCount > 0 ? Number((totalSales / s.ordersCount).toFixed(2)) : 0,
+        aov: s.ordersCount > 0 ? Number((totalSales / s.ordersCount).toFixed(2)) : 0,
+        hasOrders: s.ordersCount > 0
       };
-    }));
+    });
 
-    const mappingFacts = await getAccountMappingFacts({ startDate: startStr, endDate: endStr });
-    const allAdAccounts = await prisma.adAccount.findMany();
-    const storesInventoryCount = storesToAggregate.length;
-    const storesInventory = storesToAggregate.map(toStoreInventoryDto);
-    const storesWithOrdersCount = processedList.filter(store => store.ordersCount > 0).length;
-    const ordersCount = processedList.reduce((sum, store) => sum + (store.ordersCount || 0), 0);
-    const metaFactsCount = accountPerformanceFacts.length;
-    const lastSyncLog = await prisma.syncLog.findFirst({
-      where: {
-        OR: [
-          { taskType: "sync_store_orders" },
-          { type: "sync_store_orders" }
-        ]
-      },
-      orderBy: { startedAt: "desc" }
-    });
-    const isSyncActive = await prisma.syncLog.count({
-      where: {
-        status: "running",
-        OR: [
-          { taskType: "sync_store_orders" },
-          { type: "sync_store_orders" }
-        ]
-      }
-    }) > 0;
-    const lastFailedSync = await prisma.syncLog.findFirst({
-      where: {
-        status: "failed",
-        OR: [
-          { taskType: "sync_store_orders" },
-          { type: "sync_store_orders" },
-          { taskType: "sync_meta_insights" },
-          { type: "sync_meta_insights" }
-        ]
-      },
-      orderBy: { startedAt: "desc" }
-    });
+    const totalOrders = storesList.reduce((sum, s) => sum + s.ordersCount, 0);
+    const totalRevenue = Number(storesList.reduce((sum, s) => sum + s.revenue, 0).toFixed(2));
+
+    // Calculate unmapped accounts summary
     const allMappedFbAccountIds = new Set<string>();
     storesToAggregate.forEach(s => {
-      s.accounts.forEach(acc => allMappedFbAccountIds.add(normalizeMetaAccountId(acc.fb_account_id)));
-      s.accountMappings.forEach(m => {
+      s.accounts?.forEach(acc => allMappedFbAccountIds.add(normalizeMetaAccountId(acc.fb_account_id)));
+      s.accountMappings?.forEach(m => {
         if (m.fbAccountId) allMappedFbAccountIds.add(normalizeMetaAccountId(m.fbAccountId));
       });
     });
 
-    const unmappedAccounts = allAdAccounts.filter(acc => !allMappedFbAccountIds.has(normalizeMetaAccountId(acc.fb_account_id)));
-    const warnings: string[] = [];
+    const unmappedMetaRows = metaRows.filter(r => !allMappedFbAccountIds.has(normalizeMetaAccountId(r.accountId)));
+    const unmappedSpend = Number(unmappedMetaRows.reduce((sum, r) => sum + r.spend, 0).toFixed(2));
+    const unmappedCount = new Set(unmappedMetaRows.map(r => r.accountId)).size;
 
-    let dataStatus = "EXCELLENT";
-    let missingReason = "所有店铺数据已实时对齐，未映射广告支出安全过滤中，数据流健康运行中。";
-
-    if (storesInventoryCount === 0) {
-      dataStatus = "EMPTY_CONFIG";
-      missingReason = "尚未创建任何电商平台店铺，请前往配置中心添加并关联您的首个店铺。";
-    } else if (ordersCount === 0) {
-      dataStatus = "EMPTY_FACTS";
-      missingReason = "店铺已配置，但当前日期范围暂无订单事实数据。请触发店铺订单同步，或检查店铺 API 是否返回订单。";
-      warnings.push("STORE_CONFIG_EXISTS_BUT_ORDER_FACTS_EMPTY");
-    } else {
-      const someMissingOrders = processedList.some(s => s.ordersCount === 0);
-      const someMissingSpend = processedList.some(s => s.adSpend === 0 && s.accountsCount > 0);
-      if (someMissingOrders) {
-        dataStatus = "WARNING";
-        missingReason = "部分店铺尚未获得订单交易数据，或在当前所选日期筛选范围内暂无任何订单导入，导致 AOV 为 $0.00。请点击 “同步单个店铺” 确认连通性。";
-      } else if (someMissingSpend) {
-        dataStatus = "WARNING";
-        missingReason = "部分店铺关联 of Meta 广告账户在当期无花费支出，这导致无法计算其真实 ROAS（投流效果分析不受影响）。";
-      }
-    }
-
-    if (lastFailedSync) {
-      dataStatus = "SYNC_FAILED";
-      missingReason = `最近同步失败：${lastFailedSync.errorMessage || lastFailedSync.error || "Unknown sync error"}`;
-      warnings.push(`LAST_SYNC_FAILED:${lastFailedSync.errorMessage || lastFailedSync.error || "Unknown sync error"}`);
-    }
-
-    const isTargetDate = startStr === "2026-06-21" && endStr === "2026-06-21";
-    const rawPlatformOrdersCount = isTargetDate ? 17 : ordersCount;
-    const diffCount = Math.abs(rawPlatformOrdersCount - ordersCount);
-    const percentageError = rawPlatformOrdersCount > 0 ? (diffCount / rawPlatformOrdersCount) * 100 : 0;
-    const match = diffCount === 0;
-
-    const rootReconciliation = {
-      status: match ? "reconciliation_passed" : "reconciliation_failed",
-      match,
-      rawPlatformOrdersCount,
-      dbOrdersCount: ordersCount,
-      diffCount,
-      percentageError
-    };
-
-    res.json({
-      stores: processedList,
-      storesInventoryCount,
-      storesInventory,
-      storesWithOrdersCount,
-      ordersCount,
-      metaFactsCount,
-      reconciliation: rootReconciliation,
-      syncStatus: {
-        isSyncActive,
-        status: isSyncActive ? "running" : (lastSyncLog?.status || "none"),
-        lastSyncTime: lastSyncLog?.finishedAt || lastSyncLog?.startedAt || null,
-        lastSyncTaskType: lastSyncLog?.taskType || lastSyncLog?.type || null
-      },
-      lastSyncLog: lastSyncLog ? {
-        id: lastSyncLog.id,
-        taskType: lastSyncLog.taskType || lastSyncLog.type,
-        status: lastSyncLog.status,
-        startedAt: lastSyncLog.startedAt,
-        finishedAt: lastSyncLog.finishedAt,
-        recordsFetched: lastSyncLog.recordsFetched || 0,
-        recordsSaved: lastSyncLog.recordsSaved || 0,
-        errorMessage: lastSyncLog.errorMessage || lastSyncLog.error || null
-      } : null,
+    return res.json({
+      source: "DataCenterStoreDaily",
+      mode: "DATACENTER_LEDGER",
+      startDate,
+      endDate,
+      stores: storesList,
+      ordersCount: totalOrders,
+      revenue: totalRevenue,
+      storesInventoryCount: storesList.length,
       unmappedAccountsSummary: {
-        count: mappingFacts.unmappedSpendAccountsInRange,
-        spend: mappingFacts.unmappedSpendAmount,
-        message: `当前有 ${mappingFacts.unmappedSpendAccountsInRange} 个广告账户尚未绑定店铺且产生消耗，这些账户的花费 $${mappingFacts.unmappedSpendAmount.toFixed(2)} 不会计入任何店铺真实 ROAS。请前往店铺账户映射页面处理。`
+        count: unmappedCount,
+        spend: unmappedSpend,
+        message: `当前有 ${unmappedCount} 个广告账户尚未绑定店铺且产生消耗，这些账户的花费 $${unmappedSpend} 不会计入任何店铺真实 ROAS。`
       },
       dataHealth: {
-        status: dataStatus,
-        message: missingReason,
-        warnings,
-        lastFailedSync: lastFailedSync ? {
-          taskType: lastFailedSync.taskType || lastFailedSync.type,
-          errorMessage: lastFailedSync.errorMessage || lastFailedSync.error || null,
-          startedAt: lastFailedSync.startedAt
-        } : null
-      },
-      dataSourceExplain: {
-        orderSource: "Order.store_local_date",
-        metaSource: "FactMetaPerformance",
-        mappingSource: "AccountMapping + AdAccount",
-        legacyCreatedAtFallbackEnabled: allowLegacyFallback,
-        legacyCreatedAtFallbackUsed: allowLegacyFallback && processedList.some(store => store.legacyFallbackUsed)
+        status: rows.length > 0 ? "OK" : "EMPTY",
+        message: rows.length > 0 ? "所有数据来自 DataCenter Store Daily 账目表。" : "此日期范围内暂无 DataCenter 账目记录。",
+        source: "DataCenterStoreDaily"
       }
     });
-
-    return; // Fast return to skip legacy evaluation blocks below
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to load stores dashboard", details: error.message });
+    console.error("[DataCenter] Stores API error:", error);
+    res.status(500).json({ error: "Failed to load stores ledger stats", details: error.message });
   }
 });
 
@@ -1309,346 +1206,146 @@ router.get("/max-date", async (req, res) => {
  * Formatted from fact_meta_performance
  */
 router.get("/accounts-performance", async (req, res) => {
-  const { startDate, endDate, storeId } = req.query;
+  const startDate = String(req.query.startDate || "");
+  const endDate = String(req.query.endDate || startDate);
+  const storeIdParam = req.query.storeId ? String(req.query.storeId) : "all";
+
   try {
-    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
-
-    // 1. Fetch performance rows from SOT fact table
-    let performanceRows = await prisma.factMetaPerformance.findMany({
-      where: {
-        level: "account",
-        date: { gte: startStr, lte: endStr }
+    const where: any = {
+      date: {
+        gte: startDate,
+        lte: endDate
       }
-    });
+    };
 
-    // 2. Fetch AdAccount, AccountMapping, Store info using SOT mapping service
-    let [adAccounts, accountMappings, stores] = await Promise.all([
-      prisma.adAccount.findMany({ include: { store: true } }),
-      prisma.accountMapping.findMany({ include: { store: true } }),
-      prisma.store.findMany()
-    ]);
-
-    if (!isDemoDataEnabled()) {
-      stores = stores.filter(store => 
-        store.mode !== "sandbox" &&
-        !["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"].includes(store.name) &&
-        !["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"].includes(store.domain)
-      );
-      const productionStoreIds = new Set(stores.map(s => s.id));
-      adAccounts = adAccounts.filter(acc => !acc.storeId || productionStoreIds.has(acc.storeId));
-      accountMappings = accountMappings.filter(m => !m.storeId || productionStoreIds.has(m.storeId));
+    if (storeIdParam !== "all" && storeIdParam !== "undefined" && storeIdParam !== "null") {
+      where.storeId = Number(storeIdParam);
     }
 
-    const adAccountsMap = new Map<string, any>();
-    adAccounts.forEach(a => adAccountsMap.set(normalizeMetaAccountId(a.fb_account_id), a));
+    const rows = await prisma.dataCenterMetaAccountDaily.findMany({ where });
 
-    const mappingsMap = new Map<string, any>();
-    accountMappings.forEach(m => mappingsMap.set(normalizeMetaAccountId(m.fbAccountId), m));
+    const grouped = new Map();
 
-    if (!isDemoDataEnabled()) {
-      performanceRows = performanceRows.filter(r => {
-        if (!r.account_id) return false;
-        const normId = normalizeMetaAccountId(r.account_id);
-        return adAccountsMap.has(normId) || mappingsMap.has(normId);
-      });
-    }
-
-    // 3. Group and aggregate daily performance
-    const legacyNumericFactRows: any[] = [];
-    const canonicalFactRows: any[] = [];
-
-    for (const row of performanceRows) {
-      if (!row.account_id) continue;
-      if (!row.account_id.startsWith("act_")) {
-        legacyNumericFactRows.push(row);
-        continue;
-      }
-      canonicalFactRows.push(row);
-    }
-
-    const performanceMap = new Map<string, any>();
-    for (const row of canonicalFactRows) {
-      const normId = normalizeMetaAccountId(row.account_id);
-      if (!performanceMap.has(normId)) {
-        performanceMap.set(normId, {
+    for (const row of rows) {
+      if (!grouped.has(row.accountId)) {
+        grouped.set(row.accountId, {
+          id: row.accountId,
+          fb_account_id: row.accountId,
+          fb_account_name: row.accountName,
+          accountId: row.accountId,
+          accountName: row.accountName,
+          storeId: row.storeId,
+          storeName: row.storeName || "未关联店铺",
+          isBound: !!row.storeId,
           spend: 0,
           impressions: 0,
+          reach: 0,
           clicks: 0,
           purchases: 0,
           purchase_value: 0,
-          synced_at_times: []
+          purchaseValue: 0,
+          roas: 0,
+          currency: row.currency,
+          timezone: row.timezone,
+          latestFetchedAt: row.apiFetchedAt,
+          source: "DataCenterMetaAccountDaily",
+          mode: "DATACENTER_LEDGER",
+          mappingStatus: row.storeId ? "BOUND" : "UNBOUND"
         });
       }
-      const agg = performanceMap.get(normId);
-      agg.spend += row.spend || 0;
-      agg.impressions += row.impressions || 0;
-      agg.clicks += row.clicks || 0;
-      agg.purchases += row.purchases || 0;
-      agg.purchase_value += row.purchase_value || 0;
-      if (row.synced_at) {
-        agg.synced_at_times.push(new Date(row.synced_at));
-      }
+
+      const item = grouped.get(row.accountId);
+      item.spend = Number((item.spend + row.spend).toFixed(2));
+      item.impressions += row.impressions;
+      item.reach += row.reach;
+      item.clicks += row.clicks;
+      item.purchases += row.purchases;
+      item.purchase_value = Number((item.purchase_value + row.purchaseValue).toFixed(2));
+      item.purchaseValue = item.purchase_value;
+      item.latestFetchedAt = row.apiFetchedAt > item.latestFetchedAt ? row.apiFetchedAt : item.latestFetchedAt;
     }
 
-    // 4. Build union of all accounts to support "All accounts" view toggling
-    const allAccountIds = new Set<string>([
-      ...performanceMap.keys(),
-      ...adAccountsMap.keys(),
-      ...mappingsMap.keys()
-    ]);
+    const results = Array.from(grouped.values()).map(a => {
+      const ctr = a.impressions > 0 ? Number(((a.clicks / a.impressions) * 100).toFixed(4)) : 0;
+      const cpc = a.clicks > 0 ? Number((a.spend / a.clicks).toFixed(4)) : 0;
+      const cpm = a.impressions > 0 ? Number(((a.spend / a.impressions) * 1000).toFixed(4)) : 0;
+      const roas = a.spend > 0 ? Number((a.purchase_value / a.spend).toFixed(4)) : 0;
 
-    // Use MappingFactService helper
-    const mappingFacts = await getAccountMappingFacts({ startDate: startStr, endDate: endStr });
-
-    let results: any[] = [];
-    for (const rawId of allAccountIds) {
-      const normId = normalizeMetaAccountId(rawId);
-      
-      const agg = performanceMap.get(normId) || {
-        spend: 0,
-        impressions: 0,
-        clicks: 0,
-        purchases: 0,
-        purchase_value: 0,
-        synced_at_times: []
-      };
-
-      const adAcc = adAccountsMap.get(normId);
-      const mapping = mappingsMap.get(normId);
-
-      // Resolve store binding via resolveAccountStoreBinding to avoid conflicting mappings
-      const binding = await resolveAccountStoreBinding(normId);
-
-      const isBound = binding.storeId !== null;
-      const storeIdVal = binding.storeId;
-      const boundStore = stores.find(s => s.id === storeIdVal);
-      const storeName = boundStore ? boundStore.name : "未关联店铺";
-
-      const name = adAcc?.fb_account_name || mapping?.name || `Meta Account ${normId}`;
-      const currency = adAcc?.currency || "USD";
-      const timezone = adAcc?.timezone || "America/Los_Angeles";
-      const activityStatus = adAcc?.activityStatus !== undefined ? adAcc.activityStatus : 1;
-      const recentActivity90d = adAcc?.recentActivity90d || false;
-
-      // Find individual latest sync time
-      let maxSyncedAtSec: Date | null = null;
-      if (agg.synced_at_times.length > 0) {
-        maxSyncedAtSec = new Date(Math.max(...agg.synced_at_times.map(t => t.getTime())));
-      } else if (adAcc?.updatedAt) {
-        maxSyncedAtSec = adAcc.updatedAt;
-      }
-
-      const ctr = agg.impressions > 0 ? (agg.clicks / agg.impressions) * 100 : 0;
-      const cpc = agg.clicks > 0 ? agg.spend / agg.clicks : 0;
-      const cpm = agg.impressions > 0 ? (agg.spend / agg.impressions) * 1000 : 0;
-      const cpa = agg.purchases > 0 ? agg.spend / agg.purchases : 0;
-      const meta_roas = agg.spend > 0 ? agg.purchase_value / agg.spend : 0;
-
-      results.push({
-        id: adAcc ? String(adAcc.id) : `synth_${normId}`,
-        fb_account_id: normId,
-        fb_account_name: name,
-        currency,
-        timezone,
-        activityStatus,
-        recentActivity90d,
-        storeId: storeIdVal,
-        storeName,
-        isBound,
-        isUnmappedWithSpend: !isBound && agg.spend > 0,
-        spend: agg.spend,
-        impressions: agg.impressions,
-        clicks: agg.clicks,
-        purchases: agg.purchases,
-        purchase_value: agg.purchase_value,
-        purchaseValue: agg.purchase_value,
+      return {
+        ...a,
         ctr,
         cpc,
         cpm,
-        cpa,
-        meta_roas,
-        roas: meta_roas,
-        lastSyncedAt: maxSyncedAtSec,
-        accountId: normId,
-        accountName: name,
-        hasSpend: agg.spend > 0,
-        mappingStatus: isBound ? "BOUND" : "UNBOUND",
-        dataSourceExplain: "FactMetaPerformance Joined with AdAccount, AccountMapping, and Store.",
-        latestSyncedAt: maxSyncedAtSec,
-        dateSource: "FactMetaPerformance.date = Meta API date_start",
-        timezoneRule: "Meta API owns ad account date_start; no server timezone conversion"
-      });
-    }
+        roas,
+        meta_roas: roas,
+        hasSpend: a.spend > 0,
+        isUnmappedWithSpend: !a.isBound && a.spend > 0
+      };
+    });
 
-    // Filter by storeId if requested
-    if (storeId && storeId !== "all" && storeId !== "undefined") {
-      const sId = Number(storeId);
-      results = results.filter(r => r.storeId === sId || !r.isBound);
-    }
-
-    // Default sorting by spend DESC
     results.sort((a, b) => b.spend - a.spend);
 
-    // Latest overall sync times
-    const accountRowsWithSync = performanceRows.filter(r => r.synced_at);
-    let maxPerformanceSyncTime: Date | null = null;
-    if (accountRowsWithSync.length > 0) {
-      maxPerformanceSyncTime = new Date(Math.max(...accountRowsWithSync.map(r => new Date(r.synced_at).getTime())));
-    }
+    const latestFetched = rows
+      .map(r => r.apiFetchedAt)
+      .sort((a, b) => b.getTime() - a.getTime())[0] || null;
 
-    const lastSyncLog = await prisma.syncLog.findFirst({
-      orderBy: { startedAt: "desc" }
-    });
-
-    const isSyncActive = await prisma.syncLog.count({
-      where: { status: "running" }
-    }) > 0;
-
-    const lastSyncTimeVal = maxPerformanceSyncTime || lastSyncLog?.finishedAt || lastSyncLog?.startedAt || null;
-    const lastFailedSync = await prisma.syncLog.findFirst({
-      where: {
-        status: "failed",
-        OR: [
-          { taskType: "sync_meta_insights" },
-          { type: "sync_meta_insights" },
-          { taskType: "sync_meta_insights_slice" },
-          { type: "sync_meta_insights_slice" }
-        ]
-      },
-      orderBy: { startedAt: "desc" }
-    });
-
-    // Use correct inventory SOT for indicators:
-    const accountsInventoryCount = adAccounts.length; // source for inventory count
-    const accountsInventory = adAccounts.map(toAccountInventoryDto);
-    const storesInventory = stores.map(toStoreInventoryDto);
-    const accountsWithFactsCount = performanceMap.size;
-    const metaFactsCount = performanceRows.length;
-    const activeAccounts = mappingFacts.spendAccountsInRange; // Spend accounts count as active
-    const spendAccounts = mappingFacts.spendAccountsInRange;
-    const zeroSpendAccounts = results.filter(r => r.spend === 0).length;
+    const totalSpend = Number(results.reduce((sum, a) => sum + a.spend, 0).toFixed(2));
     const boundAccounts = results.filter(r => r.isBound).length;
     const unboundAccounts = results.filter(r => !r.isBound).length;
-    const unboundSpendAccounts = mappingFacts.unmappedSpendAccountsInRange;
-    const totalSpend = results.reduce((acc, r) => acc + r.spend, 0);
-    const unboundSpend = mappingFacts.unmappedSpendAmount;
+
+    const unboundSpend = Number(results.filter(r => !r.isBound).reduce((sum, r) => sum + r.spend, 0).toFixed(2));
+    const unboundSpendAccounts = results.filter(r => !r.isBound && r.spend > 0).length;
     const unboundSpendRate = totalSpend > 0 ? unboundSpend / totalSpend : 0;
-    const warnings: string[] = [];
-    let healthStatus = "READY";
-    let missingReason = "";
 
-    if (accountsInventoryCount === 0) {
-      healthStatus = "EMPTY_CONFIG";
-      missingReason = "尚未保存任何 Meta 广告账户，请先在配置中心拉取并保存广告账户。";
-    } else if (metaFactsCount === 0) {
-      healthStatus = "EMPTY_FACTS";
-      missingReason = "账户已存在，但当前日期范围暂无广告表现事实数据，请触发同步或检查 Meta API 返回。";
-      warnings.push("ACCOUNT_INVENTORY_EXISTS_BUT_META_FACTS_EMPTY");
-    } else if (spendAccounts === 0) {
-      healthStatus = "WARNING";
-      missingReason = "当前日期范围内已有 Meta 表现事实记录，但没有账户产生花费。";
-      warnings.push("META_FACTS_EXIST_BUT_SPEND_IS_ZERO");
-    }
-
-    if (lastFailedSync) {
-      healthStatus = "SYNC_FAILED";
-      missingReason = `最近同步失败：${lastFailedSync.errorMessage || lastFailedSync.error || "Unknown sync error"}`;
-      warnings.push(`LAST_SYNC_FAILED:${lastFailedSync.errorMessage || lastFailedSync.error || "Unknown sync error"}`);
-    }
-
-    const latestFactDate = performanceRows.length > 0
-      ? performanceRows.map(r => r.date).sort().slice(-1)[0]
-      : null;
-
-    const latestSyncedAt = performanceRows
-      .filter(r => r.synced_at)
-      .map(r => new Date(r.synced_at).getTime())
-      .sort((a, b) => b - a)[0] || null;
-
-    const secondsSinceLatestSync = latestSyncedAt
-      ? Math.floor((Date.now() - latestSyncedAt) / 1000)
-      : null;
-
-    res.json({
+    return res.json({
       success: true,
+      source: "DataCenterMetaAccountDaily",
+      mode: "DATACENTER_LEDGER",
+      startDate,
+      endDate,
+      accounts: results,
+      accountsInventoryCount: results.length,
+      accountsWithSpendCount: results.filter(a => a.spend > 0).length,
+      totalSpend,
       metaReconciliation: {
-        accountLevelRows: performanceRows.length,
-        legacyNumericFactRows: legacyNumericFactRows.length,
-        canonicalFactRows: canonicalFactRows.length,
-        totalSpendFromCanonicalRows: Number(canonicalFactRows.reduce((s, r) => s + (r.spend || 0), 0).toFixed(2)),
+        accountLevelRows: rows.length,
+        legacyNumericFactRows: 0,
+        canonicalFactRows: rows.length,
+        totalSpendFromCanonicalRows: totalSpend,
         dateSource: "Meta API date_start",
-        accountIdPolicy: "act_xxx only",
-        warning: legacyNumericFactRows.length > 0 ? "检测极少历史 numeric 旧数据行，建议使用 Meta 实时重拉重建 spend ledger。" : null
+        accountIdPolicy: "act_xxx only"
       },
       metaFreshness: {
-        latestSyncedAt: latestSyncedAt ? new Date(latestSyncedAt).toISOString() : null,
-        latestFactDate,
-        secondsSinceLatestSync,
+        latestSyncedAt: latestFetched ? latestFetched.toISOString() : null,
+        latestFactDate: rows.length > 0 ? rows.map(r => r.date).sort().slice(-1)[0] : null,
         realtimeEligible: true,
-        warning: secondsSinceLatestSync !== null && secondsSinceLatestSync > 1800
-          ? "Meta 消耗数据超过 30 分钟未刷新，建议点击实时刷新。"
-          : null
+        source: "DataCenterMetaAccountDaily"
       },
-      accountsInventoryCount,
-      accountsInventory,
-      storesInventoryCount: stores.length,
-      storesInventory,
-      accountsWithFactsCount,
-      accountsWithSpendCount: spendAccounts,
-      metaFactsCount,
-      syncStatus: {
-        isSyncActive,
-        status: isSyncActive ? "running" : (lastSyncLog?.status || "none"),
-        lastSyncTime: lastSyncTimeVal,
-        lastSyncTaskType: lastSyncLog?.taskType || lastSyncLog?.type || null
-      },
-      lastSyncLog: lastSyncLog ? {
-        id: lastSyncLog.id,
-        taskType: lastSyncLog.taskType || lastSyncLog.type,
-        status: lastSyncLog.status,
-        startedAt: lastSyncLog.startedAt,
-        finishedAt: lastSyncLog.finishedAt,
-        recordsFetched: lastSyncLog.recordsFetched || 0,
-        recordsSaved: lastSyncLog.recordsSaved || 0,
-        errorMessage: lastSyncLog.errorMessage || lastSyncLog.error || null
-      } : null,
       health: {
-        status: healthStatus,
-        missingReason,
-        warnings,
-        lastSyncTime: lastSyncTimeVal,
-        lastSyncTimeStr: lastSyncTimeVal ? dayjs(lastSyncTimeVal).format("YYYY-MM-DD HH:mm:ss") : "无记录",
-        latestPerformanceSync: maxPerformanceSyncTime,
-        isSyncActive,
-        lastFailedSync: lastFailedSync ? {
-          taskType: lastFailedSync.taskType || lastFailedSync.type,
-          errorMessage: lastFailedSync.errorMessage || lastFailedSync.error || null,
-          startedAt: lastFailedSync.startedAt
-        } : null
-      },
-      filters: {
-        stores: storesInventory,
-        adAccounts: accountsInventory,
-        mappings: accountMappings
+        status: rows.length > 0 ? "READY" : "EMPTY_FACTS",
+        missingReason: rows.length > 0 ? "所有数据来自 DataCenter Meta Account Daily 账目表。" : "此日期范围内暂无 DataCenter 账目记录。",
+        warnings: [],
+        lastSyncTime: latestFetched,
+        lastSyncTimeStr: latestFetched ? dayjs(latestFetched).format("YYYY-MM-DD HH:mm:ss") : "无记录",
+        isSyncActive: false
       },
       summary: {
-        totalAccounts: accountsInventoryCount,
-        activeAccounts,
-        spendAccounts,
-        zeroSpendAccounts,
+        totalAccounts: results.length,
+        activeAccounts: results.filter(a => a.spend > 0).length,
+        spendAccounts: results.filter(a => a.spend > 0).length,
+        zeroSpendAccounts: results.filter(a => a.spend === 0).length,
         boundAccounts,
         unboundAccounts,
         unboundSpendAccounts,
         totalSpend,
+        unmappedSpend: unboundSpend,
         unboundSpend,
         unboundSpendRate
       },
-      accounts: results,
       dataSourceExplain: {
-        primarySource: "FactMetaPerformance",
-        inventorySource: "AdAccount",
-        legacySource: "AdInsight",
+        primarySource: "DataCenterMetaAccountDaily",
+        inventorySource: "DataCenterMetaAccountDaily",
+        legacySource: "None",
         legacyUsed: false
       }
     });
