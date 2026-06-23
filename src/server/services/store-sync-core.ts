@@ -7,6 +7,7 @@ import {
   getStoreLocalDate, 
   getStoreLocalDatetime 
 } from "../utils/timezone.js";
+import { extractOrderLedgerAmount } from "./store-ledger.service.js";
 
 export type StorePlatform = "shopline" | "shopify" | "shoplazza";
 
@@ -311,6 +312,8 @@ export async function fetchStoreOrdersCanonical(params: {
     validPaidTotal: number;
     attributionField: string;
     revenueField: string;
+    ledgerAmountPolicy: string;
+    lineItemRevenueIsSales: boolean;
     requestUrlsSanitized: string[];
     responseBodyKeys: string[];
     responseHeaderKeys: string[];
@@ -429,20 +432,8 @@ export async function fetchStoreOrdersCanonical(params: {
       };
     });
 
-    const lineItemsSum = lineItems.reduce((acc: number, item: any) => acc + money(item.revenue), 0);
-    const revenueCandidates = {
-      total_price: money(o.total_price ?? o.totalPrice ?? o.total?.price ?? o.total?.amount),
-      current_total_price: money(o.current_total_price ?? o.currentTotalPrice),
-      total_amount: money(o.total_amount ?? o.totalAmount ?? o.amount),
-      order_total: money(o.order_total ?? o.orderTotal),
-      subtotal_price: money(o.subtotal_price ?? o.subtotalPrice),
-      current_subtotal_price: money(o.current_subtotal_price ?? o.currentSubtotalPrice),
-      net_subtotal_less_discount: money(
-        money(o.current_subtotal_price ?? o.subtotal_price ?? o.total_line_items_price) -
-        money(o.total_discounts ?? o.totalDiscounts ?? o.discount_amount)
-      ),
-      line_items_sum: money(lineItemsSum)
-    };
+    const ledgerAmount = extractOrderLedgerAmount(params.platform, o);
+    const revenueCandidates = ledgerAmount.revenueCandidates;
 
     return {
       orderId,
@@ -460,6 +451,8 @@ export async function fetchStoreOrdersCanonical(params: {
       refundedAmount: money(o.total_refunded_amount || 0),
       lineItems,
       revenueCandidates,
+      orderTotal: ledgerAmount.orderTotal,
+      orderTotalSource: ledgerAmount.orderTotalSource,
       raw: o
     };
   });
@@ -589,7 +582,7 @@ export async function fetchStoreOrdersCanonical(params: {
     const rawTime = co[bestAttributionField === "created_at" ? "rawCreatedAt" : bestAttributionField === "paid_at" ? "rawPaidAt" : bestAttributionField === "processed_at" ? "rawProcessedAt" : bestAttributionField === "completed_at" ? "rawCompletedAt" : "rawUpdatedAt"] || co.rawCreatedAt;
     const storeLocalDate = getStoreLocalDate(rawTime || "", storeTimezone);
     const storeLocalDatetime = getStoreLocalDatetime(rawTime || "", storeTimezone);
-    const orderTotal = co.revenueCandidates[bestRevenueField] || 0;
+    const orderTotal = co.orderTotal || 0;
 
     return {
       platform: params.platform,
@@ -612,9 +605,9 @@ export async function fetchStoreOrdersCanonical(params: {
       fulfillmentStatus: co.fulfillmentStatus,
       cancelledAt: co.cancelledAt,
       refundedAmount: co.refundedAmount,
-      revenueField: bestRevenueField,
+      revenueField: co.orderTotalSource,
       orderTotal,
-      orderTotalSource: bestRevenueField,
+      orderTotalSource: co.orderTotalSource,
       revenueCandidates: co.revenueCandidates,
       lineItems: co.lineItems,
       raw: co.raw
@@ -663,7 +656,9 @@ export async function fetchStoreOrdersCanonical(params: {
       validOrdersCount,
       validPaidTotal,
       attributionField: bestAttributionField,
-      revenueField: bestRevenueField,
+      revenueField: "extracted_order_total",
+      ledgerAmountPolicy: "platform_priority_order_total_not_baseline",
+      lineItemRevenueIsSales: false,
       requestUrlsSanitized,
       responseBodyKeys: Array.from(responseBodyKeysSet),
       responseHeaderKeys: Array.from(responseHeaderKeysSet),

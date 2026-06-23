@@ -333,16 +333,6 @@ export async function syncStoreData(
         });
       }
 
-      const isBaslayer =
-        String(store.domain || "").toLowerCase().includes("baslayer") ||
-        String(store.name || "").toLowerCase().includes("baslayer");
-
-      const baseline = (options?.baselineRevenue !== undefined)
-        ? { orders: undefined, revenue: options.baselineRevenue }
-        : (isBaslayer && startDate === "2026-06-21" && endDate === "2026-06-21"
-           ? { orders: 17, revenue: 715.78 }
-           : undefined);
-
       const canonical = await fetchStoreOrdersCanonical({
         platform,
         storeId: store.id,
@@ -351,8 +341,7 @@ export async function syncStoreData(
         startDate,
         endDate,
         timezone: normalizedTimezone,
-        storeName: store.name || "",
-        baseline
+        storeName: store.name || ""
       });
 
       const writeStats = await saveCanonicalOrdersToDb(canonical.orders, {

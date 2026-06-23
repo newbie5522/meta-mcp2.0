@@ -1355,8 +1355,20 @@ router.get("/accounts-performance", async (req, res) => {
     }
 
     // 3. Group and aggregate daily performance
-    const performanceMap = new Map<string, any>();
+    const legacyNumericFactRows: any[] = [];
+    const canonicalFactRows: any[] = [];
+
     for (const row of performanceRows) {
+      if (!row.account_id) continue;
+      if (!row.account_id.startsWith("act_")) {
+        legacyNumericFactRows.push(row);
+        continue;
+      }
+      canonicalFactRows.push(row);
+    }
+
+    const performanceMap = new Map<string, any>();
+    for (const row of canonicalFactRows) {
       const normId = normalizeMetaAccountId(row.account_id);
       if (!performanceMap.has(normId)) {
         performanceMap.set(normId, {
@@ -1560,6 +1572,15 @@ router.get("/accounts-performance", async (req, res) => {
 
     res.json({
       success: true,
+      metaReconciliation: {
+        accountLevelRows: performanceRows.length,
+        legacyNumericFactRows: legacyNumericFactRows.length,
+        canonicalFactRows: canonicalFactRows.length,
+        totalSpendFromCanonicalRows: Number(canonicalFactRows.reduce((s, r) => s + (r.spend || 0), 0).toFixed(2)),
+        dateSource: "Meta API date_start",
+        accountIdPolicy: "act_xxx only",
+        warning: legacyNumericFactRows.length > 0 ? "检测极少历史 numeric 旧数据行，建议使用 Meta 实时重拉重建 spend ledger。" : null
+      },
       metaFreshness: {
         latestSyncedAt: latestSyncedAt ? new Date(latestSyncedAt).toISOString() : null,
         latestFactDate,

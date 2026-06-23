@@ -2,6 +2,7 @@
 import axios from "axios";
 import prisma from "../../db/index.js";
 import { getMetaToken, normalizeMetaAccountId, getNumericAccountId } from "../utils.js";
+import { cleanMetaAccountFactsForRange, canonicalActId } from "./meta-ledger.service.js";
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -158,6 +159,14 @@ export async function syncMetaAccountSpendRealtime(options: {
 
   const accounts = await resolveRealtimeAccounts(options);
 
+  const targetAccountIds = accounts.map(a => canonicalActId(a.fb_account_id));
+
+  const cleanResult = await cleanMetaAccountFactsForRange({
+    accountIds: targetAccountIds,
+    startDate: options.startDate,
+    endDate: options.endDate
+  });
+
   const batchSize = 5;
   let recordsFetched = 0;
   let recordsSaved = 0;
@@ -169,7 +178,7 @@ export async function syncMetaAccountSpendRealtime(options: {
     const batch = accounts.slice(i, i + batchSize);
 
     await Promise.all(batch.map(async (acc) => {
-      const actId = normalizeMetaAccountId(acc.fb_account_id);
+      const actId = canonicalActId(acc.fb_account_id);
 
       try {
         let metaAccount: any = null;
@@ -321,7 +330,9 @@ export async function syncMetaAccountSpendRealtime(options: {
       startDate: options.startDate,
       endDate: options.endDate,
       batchSize,
-      accountTimezones
+      accountTimezones,
+      metaLedgerClean: cleanResult,
+      canonicalAccountIds: targetAccountIds
     }
   };
 }

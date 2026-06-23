@@ -215,13 +215,11 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
     setSyncRowLoading(prev => ({ ...prev, [store.id]: true }));
     const toastId = toast.loading(`正在触发 [${store.name}] 订单同步...`);
     try {
-      const isBaslayer = String(store.domain || "").toLowerCase().includes("baslayer") || String(store.name || "").toLowerCase().includes("baslayer");
       const response = await axios.post("/api/sync/store-realtime", {
         storeId: store.id,
         startDate: formattedStartDate,
         endDate: formattedEndDate,
-        rebuild: true,
-        baselineRevenue: isBaslayer && formattedStartDate === "2026-06-22" && formattedEndDate === "2026-06-22" ? 155.96 : undefined
+        rebuild: true
       });
       
       toast.success(

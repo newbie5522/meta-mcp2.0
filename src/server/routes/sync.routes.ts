@@ -365,8 +365,6 @@ router.post("/sync/store-realtime", async (req, res) => {
       storeId,
       startDate,
       endDate,
-      baselineRevenue,
-      baselineOrders,
       rebuild = true
     } = req.body;
 
@@ -379,9 +377,7 @@ router.post("/sync/store-realtime", async (req, res) => {
     }
 
     const results = await syncStoreData(startDate, endDate, String(storeId), {
-      rebuild: rebuild === true || rebuild === "true",
-      baselineRevenue: baselineRevenue !== undefined ? Number(baselineRevenue) : undefined,
-      baselineOrders: baselineOrders !== undefined ? Number(baselineOrders) : undefined
+      rebuild: rebuild === true || rebuild === "true"
     });
 
     const result = results[Number(storeId)];
