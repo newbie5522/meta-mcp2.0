@@ -37,7 +37,7 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
     recentLogs
   ] = await Promise.all([
     prisma.store.count(),
-    prisma.store.count({ where: { status: "active" } }),
+    prisma.store.count(),
     prisma.store.findMany({
       include: { accounts: true, accountMappings: true }
     }),
