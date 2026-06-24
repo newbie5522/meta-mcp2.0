@@ -142,12 +142,13 @@ export function StoreDetailsPage({
   }, [addAccountOpen]);
 
   const fetchAssociatedAdAccounts = async () => {
-    if (!storeData?.name) return;
+    const activeStoreId = Number(storeId || savedStoreId);
+    if (!activeStoreId) return;
     setAccountsLoading(true);
     try {
       const mappingsRes = await axios.get("/api/mappings");
       if (Array.isArray(mappingsRes.data)) {
-        setMappings(mappingsRes.data.filter((m: any) => m.store && String(m.store).toLowerCase() === String(storeData.name).toLowerCase()));
+        setMappings(mappingsRes.data.filter((m: any) => m.storeId && Number(m.storeId) === activeStoreId));
       }
     } catch (error) {
       console.error("Failed to fetch associated account data:", error);
@@ -157,10 +158,11 @@ export function StoreDetailsPage({
   };
 
   useEffect(() => {
-    if (hasStoreId && storeData?.name) {
+    const activeStoreId = Number(storeId || savedStoreId);
+    if (hasStoreId && activeStoreId) {
       fetchAssociatedAdAccounts();
     }
-  }, [hasStoreId, storeData?.name]);
+  }, [hasStoreId, storeId, savedStoreId]);
 
   const handleAddAccountSubmit = async () => {
     if (selectedAccountIds.length === 0) {
@@ -175,6 +177,7 @@ export function StoreDetailsPage({
           accountId: id,
           accountName: getAccountName(acc),
           store: storeData?.name,
+          storeId: Number(storeId || savedStoreId),
           owner: "未分配",
           project: "未分配",
         };
@@ -201,7 +204,7 @@ export function StoreDetailsPage({
     if (!window.confirm("确定要解除该广告账户与当前店铺的关联吗？")) return;
     try {
       const res = await axios.post("/api/mappings/batch", {
-        mappings: [{ accountId: accountId, store: "未分配" }]
+        mappings: [{ accountId: accountId, store: "未分配", storeId: null }]
       });
       if (res.data.success) {
         toast.success("解除关联成功");
@@ -240,9 +243,8 @@ export function StoreDetailsPage({
     if (!storeData.name) return toast.error("请输入店铺名称");
     setSaving(true);
     try {
-      const { mode: _mode, ...storePayload } = storeData;
       const payload = {
-        ...storePayload,
+        ...storeData,
         id: storeId || savedStoreId || undefined,
         name: storeData.name?.trim(),
         domain: storeData.domain?.trim()

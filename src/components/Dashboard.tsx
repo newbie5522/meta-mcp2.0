@@ -91,7 +91,6 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
   const [startDate, setStartDate] = useState<Date>(businessDateStringToSafeDate(defaultRange.startDateStr));
   const [endDate, setEndDate] = useState<Date>(businessDateStringToSafeDate(defaultRange.endDateStr));
   const [data, setData] = useState<any[]>([]);
-  const [storeSummaries, setStoreSummaries] = useState<Record<string, any>>({});
   const [mappings, setMappings] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -117,25 +116,8 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
   const fetchData = async () => {
     setLoading(true);
     try {
-      const dateParams = {
-        startDate: safeDateToDateString(startDate),
-        endDate: safeDateToDateString(endDate),
-      };
-
-      const [response, summariesRes] = await Promise.all([
-        axios.get("/api/insights", { params: dateParams }),
-        axios.get("/api/stores/all-dashboard-summary", { params: dateParams }).catch(err => {
-          console.error("Failed to fetch store summaries", err);
-          return { data: {} };
-        })
-      ]);
-
-      if (Array.isArray(response.data)) {
-        setData(response.data);
-      } else {
-        setData([]);
-      }
-      setStoreSummaries(summariesRes.data || {});
+      // Unused legacy API calls are decommissioned for LOCKDOWN
+      setData([]);
     } catch (error: any) {
       console.error("fetchData error:", error);
       setData([]);

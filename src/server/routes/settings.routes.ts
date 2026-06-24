@@ -22,10 +22,20 @@ function maskSecret(value: string): string {
 router.get("/", async (req, res) => {
   try {
     const settings = await prisma.setting.findMany();
-    const config: Record<string, string> = {};
+    const config: Record<string, any> = {};
     settings.forEach((s) => {
       config[s.key] = isSensitiveSettingKey(s.key) ? maskSecret(s.value) : s.value;
     });
+
+    const metaTokenDb = settings.find(s => s.key === "META_ACCESS_TOKEN");
+    const legacyTokenDb = settings.find(s => s.key === "meta_token");
+    const envVal = process.env.META_ACCESS_TOKEN || process.env.meta_token;
+    const dbVal = metaTokenDb?.value || legacyTokenDb?.value || "";
+    const activeToken = dbVal || envVal || "";
+
+    config["hasMetaAccessToken"] = activeToken ? true : false;
+    config["metaTokenMasked"] = activeToken ? maskSecret(activeToken) : "";
+
     res.json(config);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch settings" });

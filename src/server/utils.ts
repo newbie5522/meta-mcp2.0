@@ -22,24 +22,38 @@ export function getNumericAccountId(id: string): string {
 const queryCache = new Map();
 
 export async function getMetaToken(): Promise<string | null> {
-  const setting = await prisma.setting.findFirst({
-    where: { key: { in: ["META_ACCESS_TOKEN", "meta_token"] } }
+  // 1. Read META_ACCESS_TOKEN from database
+  const metaToken = await prisma.setting.findUnique({
+    where: { key: "META_ACCESS_TOKEN" }
   });
-  const dbVal = setting ? setting.value.trim() : null;
-  if (dbVal && !dbVal.includes("...")) {
-    return dbVal;
-  }
-  const envVal = process.env.META_ACCESS_TOKEN || process.env.meta_token;
-  if (envVal) {
-    const trimmedEnv = envVal.trim();
-    if (trimmedEnv && !trimmedEnv.includes("...")) {
-      return trimmedEnv;
+  if (metaToken && metaToken.value) {
+    const val = metaToken.value.trim();
+    if (val && !val.includes("...")) {
+      return val;
     }
   }
-  if (dbVal && dbVal.includes("...")) {
-    return null;
+
+  // 2. Read legacy meta_token from database (read-only compatibility)
+  const legacyToken = await prisma.setting.findUnique({
+    where: { key: "meta_token" }
+  });
+  if (legacyToken && legacyToken.value) {
+    const val = legacyToken.value.trim();
+    if (val && !val.includes("...")) {
+      return val;
+    }
   }
-  return dbVal;
+
+  // 3. Read environment variable META_ACCESS_TOKEN
+  const envVal = process.env.META_ACCESS_TOKEN;
+  if (envVal) {
+    const trimmed = envVal.trim();
+    if (trimmed && !trimmed.includes("...")) {
+      return trimmed;
+    }
+  }
+
+  return null;
 }
 
 export function getTimezoneOffsetStr(timezone: string | null | undefined): string {

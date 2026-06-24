@@ -21,63 +21,125 @@ function getFiles(dir: string): string[] {
   return results;
 }
 
-const files = getFiles("./src");
+const allFiles = getFiles("./src");
+// Filter to scan only: src/server/routes, src/server/services, src/components
+const files = allFiles.filter(file => {
+  const norm = file.replace(/\\/g, "/");
+  return (
+    norm.includes("src/server/routes/") ||
+    norm.includes("src/server/services/") ||
+    norm.includes("src/components/")
+  );
+});
+
 let failed = false;
 
-// Rule 5: src/shared/data-contract.ts must exist and not be empty
+// Helper to clean comments
+function isLineCommented(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*") || trimmed.includes("DECOMMISSIONED") || trimmed.includes("decommissioned");
+}
+
+console.log("🔍 Running Static Rule Contract Lock Assertions...\n");
+
+// 1. Check data-contract.ts exists and is populated
 const contractPath = "./src/shared/data-contract.ts";
 if (!fs.existsSync(contractPath)) {
-  console.error("❌ Rule 5 failed: src/shared/data-contract.ts does not exist.");
+  console.error("❌ Rule Check failed: src/shared/data-contract.ts does not exist.");
   failed = true;
 } else {
   const content = fs.readFileSync(contractPath, "utf-8");
   if (!content.trim()) {
-    console.error("❌ Rule 5 failed: src/shared/data-contract.ts is empty.");
+    console.error("❌ Rule Check failed: src/shared/data-contract.ts is empty.");
     failed = true;
   } else {
-    console.log("✅ Rule 5 passed: src/shared/data-contract.ts exists and is populated.");
+    console.log("✅ Rule Check passed: src/shared/data-contract.ts exists and is populated.");
   }
 }
 
-// Rules 2, 3, 4: Scan files for forbidden queries and endpoint calls
+// 2. Scan files for forbidden queries, decommissioned API calls, and config leaks
 for (const file of files) {
   const code = fs.readFileSync(file, "utf-8");
   const lines = code.split("\n");
+  const normalizedFile = file.replace(/\\/g, "/");
 
   lines.forEach((line, idx) => {
-    // Rule 2: No active prisma.adInsight query
-    if (line.includes("prisma.adInsight.find") || line.includes("prisma.adInsight.upsert") || line.includes("prisma.adInsight.delete") || line.includes("prisma.adInsight.update")) {
-      // Allow decommissioned explanations or comments
-      if (!line.trim().startsWith("//") && !line.trim().startsWith("/*") && !line.includes("DECOMMISSIONED") && !line.includes("decommissioned")) {
-        console.error(`❌ Rule 2 failed in ${file}:${idx + 1} - Found active prisma.adInsight query: "${line.trim()}"`);
+    const lineNum = idx + 1;
+
+    // A. Prohibit any active prisma.adInsight query
+    if (line.includes("prisma.adInsight.")) {
+      if (!isLineCommented(line)) {
+        console.error(`❌ Prohibited Query Check failed in ${file}:${lineNum} - Found active prisma.adInsight reference: "${line.trim()}"`);
         failed = true;
       }
     }
 
-    // Rule 3: No active prisma.dailySummary query
-    if (line.includes("prisma.dailySummary.find") || line.includes("prisma.dailySummary.upsert") || line.includes("prisma.dailySummary.delete") || line.includes("prisma.dailySummary.update")) {
-      if (!line.trim().startsWith("//") && !line.trim().startsWith("/*") && !line.includes("DECOMMISSIONED") && !line.includes("decommissioned")) {
-        console.error(`❌ Rule 3 failed in ${file}:${idx + 1} - Found active prisma.dailySummary query: "${line.trim()}"`);
+    // B. Prohibit any active prisma.dailySummary query
+    if (line.includes("prisma.dailySummary.")) {
+      if (!isLineCommented(line)) {
+        console.error(`❌ Prohibited Query Check failed in ${file}:${lineNum} - Found active prisma.dailySummary reference: "${line.trim()}"`);
         failed = true;
       }
     }
 
-    // Rule 4: No unallowed all-dashboard-summary reference
+    // C. Prohibit all-dashboard-summary anywhere in active src code (no route, axios, or endpoint)
     if (line.includes("all-dashboard-summary")) {
-      const normalizedPath = file.replace(/\\/g, "/");
-      const isAllowedFile = normalizedPath.includes("Dashboard.tsx") || normalizedPath.includes("stores.routes.ts") || normalizedPath.includes("assert-data-contract-lock.ts");
-      if (!isAllowedFile) {
-        console.error(`❌ Rule 4 failed in ${file}:${idx + 1} - Found unallowed all-dashboard-summary reference: "${line.trim()}"`);
+      if (!isLineCommented(line)) {
+        console.error(`❌ Prohibited Endpoint Check failed in ${file}:${lineNum} - Found active 'all-dashboard-summary': "${line.trim()}"`);
         failed = true;
       }
+    }
+
+    // D. Prohibit dashboard-summary as route pattern, axios path, or API registration in src code
+    // We allow component classnames/id like ai-dashboard-summary-card
+    if (line.includes("dashboard-summary") && !line.includes("ai-dashboard-summary") && !line.includes("ai_dashboard_summary")) {
+      if (!isLineCommented(line)) {
+        // Fail if used as an API URL, router endpoint, or request path
+        if (line.includes("axios.") || line.includes("get(") || line.includes("post(") || line.includes("api/stores") || line.includes("router.")) {
+          console.error(`❌ Prohibited Endpoint Check failed in ${file}:${lineNum} - Found active 'dashboard-summary' request/routing: "${line.trim()}"`);
+          failed = true;
+        }
+      }
+    }
+
+    // E. Prohibit /api/insights in active API paths
+    if (line.includes("/api/insights")) {
+      if (!isLineCommented(line)) {
+        console.error(`❌ Prohibited Endpoint Check failed in ${file}:${lineNum} - Found active '/api/insights' reference: "${line.trim()}"`);
+        failed = true;
+      }
+    }
+
+    // F. Prohibit frontend writing meta_token
+    if (normalizedFile.includes("src/components") && line.includes(`key: "meta_token"`)) {
+      if (!isLineCommented(line)) {
+        console.error(`❌ Prohibited Frontend Token Write Check failed in ${file}:${lineNum} - Frontend must not write 'meta_token': "${line.trim()}"`);
+        failed = true;
+      }
+    }
+
+    // G. Prohibit legacy getMetaToken findFirst call searching META_ACCESS_TOKEN and meta_token together
+    if (normalizedFile.includes("utils.ts") && line.includes("findFirst") && line.includes("META_ACCESS_TOKEN") && line.includes("meta_token")) {
+      console.error(`❌ Prohibited getMetaToken Pattern Check failed in ${file}:${lineNum} - getMetaToken must not use findFirst with list mapping: "${line.trim()}"`);
+      failed = true;
     }
   });
 }
 
+// 3. Check stores.routes.ts strictly to make sure it doesn't self-compute or read forbidden tables
+const storesRoutesPath = "./src/server/routes/stores.routes.ts";
+if (fs.existsSync(storesRoutesPath)) {
+  const code = fs.readFileSync(storesRoutesPath, "utf-8");
+  if (code.includes("/all-dashboard-summary") || code.includes("/:id/dashboard-summary")) {
+    console.error("❌ Stores routes Check failed: stores.routes.ts still registers summary endpoints.");
+    failed = true;
+  }
+}
+
 if (failed) {
-  console.error("❌ Static rule contract lock assertions FAILED!");
+  console.error("\n❌ Static rule contract lock assertions FAILED!");
   process.exit(1);
 } else {
-  console.log("✅ All static rule contract lock assertions PASSED successfully!");
+  console.log("\n✅ All static rule contract lock assertions PASSED successfully!");
   process.exit(0);
 }

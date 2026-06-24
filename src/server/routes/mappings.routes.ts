@@ -52,6 +52,7 @@ router.get("/", async (req, res) => {
         accountName: nameMap.get(normId) || normId,
         fbPageId: m.fbPageId,
         store: m.store ? m.store.name : "未分配",
+        storeId: m.storeId,
         project: m.project || "未分配",
         owner: m.owner || "未分配"
       };
@@ -104,47 +105,45 @@ router.post("/batch", async (req, res) => {
         });
       }
 
+      // Try resolving by storeId first, then store name
+      let resolvedStore = null;
+      if (mapping.storeId != null && !isNaN(Number(mapping.storeId))) {
+        resolvedStore = await prisma.store.findUnique({
+          where: { id: Number(mapping.storeId) }
+        });
+      }
+      
+      const storeName = getStoreName(mapping);
+      if (!resolvedStore && storeName && !isUnmappedStoreName(storeName)) {
+        resolvedStore = await prisma.store.findFirst({
+          where: { name: storeName }
+        });
+      }
+
+      // Validate that store exists if a mapping store (not unmapped) is requested but not found
+      if (storeName && !isUnmappedStoreName(storeName) && !resolvedStore) {
+        return res.status(400).json({
+          success: false,
+          error: "STORE_NOT_FOUND",
+          details: `店铺 '${storeName}' 不存在，请先在店铺管理中创建该店铺配置。`
+        });
+      }
+
       normalizedMappings.push({
         raw: mapping,
         accountId: cleanAccId,
         adAccount,
-        storeName: getStoreName(mapping),
+        resolvedStore,
+        storeName: resolvedStore ? resolvedStore.name : storeName,
       });
-    }
-
-    // 1. Validate target stores exist - Strictly DO NOT automatically create store!
-    const storeNamesToCheck = Array.from(new Set(
-      normalizedMappings
-        .map((m) => m.storeName)
-        .filter((name): name is string => !isUnmappedStoreName(name))
-    ));
-
-    for (const name of storeNamesToCheck) {
-      const storeExists = await prisma.store.findFirst({
-        where: { name: name }
-      });
-      if (!storeExists) {
-        return res.status(400).json({
-          error: "STORE_NOT_FOUND",
-          details: `店铺 '${name}' 不存在，请先在店铺管理中创建该店铺配置。`
-        });
-      }
     }
 
     const results = await Promise.all(
       normalizedMappings.map(async (mapping) => {
         const cleanAccId = mapping.accountId;
         const rawMapping = mapping.raw;
-        const storeName = mapping.storeName;
-        let targetStoreId: number | null = null;
-        if (!isUnmappedStoreName(storeName)) {
-          const store = await prisma.store.findFirst({
-            where: { name: storeName }
-          });
-          if (store) {
-            targetStoreId = store.id;
-          }
-        }
+        const resolvedStore = mapping.resolvedStore;
+        let targetStoreId: number | null = resolvedStore ? resolvedStore.id : null;
 
         if (!targetStoreId) {
           await prisma.accountMapping.updateMany({
@@ -157,7 +156,6 @@ router.post("/batch", async (req, res) => {
             },
           });
 
-          // Also set corresponding AdAccount's storeId to null instead of deleting it!
           await prisma.adAccount.update({
             where: { fb_account_id: cleanAccId },
             data: { storeId: null }

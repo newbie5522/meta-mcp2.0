@@ -55,10 +55,12 @@ export function MetaConfigPage() {
     try {
       const res = await axios.get('/api/settings');
       let fbToken = '';
-      if (res.data && res.data.meta_token) {
-        fbToken = res.data.meta_token;
-      } else if (res.data && res.data.META_ACCESS_TOKEN) {
+      if (res.data && res.data.META_ACCESS_TOKEN) {
         fbToken = res.data.META_ACCESS_TOKEN;
+      } else if (res.data && res.data.metaTokenMasked) {
+        fbToken = res.data.metaTokenMasked;
+      } else if (res.data && res.data.meta_token) {
+        fbToken = res.data.meta_token;
       }
       if (fbToken) {
         setMaskedToken(fbToken);
@@ -195,7 +197,6 @@ export function MetaConfigPage() {
     setSaving(true);
     setSaveStep('saving');
     try {
-      await axios.post("/api/settings", { key: "meta_token", value: tokenToSave });
       await axios.post("/api/settings", { key: "META_ACCESS_TOKEN", value: tokenToSave });
       await axios.post("/api/settings", { key: "META_TOKEN_UPDATED_AT", value: new Date().toISOString() });
       toast.info("Meta Token 保存成功，正在自动验证并拉取广告账户...");
