@@ -856,8 +856,8 @@ router.post("/sync/rebuild", requireManualSyncEnabled, async (req, res) => {
   try {
     const chainId = "rebuild-all-" + Math.random().toString(36).substring(2, 8);
     
-    // Clear summaries safely
-    await prisma.dailySummary.deleteMany();
+    // Clear summaries safely - DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
+    // await prisma.dailySummary.deleteMany();
     await prisma.aiAnalysisReport.deleteMany();
     await prisma.aiActionSuggestion.deleteMany();
 

@@ -580,13 +580,27 @@ router.get("/:accountId/details", async (req, res) => {
         });
       }
 
-      // Bulk fetch summaries for campaigns
-      const summaries = await prisma.dailySummary.findMany({
+      // Bulk fetch performance metrics from FactMetaPerformance instead of DailySummary
+      const summariesRaw = await prisma.factMetaPerformance.findMany({
         where: {
-          scope: "campaign",
-          date: { gte: dateStart, lte: dateEnd }
+          level: "campaign",
+          date: { gte: dateStart, lte: dateEnd },
+          ...(isAll ? {} : { account_id: normAccountId })
         }
       });
+
+      // Map FactMetaPerformance rows to expected summary format to avoid breaking downstream fields
+      const summaries = summariesRaw.map(s => ({
+        id: s.id,
+        date: s.date,
+        scope: "campaign",
+        scopeId: s.entity_id || s.campaign_id,
+        spend: s.spend,
+        impressions: s.impressions,
+        clicks: s.clicks,
+        revenue: s.purchase_value,
+        orders: s.purchases
+      }));
 
       const existingCampaignIds = new Set(campaigns.map(c => c.id));
       const finalCampaigns = [...campaigns];
@@ -679,12 +693,26 @@ router.get("/:accountId/details", async (req, res) => {
         });
       }
 
-      const summaries = await prisma.dailySummary.findMany({
+      // Bulk fetch performance metrics from FactMetaPerformance instead of DailySummary
+      const summariesRaw = await prisma.factMetaPerformance.findMany({
         where: {
-          scope: "adset",
-          date: { gte: dateStart, lte: dateEnd }
+          level: "adset",
+          date: { gte: dateStart, lte: dateEnd },
+          ...(isAll ? {} : { account_id: normAccountId })
         }
       });
+
+      const summaries = summariesRaw.map(s => ({
+        id: s.id,
+        date: s.date,
+        scope: "adset",
+        scopeId: s.entity_id || s.adset_id,
+        spend: s.spend,
+        impressions: s.impressions,
+        clicks: s.clicks,
+        revenue: s.purchase_value,
+        orders: s.purchases
+      }));
 
       const existingAdSetIds = new Set(adsets.map(s => s.id));
       const finalAdsets = [...adsets];
@@ -779,12 +807,26 @@ router.get("/:accountId/details", async (req, res) => {
         });
       }
 
-      const summaries = await prisma.dailySummary.findMany({
+      // Bulk fetch performance metrics from FactMetaPerformance instead of DailySummary
+      const summariesRaw = await prisma.factMetaPerformance.findMany({
         where: {
-          scope: "ad",
-          date: { gte: dateStart, lte: dateEnd }
+          level: "ad",
+          date: { gte: dateStart, lte: dateEnd },
+          ...(isAll ? {} : { account_id: normAccountId })
         }
       });
+
+      const summaries = summariesRaw.map(s => ({
+        id: s.id,
+        date: s.date,
+        scope: "ad",
+        scopeId: s.entity_id || s.ad_id,
+        spend: s.spend,
+        impressions: s.impressions,
+        clicks: s.clicks,
+        revenue: s.purchase_value,
+        orders: s.purchases
+      }));
 
       const existingAdIds = new Set(ads.map(a => a.id));
       const finalAds = [...ads];

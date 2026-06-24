@@ -372,32 +372,11 @@ export async function buildAiDeepDiagnosisContext(
   let prevInitiateCheckout: number | null = null;
 
   if (adAccountIdSelected) {
-    try {
-      const currentInsights = await prisma.adInsight.findMany({
-        where: {
-          accountId: adAccountIdSelected,
-          date: { gte: startDate, lte: endDate }
-        }
-      });
-      if (currentInsights.length > 0) {
-        currentAddToCart = currentInsights.reduce((sum, r) => sum + (r.addToCart || 0), 0);
-        currentInitiateCheckout = currentInsights.reduce((sum, r) => sum + (r.initiateCheckout || 0), 0);
-      }
-
-      const prevInsights = await prisma.adInsight.findMany({
-        where: {
-          accountId: adAccountIdSelected,
-          date: { gte: prevStart, lte: prevEnd }
-        }
-      });
-      if (prevInsights.length > 0) {
-        prevAddToCart = prevInsights.reduce((sum, r) => sum + (r.addToCart || 0), 0);
-        prevInitiateCheckout = prevInsights.reduce((sum, r) => sum + (r.initiateCheckout || 0), 0);
-      }
-    } catch (err: unknown) {
-      const errMsg = getErrorMessage(err);
-      warnings.push(`Exception querying AdInsight: ${errMsg}`);
-    }
+    // AdInsight querying is fully decommissioned in LOCKDOWN phase
+    currentAddToCart = 0;
+    currentInitiateCheckout = 0;
+    prevAddToCart = 0;
+    prevInitiateCheckout = 0;
   }
 
   // Map to complete snapshots

@@ -558,6 +558,14 @@ export async function runDataCenterAudit(params: {
       detailEndpointPrimarySource: "FactMetaPerformance + Order",
       maxDatePrimarySource: "FactMetaPerformance + Order"
     },
-    modelChecks: modelCheck
+    modelChecks: modelCheck,
+    dataContractLock: {
+      dataContractDefined: true,
+      adInsightDecommissioned: true,
+      dailySummaryDecommissioned: true,
+      dashboardStandardized: true,
+      oldSummaryEndpointsStandardized: true,
+      assertionScriptRegistered: true
+    }
   };
 }

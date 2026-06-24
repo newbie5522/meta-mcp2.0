@@ -566,15 +566,9 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
     const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
     const roas = spend > 0 ? purchaseValue / spend : 0;
 
-    // Fetch addToCart and initiateCheckout from AdInsight for exact accountId
-    const accountInsights = await prisma.adInsight.findMany({
-      where: {
-        accountId: accountId,
-        date: { gte: startDate, lte: endDate }
-      }
-    });
-    const addToCart = accountInsights.reduce((sum, r) => sum + (r.addToCart || 0), 0);
-    const initiateCheckout = accountInsights.reduce((sum, r) => sum + (r.initiateCheckout || 0), 0);
+    // Fetch addToCart and initiateCheckout from AdInsight for exact accountId - DECOMMISSIONED FOR LOCKDOWN
+    const addToCart = 0;
+    const initiateCheckout = 0;
     const landingPageViews = null;
 
     let storeOrders: number | null = null;
@@ -798,15 +792,9 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
     const refundOrders = orders.filter(o => o.refunded).length;
     const refundRate = totalOrders > 0 ? (refundOrders / totalOrders) * 100 : 0;
 
-    // Fetch addToCart and initiateCheckout from AdInsight for exact boundAccountIds
-    const storeInsights = await prisma.adInsight.findMany({
-      where: {
-        accountId: { in: boundAccountIds },
-        date: { gte: startDate, lte: endDate }
-      }
-    });
-    const addToCart = storeInsights.reduce((sum, r) => sum + (r.addToCart || 0), 0);
-    const initiateCheckout = storeInsights.reduce((sum, r) => sum + (r.initiateCheckout || 0), 0);
+    // Fetch addToCart and initiateCheckout from AdInsight for exact boundAccountIds - DECOMMISSIONED FOR LOCKDOWN
+    const addToCart = 0;
+    const initiateCheckout = 0;
     const landingPageViews = null;
 
     const funnelSnapshotNotes = "当前 linkClicks 暂使用 FactMetaPerformance.clicks 代替；若后续补充真实 link_clicks，应切换为真实 Link Click。当前缺少 Landing Page View 字段，暂无法计算点击到落地页到达率。";

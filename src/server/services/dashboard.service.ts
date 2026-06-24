@@ -22,6 +22,7 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
   const untilStr = until.format('YYYY-MM-DD');
   const days = until.diff(since, 'day') + 1;
 
+  // STRICT RULE: Dashboard overview MUST ONLY query DataCenterMetaAccountDaily and DataCenterStoreDaily
   const [
     storeCount,
     activeStoreCount,
@@ -29,12 +30,10 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
     adAccountCount,
     mappedAdAccounts,
     adAccounts,
-    totalInsightCount, // represents FactMetaPerformance count now
-    creativeCount,
-    totalOrderCount,
-    orders,
-    insights,
-    recentLogs
+    recentLogs,
+    storeDailyLedgers,
+    metaDailyLedgers,
+    ordersForProducts
   ] = await Promise.all([
     prisma.store.count(),
     prisma.store.count(),
@@ -46,115 +45,91 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
     prisma.adAccount.findMany({ 
       include: { store: true } 
     }),
-    prisma.factMetaPerformance.count({ where: { level: "account" } }),
-    prisma.adCreative.count(),
-    prisma.order.count(),
-    prisma.order.findMany({
-      where: {
-        OR: [
-          {
-            store_local_date: {
-              gte: sinceStr,
-              lte: untilStr
-            }
-          },
-          {
-            store_local_date: null,
-            createdAt: { gte: since.toDate(), lte: until.toDate() }
-          }
-        ]
-      }
-    }),
-    prisma.factMetaPerformance.findMany({
-      where: {
-        date: { gte: sinceStr, lte: untilStr },
-        level: "account"
-      }
-    }),
     prisma.syncLog.findMany({
       orderBy: { startedAt: 'desc' },
       take: 5
+    }),
+    prisma.dataCenterStoreDaily.findMany({
+      where: {
+        date: { gte: sinceStr, lte: untilStr }
+      }
+    }),
+    prisma.dataCenterMetaAccountDaily.findMany({
+      where: {
+        date: { gte: sinceStr, lte: untilStr }
+      }
+    }),
+    // We only query Order specifically for the top products SKU list (as declared under data-products schema)
+    prisma.order.findMany({
+      where: {
+        OR: [
+          { store_local_date: { gte: sinceStr, lte: untilStr } },
+          { store_local_date: null, createdAt: { gte: since.toDate(), lte: until.toDate() } }
+        ]
+      },
+      select: {
+        id: true,
+        orderId: true,
+        productId: true,
+        revenue: true
+      }
     })
   ]);
 
-  // Group by orderId to calculate actual unique orders and de-duplicate order totals
-  const uniqueOrdersMap = new Map<string, { orderTotal: number; refunded: boolean; storeId: number }>();
-  for (const order of orders) {
-    const oId = order.orderId || order.id;
-    if (!uniqueOrdersMap.has(oId)) {
-      uniqueOrdersMap.set(oId, {
-        orderTotal: order.orderTotal != null && order.orderTotal > 0 ? order.orderTotal : toNumber(order.revenue),
-        refunded: order.refunded || false,
-        storeId: order.storeId
-      });
-    } else {
-      const existing = uniqueOrdersMap.get(oId)!;
-      // If we don't have a direct orderTotal from the platform, accumulate internal item revenues
-      if (order.orderTotal == null || order.orderTotal === 0) {
-        existing.orderTotal += toNumber(order.revenue);
-      }
-    }
-  }
-
-  // Aggregate global and store specific metrics from unique orders
+  // 1. Aggregate store metrics purely from DataCenterStoreDaily ledger
   let storeSales = 0;
+  let storeOrderCount = 0;
   const storeOrderStats = new Map<number, { count: number; sales: number }>();
 
-  uniqueOrdersMap.forEach((uo, oId) => {
-    storeSales += uo.orderTotal;
+  for (const row of storeDailyLedgers) {
+    const gross = toNumber(row.grossSales);
+    const count = toNumber(row.orderCount);
+    storeSales += gross;
+    storeOrderCount += count;
 
-    if (!storeOrderStats.has(uo.storeId)) {
-      storeOrderStats.set(uo.storeId, { count: 0, sales: 0 });
+    const sId = row.storeId;
+    if (!storeOrderStats.has(sId)) {
+      storeOrderStats.set(sId, { count: 0, sales: 0 });
     }
-    const st = storeOrderStats.get(uo.storeId)!;
-    st.count += 1;
-    st.sales += uo.orderTotal;
-  });
-
-  const storeOrderCount = uniqueOrdersMap.size;
-
-  // Aggregate product level statistics
-  const productStats = new Map<string, { orderCount: number; quantity: number; sales: number; uniqueOrderIds?: Set<string> }>();
-  for (const order of orders) {
-    const pId = order.productId || "unknown";
-    if (!productStats.has(pId)) {
-      productStats.set(pId, { orderCount: 0, quantity: 0, sales: 0, uniqueOrderIds: new Set<string>() });
-    }
-    const ps = productStats.get(pId)!;
-    ps.quantity += 1;
-    ps.sales += toNumber(order.revenue);
-    const oId = order.orderId || order.id;
-    ps.uniqueOrderIds?.add(oId);
+    const st = storeOrderStats.get(sId)!;
+    st.count += count;
+    st.sales += gross;
   }
 
-  productStats.forEach((ps) => {
-    ps.orderCount = ps.uniqueOrderIds ? ps.uniqueOrderIds.size : ps.quantity;
-    delete ps.uniqueOrderIds;
-  });
-
+  // 2. Aggregate meta metrics purely from DataCenterMetaAccountDaily ledger
+  let metaSpend = 0;
+  let metaPurchases = 0;
+  let metaPurchaseValue = 0;
+  let impressions = 0;
+  let clicks = 0;
   const accountStats = new Map<string, { spend: number; imp: number; clicks: number; pur: number; pVal: number }>();
-  let metaSpend = 0, metaPurchases = 0, metaPurchaseValue = 0, impressions = 0, clicks = 0;
 
-  for (const row of insights) {
-    const normId = normalizeMetaAccountId(row.account_id || row.accountId);
+  for (const row of metaDailyLedgers) {
+    const normId = normalizeMetaAccountId(row.accountId);
+    const s = toNumber(row.spend);
+    const p = toNumber(row.purchases);
+    const pv = toNumber(row.purchaseValue);
+    const imp = toNumber(row.impressions);
+    const clk = toNumber(row.clicks);
 
-    metaSpend += toNumber(row.spend);
-    metaPurchases += toNumber(row.purchases);
-    metaPurchaseValue += toNumber(row.purchase_value !== undefined ? row.purchase_value : row.purchaseValue);
-    impressions += toNumber(row.impressions);
-    clicks += toNumber(row.clicks);
+    metaSpend += s;
+    metaPurchases += p;
+    metaPurchaseValue += pv;
+    impressions += imp;
+    clicks += clk;
 
     if (!accountStats.has(normId)) {
       accountStats.set(normId, { spend: 0, imp: 0, clicks: 0, pur: 0, pVal: 0 });
     }
     const ast = accountStats.get(normId)!;
-    ast.spend += toNumber(row.spend);
-    ast.imp += toNumber(row.impressions);
-    ast.clicks += toNumber(row.clicks);
-    ast.pur += toNumber(row.purchases);
-    ast.pVal += toNumber(row.purchase_value !== undefined ? row.purchase_value : row.purchaseValue);
+    ast.spend += s;
+    ast.imp += imp;
+    ast.clicks += clk;
+    ast.pur += p;
+    ast.pVal += pv;
   }
 
+  // Assemble stores list using computed ledger data
   const stores = rawStores.map(s => {
     const stats = storeOrderStats.get(s.id) || { count: 0, sales: 0 };
     return {
@@ -170,6 +145,7 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
     };
   }).sort((a, b) => b.sales - a.sales);
 
+  // Assemble accounts list using computed ledger data
   const accountsMap = new Map<string, any>();
   for (const a of adAccounts) {
     const normId = normalizeMetaAccountId(a.fb_account_id);
@@ -219,32 +195,54 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
     .filter(a => a.spend > 0)
     .sort((a, b) => b.spend - a.spend);
 
+  // 3. Aggregate product level stats specifically from raw order rows for top products SKU list
+  const productStats = new Map<string, { orderCount: number; quantity: number; sales: number; uniqueOrderIds?: Set<string> }>();
+  for (const order of ordersForProducts) {
+    const pId = order.productId || "unknown";
+    if (!productStats.has(pId)) {
+      productStats.set(pId, { orderCount: 0, quantity: 0, sales: 0, uniqueOrderIds: new Set<string>() });
+    }
+    const ps = productStats.get(pId)!;
+    ps.quantity += 1;
+    ps.sales += toNumber(order.revenue);
+    const oId = order.orderId || order.id;
+    ps.uniqueOrderIds?.add(oId);
+  }
+
+  productStats.forEach((ps) => {
+    ps.orderCount = ps.uniqueOrderIds ? ps.uniqueOrderIds.size : ps.quantity;
+    delete ps.uniqueOrderIds;
+  });
+
   const products = Array.from(productStats.entries()).map(([id, st]) => ({
-    productName: `Product ${id.substring(0,6)}`,
+    productName: `Product ${id.substring(0, 6)}`,
     sku: id,
     orderCount: st.orderCount,
     quantity: st.quantity,
     sales: st.sales
   })).sort((a, b) => b.sales - a.sales).slice(0, 50);
 
+  // Data readiness counters
+  const totalStoreLedgerCount = storeDailyLedgers.length;
+  const totalMetaLedgerCount = metaDailyLedgers.length;
+
   const dataReadiness = [
     {
       key: "insights",
       label: "广告成效数据",
-      status: totalInsightCount > 0 ? "ready" : "missing",
-      records: totalInsightCount,
-      note: totalInsightCount > 0 ? "成效数据已同步" : "请先绑定广告账户并执行同步"
+      status: totalMetaLedgerCount > 0 ? "ready" : "missing",
+      records: totalMetaLedgerCount,
+      note: totalMetaLedgerCount > 0 ? "成效数据已同步" : "请先绑定广告账户并执行同步"
     },
     {
       key: "orders",
       label: "店铺订单数据",
-      status: totalOrderCount > 0 ? "ready" : "missing",
-      records: totalOrderCount,
-      note: totalOrderCount > 0 ? "订单数据已同步" : "请配置店铺并同步历史订单"
+      status: totalStoreLedgerCount > 0 ? "ready" : "missing",
+      records: totalStoreLedgerCount,
+      note: totalStoreLedgerCount > 0 ? "订单数据已同步" : "请配置店铺并同步历史订单"
     }
   ];
 
-  // Fetch true number of actual pending recommendations from database
   const pendingSuggestionsCount = await prisma.aiActionSuggestion.count({
     where: { status: "pending" }
   });

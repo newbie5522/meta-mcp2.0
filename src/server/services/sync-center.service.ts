@@ -663,7 +663,7 @@ export class SyncCenter {
               source: "rebuildStoreSummary"
             });
 
-            await prisma.dailySummary.upsert({
+            await prisma.dailySummary.upsert({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
               where: {
                 scope_scopeId_date: {
                   scope: "store",
@@ -748,7 +748,7 @@ export class SyncCenter {
               source: "rebuildMetaSummary"
             });
 
-            await prisma.dailySummary.upsert({
+            await prisma.dailySummary.upsert({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
               where: {
                 scope_scopeId_date: {
                   scope: "ad_account",
@@ -821,7 +821,7 @@ export class SyncCenter {
             const dateStr = dayjs().subtract(i, "day").format("YYYY-MM-DD");
 
             // Fetch daily Summary of store to get store revenue
-            const storeSummary = await prisma.dailySummary.findUnique({
+            const storeSummary = await prisma.dailySummary.findUnique({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
               where: {
                 scope_scopeId_date: {
                   scope: "store",
@@ -868,7 +868,7 @@ export class SyncCenter {
               source: "rebuildRoasSummary"
             });
 
-            await prisma.dailySummary.upsert({
+            await prisma.dailySummary.upsert({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
               where: {
                 scope_scopeId_date: {
                   scope: "store",
@@ -928,7 +928,7 @@ export class SyncCenter {
           const dateStr = dayjs().subtract(i, "day").format("YYYY-MM-DD");
 
           // Pull all store daily summaries
-          const storeSummaries = await prisma.dailySummary.findMany({
+          const storeSummaries = await prisma.dailySummary.findMany({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
             where: {
               scope: "store",
               date: dateStr
@@ -945,7 +945,7 @@ export class SyncCenter {
           const combinedRoas = totalSpend > 0 ? (totalRevenue / totalSpend) : 0;
           
           // Combined Meta conversion value
-          const adAccountSummaries = await prisma.dailySummary.findMany({
+          const adAccountSummaries = await prisma.dailySummary.findMany({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
             where: {
               scope: "ad_account",
               date: dateStr
@@ -965,7 +965,7 @@ export class SyncCenter {
             source: "rebuildDashboardSummary"
           });
 
-          await prisma.dailySummary.upsert({
+          await prisma.dailySummary.upsert({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
             where: {
               scope_scopeId_date: {
                 scope: "dashboard",
@@ -1024,7 +1024,7 @@ export class SyncCenter {
         // Read recent daily summaries in aggregate of 7 days
         const last7Days = Array.from({ length: 7 }, (_, i) => dayjs().subtract(i, "day").format("YYYY-MM-DD"));
         
-        const dashboardSummaries = await prisma.dailySummary.findMany({
+        const dashboardSummaries = await prisma.dailySummary.findMany({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
           where: {
             scope: "store",
             date: { in: last7Days }

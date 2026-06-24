@@ -387,49 +387,7 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
            * No new features or endpoints are allowed to read from AdInsight.
            * TODO: Decommission this write block during retirement Phase 4.
            */
-          let entityName = row.account_name || acc.fb_account_name || actId;
-          if (currentLevel === "campaign") {
-            entityName = row.campaign_name || "Campaign";
-          } else if (currentLevel === "adset") {
-            entityName = row.adset_name || "Ad Set";
-          } else if (currentLevel === "ad") {
-            entityName = row.ad_name || "Ad";
-          }
-
-          const atcRate = clicks > 0 ? (addToCart / clicks) * 100 : 0;
-          const checkoutRate = addToCart > 0 ? (initiateCheckout / addToCart) * 100 : 0;
-          const cpp = purchases > 0 ? spend / purchases : 0;
-
-          await prisma.adInsight.upsert({
-            where: {
-              accountId_level_campaignId_adsetId_adId_date: {
-                accountId: actId,
-                level: currentLevel,
-                campaignId: campaignIdValue,
-                adsetId: adsetIdValue,
-                adId: adIdValue,
-                date: dateStr
-              }
-            },
-            update: {
-              accountName: entityName,
-              reach, impressions, clicks, spend,
-              addToCart, initiateCheckout, purchases, purchaseValue,
-              cpc: cpcValue, ctr: ctrValue, atcRate, checkoutRate, cpp, roas: roasValue
-            },
-            create: {
-              accountId: actId,
-              level: currentLevel,
-              campaignId: campaignIdValue,
-              adsetId: adsetIdValue,
-              adId: adIdValue,
-              date: dateStr,
-              accountName: entityName,
-              reach, impressions, clicks, spend,
-              addToCart, initiateCheckout, purchases, purchaseValue,
-              cpc: cpcValue, ctr: ctrValue, atcRate, checkoutRate, cpp, roas: roasValue
-            }
-          });
+          // AdInsight double-writing decommissioned in phase 4/LOCKDOWN
         }
 
         console.log(`[Meta Insights Sync] Finished Level "${currentLevel}" for ${actId}. Fetched: ${sliceFetchedCount}, Saved: ${sliceSavedCount}, Updated: ${sliceUpdatedCount}`);

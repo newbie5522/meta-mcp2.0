@@ -15,6 +15,13 @@ const shoplineCache = new Map<string, { data: any; expiry: number }>();
 const demoStoreNames = ["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"];
 const demoStoreDomains = ["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"];
 
+function toNumber(value: unknown): number {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const parsed = Number(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function isFixtureStore(store: { name: string; domain?: string | null }): boolean {
   return demoStoreNames.includes(store.name) || demoStoreDomains.includes(store.domain || "");
 }
@@ -525,111 +532,32 @@ router.post("/", async (req, res) => {
 router.get("/all-dashboard-summary", async (req, res) => {
   const { startDate, endDate } = req.query;
   try {
+    const startStr = (startDate && typeof startDate === "string") ? startDate : "";
+    const endStr = (endDate && typeof endDate === "string") ? endDate : "";
+
     const stores = await prisma.store.findMany();
     const result: Record<string, any> = {};
 
-    const strStart = (startDate && typeof startDate === "string") ? startDate : "";
-    const strEnd = (endDate && typeof endDate === "string") ? endDate : "";
+    const storeDailyLedgers = await prisma.dataCenterStoreDaily.findMany({
+      where: {
+        date: { gte: startStr, lte: endStr }
+      }
+    });
+
+    const ledgersByStore = new Map();
+    for (const row of storeDailyLedgers) {
+      if (!ledgersByStore.has(row.storeId)) {
+        ledgersByStore.set(row.storeId, []);
+      }
+      ledgersByStore.get(row.storeId).push(row);
+    }
 
     for (const store of stores) {
       const isConfigured = !!(store.shopify_token || store.shopline_token || store.shoplazza_token);
-      
-      const tzOffset = getTimezoneOffsetStr(store.timezone);
-
-      let storeStart = new Date();
-      storeStart.setDate(storeStart.getDate() - 30);
-      if (strStart) {
-        storeStart = new Date(`${strStart}T00:00:00${tzOffset}`);
-      }
-
-      let storeEnd = new Date();
-      if (strEnd) {
-        storeEnd = new Date(`${strEnd}T23:59:59.999${tzOffset}`);
-      }
-
-      const orders = await prisma.order.findMany({
-        where: {
-          storeId: store.id,
-          OR: [
-            {
-              store_local_date: {
-                gte: strStart || undefined,
-                lte: strEnd || undefined
-              }
-            },
-            {
-              store_local_date: null,
-              createdAt: {
-                gte: storeStart,
-                lte: storeEnd
-              }
-            }
-          ]
-        },
-      });
-
-      const ordersForSales = orders.filter(
-        (o) => {
-          if (o.store_local_date) {
-            if ((strStart && o.store_local_date < strStart) || (strEnd && o.store_local_date > strEnd)) return false;
-          } else {
-            if (o.createdAt < storeStart || o.createdAt > storeEnd) return false;
-          }
-          const pStatus = o.paymentStatus ? String(o.paymentStatus).toLowerCase() : "";
-          if (pStatus && ["waiting", "unpaid", "pending", "cancelled", "voided"].includes(pStatus)) {
-            return false;
-          }
-          return true;
-        }
-      );
-
-      const ordersForRefunds = orders.filter(
-        (o) =>
-          o.refunded &&
-          (o.store_local_date
-            ? ((!strStart || o.store_local_date >= strStart) && (!strEnd || o.store_local_date <= strEnd))
-            : ((o.refundedAt && o.refundedAt >= storeStart && o.refundedAt <= storeEnd) ||
-               (!o.refundedAt && o.createdAt >= storeStart && o.createdAt <= storeEnd)))
-      );
-
-      let totalSales = 0;
-      let ordersCount = 0;
-      const seenOrderIds = new Set();
-      
-      for (const o of ordersForSales) {
-        const uniqueKey = o.orderId || o.createdAt.toISOString();
-        if (!seenOrderIds.has(uniqueKey)) {
-          seenOrderIds.add(uniqueKey);
-          ordersCount++;
-          if (o.orderTotal != null && o.orderTotal > 0) {
-            totalSales += o.orderTotal;
-          } else {
-            totalSales += (o.revenue || 0);
-          }
-        } else {
-          if (o.orderTotal == null || o.orderTotal === 0) {
-            totalSales += (o.revenue || 0);
-          }
-        }
-      }
-
-      let totalRefunded = 0;
-      const seenRefundOrderIds = new Set();
-      for (const o of ordersForRefunds) {
-        const uniqueKey = o.orderId || o.createdAt.toISOString();
-        if (!seenRefundOrderIds.has(uniqueKey)) {
-          seenRefundOrderIds.add(uniqueKey);
-          if (o.orderTotal != null && o.orderTotal > 0) {
-            totalRefunded += o.orderTotal;
-          } else {
-            totalRefunded += (o.revenue || 0);
-          }
-        } else {
-          if (o.orderTotal == null || o.orderTotal === 0) {
-            totalRefunded += (o.revenue || 0);
-          }
-        }
-      }
+      const rows = ledgersByStore.get(store.id) || [];
+      const totalSales = rows.reduce((sum, r) => sum + toNumber(r.grossSales), 0);
+      const ordersCount = rows.reduce((sum, r) => sum + toNumber(r.orderCount), 0);
+      const totalRefunded = rows.reduce((sum, r) => sum + toNumber(r.refundedAmount), 0);
 
       result[store.name] = {
         isConfigured,
@@ -642,9 +570,7 @@ router.get("/all-dashboard-summary", async (req, res) => {
 
     res.json(result);
   } catch (error: any) {
-    res
-      .status(500)
-      .json({ error: "Failed to fetch store summaries", details: error.message });
+    res.status(500).json({ error: "Failed to fetch store summaries", details: error.message });
   }
 });
 
@@ -671,88 +597,32 @@ router.get("/:id/dashboard-summary", async (req, res) => {
       return res.status(404).json({ error: "Store not found" });
     }
 
-    const tzOffset = getTimezoneOffsetStr(store.timezone);
+    const startStr = (startDate && typeof startDate === "string") ? startDate : "";
+    const endStr = (endDate && typeof endDate === "string") ? endDate : "";
 
-    let start = new Date();
-    start.setDate(start.getDate() - 30);
-    if (startDate && typeof startDate === "string") {
-      start = new Date(`${startDate}T00:00:00${tzOffset}`);
-    }
-
-    let end = new Date();
-    if (endDate && typeof endDate === "string") {
-      end = new Date(`${endDate}T23:59:59.999${tzOffset}`);
-    }
-    const startStr = (startDate && typeof startDate === "string") ? startDate : start.toISOString().split("T")[0];
-    const endStr = (endDate && typeof endDate === "string") ? endDate : end.toISOString().split("T")[0];
-
-    const orders = await prisma.order.findMany({
+    // Query DataCenterStoreDaily for store sales/orders
+    const storeDailyLedgers = await prisma.dataCenterStoreDaily.findMany({
       where: {
         storeId: store.id,
-        OR: [
-          {
-            store_local_date: {
-              gte: startStr,
-              lte: endStr,
-            },
-          },
-          {
-            store_local_date: null,
-            createdAt: {
-              gte: start,
-              lte: end,
-            },
-          },
-        ],
-      },
+        date: { gte: startStr, lte: endStr }
+      }
     });
 
+    const totalSales = storeDailyLedgers.reduce((sum, r) => sum + toNumber(r.grossSales), 0);
+    const totalOrders = storeDailyLedgers.reduce((sum, r) => sum + toNumber(r.orderCount), 0);
+
+    // Query DataCenterMetaAccountDaily for ad spend
     const accountIds = store.accounts.map(a => a.fb_account_id);
-    const performanceRows = await prisma.factMetaPerformance.findMany({
+    const metaDailyLedgers = await prisma.dataCenterMetaAccountDaily.findMany({
       where: {
-        account_id: { in: accountIds },
-        date: {
-          gte: startStr,
-          lte: endStr,
-        },
-        level: "account"
+        accountId: { in: accountIds },
+        date: { gte: startStr, lte: endStr }
       }
     });
 
-    let totalSales = 0;
-    let totalOrders = 0;
-    const seenOrderIds = new Set();
-    
-    for (const o of orders) {
-      const pStatus = o.paymentStatus ? String(o.paymentStatus).toLowerCase() : "";
-      if (pStatus && ["waiting", "unpaid", "pending", "cancelled", "voided"].includes(pStatus)) {
-        continue; // Exclude unpaid or non-sales records from KPI aggregations
-      }
-      const uniqueKey = o.orderId || o.createdAt.toISOString();
-      if (!seenOrderIds.has(uniqueKey)) {
-        seenOrderIds.add(uniqueKey);
-        totalOrders++;
-        if (o.orderTotal != null && o.orderTotal > 0) {
-          totalSales += o.orderTotal;
-        } else {
-          totalSales += (o.revenue || 0);
-        }
-      } else {
-        if (o.orderTotal == null || o.orderTotal === 0) {
-          totalSales += (o.revenue || 0);
-        }
-      }
-    }
-
-    const totalSpend = performanceRows.reduce((sum, ad) => sum + (ad.spend || 0), 0);
-    
-    // totalROAS
+    const totalSpend = metaDailyLedgers.reduce((sum, r) => sum + toNumber(r.spend), 0);
     const totalROAS = totalSpend > 0 ? (totalSales / totalSpend) : 0;
-    
-    // visitors handling (just based on store total visitors, or average? We'll approximate for now or just return store.visitors)
     const totalVisitors = store.visitors || 0;
-    
-    // avgConversionRate
     const avgConversionRate = totalVisitors > 0 ? ((totalOrders / totalVisitors) * 100) : 0;
 
     res.json({
@@ -770,8 +640,8 @@ router.get("/:id/dashboard-summary", async (req, res) => {
         errorMessage: "",
       },
       dataSourceExplain: {
-        primarySource: "FactMetaPerformance",
-        legacySource: "AdInsight",
+        primarySource: "DataCenterStoreDaily + DataCenterMetaAccountDaily",
+        legacySource: "FactMetaPerformance + Order",
         legacyUsed: false
       }
     });
