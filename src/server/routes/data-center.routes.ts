@@ -1193,14 +1193,243 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       };
     }
 
+    // Now load canonical ledgers directly from the DB after refresh
+    const ledgers = await prisma.dataCenterStoreDaily.findMany({
+      where: {
+        storeId: store.id,
+        date: { gte: startStr, lte: endStr }
+      }
+    });
+
+    // Parse the three groups of order collections
+    // A. API items (auditReport.orderItems)
+    const apiOrderMap = new Map<string, any>();
+    (auditReport.orderItems || []).forEach((item: any) => {
+      const oId = String(item.id || item.orderId || "");
+      if (oId) {
+        apiOrderMap.set(oId, item);
+      }
+    });
+
+    // B. Order Table rows grouped by unique ID
+    const orderFactMap = new Map<string, {
+      orderId: string;
+      orderNumber: string;
+      orderTotal: number;
+      lineRevenueSum: number;
+      storeLocalDate: string;
+      createdAtUtc: string;
+      paymentStatus: string;
+      fulfillmentStatus: string;
+      includedByOrderFactRule: boolean;
+      excludeReason: string | null;
+      items: any[];
+    }>();
+
+    ordersInDb.forEach(o => {
+      const oId = String(o.orderId || o.id);
+      const paymentStatus = o.paymentStatus ? String(o.paymentStatus).toLowerCase() : "";
+      let includedByOrderFactRule = true;
+      let excludeReason: string | null = null;
+      if (paymentStatus && ["waiting", "unpaid", "pending", "cancelled", "voided"].includes(paymentStatus)) {
+        includedByOrderFactRule = false;
+        excludeReason = `Excluded by payment status: ${paymentStatus}`;
+      }
+
+      const orderTotal = o.orderTotal != null && o.orderTotal > 0 ? o.orderTotal : (o.revenue || 0);
+
+      if (!orderFactMap.has(oId)) {
+        orderFactMap.set(oId, {
+          orderId: oId,
+          orderNumber: o.orderId || oId,
+          orderTotal,
+          lineRevenueSum: o.revenue || 0,
+          storeLocalDate: o.store_local_date || "",
+          createdAtUtc: o.created_at_utc ? o.created_at_utc.toISOString() : (o.createdAt ? o.createdAt.toISOString() : ""),
+          paymentStatus: o.paymentStatus || "",
+          fulfillmentStatus: o.fulfillmentStatus || "",
+          includedByOrderFactRule,
+          excludeReason,
+          items: [o]
+        });
+      } else {
+        const existing = orderFactMap.get(oId)!;
+        existing.lineRevenueSum += (o.revenue || 0);
+        if (existing.orderTotal === 0 && orderTotal > 0) {
+          existing.orderTotal = orderTotal;
+        }
+        if (!includedByOrderFactRule) {
+          existing.includedByOrderFactRule = false;
+          existing.excludeReason = excludeReason;
+        }
+        existing.items.push(o);
+      }
+    });
+
+    const orderFactUniqueList = Array.from(orderFactMap.values());
+    const orderFactUniqueCount = orderFactUniqueList.filter(o => o.includedByOrderFactRule).length;
+    const orderFactTotalSum = Number(orderFactUniqueList.reduce((sum, o) => sum + (o.includedByOrderFactRule ? o.orderTotal : 0), 0).toFixed(2));
+    const orderFactOrderIds = orderFactUniqueList.filter(o => o.includedByOrderFactRule).map(o => o.orderId);
+
+    // C. DataCenterStoreDaily Ledger items
+    const ledgerOrderMap = new Map<string, {
+      orderId: string;
+      amount: number;
+      source: string;
+      rawTime: string;
+      status: string;
+      includedByLedgerRule: boolean;
+    }>();
+
+    ledgers.forEach(l => {
+      let digestObj: any = { orders: [] };
+      try {
+        if (l.rawDigestJson) {
+          digestObj = JSON.parse(l.rawDigestJson);
+        }
+      } catch (e) {
+        console.error("Failed to parse rawDigestJson in ledger row:", e);
+      }
+
+      const orders = digestObj.orders || [];
+      orders.forEach((o: any) => {
+        const oId = String(o.orderId || o.id || "");
+        if (oId) {
+          ledgerOrderMap.set(oId, {
+            orderId: oId,
+            amount: Number(o.amount || 0),
+            source: o.source || "",
+            rawTime: o.rawTime || "",
+            status: o.status || "",
+            includedByLedgerRule: true
+          });
+        }
+      });
+    });
+
+    const ledgerOrdersList = Array.from(ledgerOrderMap.values());
+    const ledgerOrderCount = ledgerOrdersList.length;
+    const ledgerGrossSales = Number(ledgerOrdersList.reduce((sum, o) => sum + o.amount, 0).toFixed(2));
+    const ledgerOrderIds = ledgerOrdersList.map(o => o.orderId);
+
+    // Helper to build diff items
+    const buildDiffItem = (oId: string, reasonOverride?: string) => {
+      const fact = orderFactMap.get(oId);
+      const ledg = ledgerOrderMap.get(oId);
+      const api = apiOrderMap.get(oId);
+
+      let reason = reasonOverride || "UNKNOWN";
+      if (!reasonOverride) {
+        if (fact) {
+          const timezone = store.timezone || "America/Los_Angeles";
+          const rawTime = fact.createdAtUtc || fact.items[0]?.createdAt?.toISOString() || "";
+          const convertedLocalDate = rawTime ? dayjs(rawTime).tz(timezone).format("YYYY-MM-DD") : "";
+          if (convertedLocalDate && (convertedLocalDate !== fact.storeLocalDate || convertedLocalDate < startStr || convertedLocalDate > endStr)) {
+            reason = "TIMEZONE_BOUNDARY_MISMATCH";
+          } else if (fact.paymentStatus && ["waiting", "unpaid", "pending", "cancelled", "voided"].includes(fact.paymentStatus.toLowerCase())) {
+            reason = "PAYMENT_STATUS_EXCLUDED_BY_LEDGER";
+          } else {
+            reason = "STALE_ORDER_FACT_ROW";
+          }
+        } else if (api) {
+          reason = "API_ONLY_UNSAVED";
+        }
+      }
+
+      return {
+        orderId: oId,
+        orderNumber: fact?.orderNumber || api?.order_number || oId,
+        orderFactAmount: fact ? fact.orderTotal : null,
+        ledgerAmount: ledg ? ledg.amount : null,
+        apiAmount: api ? api.totalAmount : null,
+        orderFactLocalDate: fact ? fact.storeLocalDate : null,
+        ledgerRawTime: ledg ? ledg.rawTime : null,
+        apiCreatedAtRaw: api ? api.createdAtRaw : null,
+        paymentStatus: fact?.paymentStatus || ledg?.status || api?.paymentStatus || null,
+        fulfillmentStatus: fact?.fulfillmentStatus || api?.fulfillmentStatus || null,
+        reason
+      };
+    };
+
+    // Calculate diff outputs
+    const orderFactNotInLedger = [];
+    for (const [oId, fact] of orderFactMap.entries()) {
+      if (fact.includedByOrderFactRule && !ledgerOrderMap.has(oId)) {
+        orderFactNotInLedger.push(buildDiffItem(oId));
+      }
+    }
+
+    const ledgerNotInOrderFact = [];
+    for (const [oId, ledg] of ledgerOrderMap.entries()) {
+      const fact = orderFactMap.get(oId);
+      if (!fact || !fact.includedByOrderFactRule) {
+        ledgerNotInOrderFact.push(buildDiffItem(oId));
+      }
+    }
+
+    const apiSavedNotInLedger = [];
+    for (const [oId, api] of apiOrderMap.entries()) {
+      if (api.isSaved !== false && !ledgerOrderMap.has(oId)) {
+        apiSavedNotInLedger.push(buildDiffItem(oId));
+      }
+    }
+
+    const excludedByPaymentStatus = [];
+    for (const [oId, fact] of orderFactMap.entries()) {
+      if (!fact.includedByOrderFactRule && fact.excludeReason?.includes("payment status")) {
+        excludedByPaymentStatus.push(buildDiffItem(oId, "PAYMENT_STATUS_EXCLUDED_BY_LEDGER"));
+      }
+    }
+
+    const excludedByLocalDate = [];
+    for (const [oId, api] of apiOrderMap.entries()) {
+      if (api.skipReason?.includes("local date") || api.storeLocalDate < startStr || api.storeLocalDate > endStr) {
+        excludedByLocalDate.push(buildDiffItem(oId, "TIMEZONE_BOUNDARY_MISMATCH"));
+      }
+    }
+
+    const amountMismatch = [];
+    for (const [oId, ledg] of ledgerOrderMap.entries()) {
+      const fact = orderFactMap.get(oId);
+      if (fact && fact.includedByOrderFactRule && Math.abs(fact.orderTotal - ledg.amount) > 0.01) {
+        amountMismatch.push(buildDiffItem(oId, "AMOUNT_FIELD_MISMATCH"));
+      }
+    }
+
     res.json({
       startDate: startStr,
       endDate: endStr,
       storeName: store.name,
       platform: store.platform,
       timezone: store.timezone,
-      systemOrdersCount,
-      systemSalesAmount,
+      canonicalSource: "DataCenterStoreDaily",
+      systemOrdersCount: ledgerOrderCount,
+      systemSalesAmount: ledgerGrossSales,
+      legacyOrderFactOrdersCount: orderFactUniqueCount,
+      legacyOrderFactSalesAmount: orderFactTotalSum,
+      canonicalLedger: {
+        orderCount: ledgerOrderCount,
+        grossSales: ledgerGrossSales,
+        orderIds: ledgerOrderIds
+      },
+      orderFact: {
+        uniqueOrderCount: orderFactUniqueCount,
+        orderTotalSum: orderFactTotalSum,
+        orderIds: orderFactOrderIds
+      },
+      apiAudit: {
+        recordsFetched: auditReport.recordsFetched,
+        orderItemsCount: auditReport.orderItems?.length || 0,
+        savedLikeCount: (auditReport.orderItems || []).filter((o: any) => o.isSaved !== false).length
+      },
+      diff: {
+        orderFactNotInLedger,
+        ledgerNotInOrderFact,
+        apiSavedNotInLedger,
+        excludedByPaymentStatus,
+        excludedByLocalDate,
+        amountMismatch
+      },
       fetchedOrdersCount: auditReport.recordsFetched,
       savedOrdersCount: auditReport.recordsSaved,
       skippedCount: auditReport.recordsSkipped,

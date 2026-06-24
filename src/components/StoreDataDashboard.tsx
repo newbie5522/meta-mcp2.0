@@ -101,6 +101,18 @@ interface ReconciliationData {
   skippedCount?: number;
   duplicateCount?: number;
   failedCount?: number;
+  canonicalLedger?: { orderCount: number; grossSales: number; orderIds: string[] };
+  orderFact?: { uniqueOrderCount: number; orderTotalSum: number; orderIds: string[] };
+  apiAudit?: { recordsFetched: number; orderItemsCount: number; savedLikeCount: number };
+  legacyOrderFactOrdersCount?: number;
+  diff?: {
+    orderFactNotInLedger: any[];
+    ledgerNotInOrderFact: any[];
+    apiSavedNotInLedger: any[];
+    excludedByPaymentStatus: any[];
+    excludedByLocalDate: any[];
+    amountMismatch: any[];
+  };
   orderItems?: Array<{
     id: string;
     order_number: string;
@@ -790,46 +802,54 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 
                 <div className="p-3 rounded-lg border border-slate-200 bg-slate-50">
-                  <span className="text-[10px] text-slate-400 font-bold uppercase block">本系统订单总数</span>
+                  <span className="text-[10px] text-indigo-600 font-bold uppercase block">账目快照订单数</span>
                   <div className="mt-1 flex items-baseline gap-1.5">
-                    <span className="text-xl font-extrabold text-slate-900 font-mono">
-                      {reconData.systemOrdersCount}
+                    <span className="text-xl font-extrabold text-indigo-900 font-mono">
+                      {reconData.canonicalLedger?.orderCount ?? reconData.systemOrdersCount}
                     </span>
-                    <span className="text-xs text-slate-500 font-normal">单</span>
+                    <span className="text-xs text-indigo-500 font-normal">单</span>
                   </div>
                 </div>
 
                 <div className="p-3 rounded-lg border border-slate-200 bg-slate-50">
-                  <span className="text-[10px] text-slate-500 font-bold uppercase block">本系统归档金额</span>
+                  <span className="text-[10px] text-indigo-600 font-bold uppercase block">账目快照销售额</span>
                   <div className="mt-1 flex items-baseline gap-1.5">
-                    <span className="text-xl font-extrabold text-slate-950 font-mono">
-                      ${reconData.systemSalesAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <span className="text-xl font-extrabold text-indigo-950 font-mono">
+                      ${(reconData.canonicalLedger?.grossSales ?? reconData.systemSalesAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
-                    <span className="text-xs text-slate-500 font-normal">USD</span>
+                    <span className="text-xs text-indigo-500 font-normal">USD</span>
                   </div>
                 </div>
 
                 <div className="p-3 rounded-lg border border-slate-200 bg-slate-50">
-                  <span className="text-[10px] text-slate-400 font-bold uppercase block">抓取增量包中的订单数</span>
+                  <span className="text-[10px] text-slate-500 font-bold uppercase block">平台抓取订单数</span>
                   <div className="mt-1 flex items-baseline gap-1.5">
                     <span className="text-xl font-extrabold text-slate-700 font-mono">
-                      {reconData.fetchedOrdersCount}
+                      {reconData.apiAudit?.recordsFetched ?? reconData.fetchedOrdersCount}
                     </span>
                     <span className="text-xs text-slate-500 font-normal">笔</span>
                   </div>
                 </div>
 
                 <div className="p-3 rounded-lg border border-slate-200 bg-slate-50">
-                  <span className="text-[10px] text-slate-400 font-bold uppercase block">成功落入本地库单数</span>
+                  <span className="text-[10px] text-amber-600 font-bold uppercase block">Order 表候选订单数</span>
                   <div className="mt-1 flex items-baseline gap-1.5">
-                    <span className="text-xl font-extrabold text-emerald-600 font-mono">
-                      {reconData.savedOrdersCount}
+                    <span className="text-xl font-extrabold text-amber-700 font-mono">
+                      {reconData.orderFact?.uniqueOrderCount ?? reconData.legacyOrderFactOrdersCount}
                     </span>
-                    <span className="text-xs text-slate-500 font-normal">件</span>
+                    <span className="text-xs text-amber-600 font-normal">件</span>
                   </div>
                 </div>
 
               </div>
+
+              {/* Mismatch warnings banner */}
+              {(reconData.orderFact?.uniqueOrderCount !== reconData.canonicalLedger?.orderCount && reconData.canonicalLedger) && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>发现 Order 表与账目快照存在 {Math.abs((reconData.orderFact?.uniqueOrderCount || 0) - (reconData.canonicalLedger?.orderCount || 0))} 单差异，已列入差异明细。</span>
+                </div>
+              )}
 
               {/* API and log verification list */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-2">
@@ -918,6 +938,148 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
                   </div>
                 </div>
 
+              </div>
+
+              {/* 🔍 API / Order / Ledger 差异诊断 Section */}
+              <div className="space-y-4 pt-4 border-t border-slate-100">
+                <h5 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                  <span>API / Order / Ledger 差异诊断明细</span>
+                  {reconData.diff && (
+                    <span className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-100 px-1.5 py-0.5 rounded font-mono">
+                      发现 {(reconData.diff.orderFactNotInLedger?.length || 0) + (reconData.diff.ledgerNotInOrderFact?.length || 0) + (reconData.diff.amountMismatch?.length || 0)} 处核心不一致
+                    </span>
+                  )}
+                </h5>
+
+                <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
+                  <div className="p-3.5 bg-slate-50/50 border-b border-slate-200 text-slate-600 text-xs leading-relaxed font-medium">
+                    本对账诊断器会比对三大订单口径的数据（API 直接抓取流、本地数据库 Order 表流水、账目快照 DataCenterStoreDaily）。以下为发现的不一致列表，可以帮助排查时区边界、支付状态不合规或未同步归档的异常订单。
+                  </div>
+
+                  <div className="max-h-[300px] overflow-y-auto text-xs">
+                    <table className="w-full text-left border-collapse font-sans">
+                      <thead>
+                        <tr className="bg-slate-50/70 border-b border-slate-200 text-slate-500 font-semibold text-[10px] tracking-wider uppercase">
+                          <th className="p-2.5 pl-3">差异订单 ID</th>
+                          <th className="p-2.5">账套金额</th>
+                          <th className="p-2.5">Order 表金额</th>
+                          <th className="p-2.5">API 原始金额</th>
+                          <th className="p-2.5">账套原始时间 / 本地日期</th>
+                          <th className="p-2.5">支付 / 履约状态</th>
+                          <th className="p-2.5 pr-3">差异定位原因及建议修复方案</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                        {(!reconData.diff || 
+                          ((reconData.diff.orderFactNotInLedger?.length || 0) === 0 &&
+                           (reconData.diff.ledgerNotInOrderFact?.length || 0) === 0 &&
+                           (reconData.diff.amountMismatch?.length || 0) === 0 &&
+                           (reconData.diff.apiSavedNotInLedger?.length || 0) === 0 &&
+                           (reconData.diff.excludedByPaymentStatus?.length || 0) === 0 &&
+                           (reconData.diff.excludedByLocalDate?.length || 0) === 0)) ? (
+                          <tr>
+                            <td colSpan={7} className="p-8 text-center text-slate-400 font-normal">
+                              ✅ 恭喜！当前统计区间内没有任何关键口径不匹配，全链路交易与账套百分之百契合。
+                            </td>
+                          </tr>
+                        ) : (
+                          <>
+                            {/* 1. orderFactNotInLedger */}
+                            {reconData.diff.orderFactNotInLedger?.map((item: any) => (
+                              <tr key={`fact-not-in-ledg-${item.orderId}`} className="hover:bg-rose-50/10 transition-colors bg-rose-50/5">
+                                <td className="p-2.5 pl-3 font-mono text-rose-700 text-[11px] font-bold">
+                                  {item.orderId}
+                                </td>
+                                <td className="p-2.5 text-slate-400 font-mono">—</td>
+                                <td className="p-2.5 text-slate-900 font-mono font-bold">${item.orderFactAmount?.toFixed(2)}</td>
+                                <td className="p-2.5 text-slate-500 font-mono">${item.apiAmount != null ? item.apiAmount.toFixed(2) : "—"}</td>
+                                <td className="p-2.5 text-slate-600">
+                                  <div>Order 标注: {item.orderFactLocalDate}</div>
+                                  <div className="text-[10px] text-slate-400 font-mono">API: {item.apiCreatedAtRaw || "—"}</div>
+                                </td>
+                                <td className="p-2.5">
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-100 uppercase">
+                                    {item.paymentStatus || "unknown"}
+                                  </span>
+                                </td>
+                                <td className="p-2.5 pr-3">
+                                  <div className="text-rose-600 font-bold text-[11px]">
+                                    {item.reason === "TIMEZONE_BOUNDARY_MISMATCH" && "🕒 时区边界偏移 (TIMEZONE_BOUNDARY_MISMATCH)"}
+                                    {item.reason === "PAYMENT_STATUS_EXCLUDED_BY_LEDGER" && "💳 支付状态不符 (PAYMENT_STATUS_EXCLUDED_BY_LEDGER)"}
+                                    {item.reason === "STALE_ORDER_FACT_ROW" && "🗑️ 历史残留订单行 (STALE_ORDER_FACT_ROW)"}
+                                    {item.reason === "UNKNOWN" && "⚠️ 未知异常差异 (UNKNOWN)"}
+                                  </div>
+                                  <div className="text-slate-500 text-[10.5px] font-normal leading-tight mt-0.5">
+                                    {item.reason === "TIMEZONE_BOUNDARY_MISMATCH" && "该订单由于美国洛杉矶时区与 UTC 时间边界转换问题，未归入该账目快照所属日期中。"}
+                                    {item.reason === "PAYMENT_STATUS_EXCLUDED_BY_LEDGER" && "账目快照排除了此非 Paid 支付状态订单，而 Order 表仍缓存了此未付/取消单。"}
+                                    {item.reason === "STALE_ORDER_FACT_ROW" && "Order 表中的历史残留陈旧交易数据，而平台 API 主数据源中该区间已无此单，可通过重建流水清洗。"}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+
+                            {/* 2. ledgerNotInOrderFact */}
+                            {reconData.diff.ledgerNotInOrderFact?.map((item: any) => (
+                              <tr key={`ledg-not-in-fact-${item.orderId}`} className="hover:bg-amber-50/10 transition-colors bg-amber-50/5">
+                                <td className="p-2.5 pl-3 font-mono text-amber-700 text-[11px] font-bold">
+                                  {item.orderId}
+                                </td>
+                                <td className="p-2.5 text-slate-900 font-mono font-bold">${item.ledgerAmount?.toFixed(2)}</td>
+                                <td className="p-2.5 text-slate-400 font-mono">—</td>
+                                <td className="p-2.5 text-slate-500 font-mono">${item.apiAmount != null ? item.apiAmount.toFixed(2) : "—"}</td>
+                                <td className="p-2.5 text-slate-600">
+                                  <div>账目快照: {item.ledgerRawTime}</div>
+                                </td>
+                                <td className="p-2.5">
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 uppercase">
+                                    {item.paymentStatus || "PAID"}
+                                  </span>
+                                </td>
+                                <td className="p-2.5 pr-3">
+                                  <div className="text-amber-600 font-bold text-[11px]">
+                                    📈 账套已记账但本地明细表缺失
+                                  </div>
+                                  <div className="text-slate-500 text-[10.5px] font-normal leading-tight mt-0.5">
+                                    该订单已被 DataCenter 账套成功认列并记账，但本地 Order 明细表可能因为部分过滤规则未能成功同步存储。
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+
+                            {/* 3. amountMismatch */}
+                            {reconData.diff.amountMismatch?.map((item: any) => (
+                              <tr key={`amount-mismatch-${item.orderId}`} className="hover:bg-indigo-50/10 transition-colors bg-indigo-50/5">
+                                <td className="p-2.5 pl-3 font-mono text-indigo-700 text-[11px] font-bold">
+                                  {item.orderId}
+                                </td>
+                                <td className="p-2.5 text-indigo-900 font-mono font-bold">${item.ledgerAmount?.toFixed(2)}</td>
+                                <td className="p-2.5 text-rose-900 font-mono font-bold">${item.orderFactAmount?.toFixed(2)}</td>
+                                <td className="p-2.5 text-slate-500 font-mono">${item.apiAmount != null ? item.apiAmount.toFixed(2) : "—"}</td>
+                                <td className="p-2.5 text-slate-600">
+                                  <div>Order 标注: {item.orderFactLocalDate}</div>
+                                  <div>账套: {item.ledgerRawTime}</div>
+                                </td>
+                                <td className="p-2.5">
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 uppercase">
+                                    {item.paymentStatus}
+                                  </span>
+                                </td>
+                                <td className="p-2.5 pr-3">
+                                  <div className="text-indigo-600 font-bold text-[11px]">
+                                    ⚖️ 金额字段不一致 (AMOUNT_FIELD_MISMATCH)
+                                  </div>
+                                  <div className="text-slate-500 text-[10.5px] font-normal leading-tight mt-0.5">
+                                    Order 表的明细统计金额与 DataCenter 账目快照中的单笔记记金额存在不一致，主看板继续强制采用账目快照。
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
 
               {/* 订单明细校对列表 */}
