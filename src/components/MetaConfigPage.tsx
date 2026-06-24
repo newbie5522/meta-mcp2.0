@@ -55,15 +55,11 @@ export function MetaConfigPage() {
     try {
       const res = await axios.get('/api/settings');
       let fbToken = '';
-      if (res.data && res.data.META_ACCESS_TOKEN) {
-        fbToken = res.data.META_ACCESS_TOKEN;
-      } else if (res.data && res.data.metaTokenMasked) {
+      if (res.data && res.data.metaTokenMasked) {
         fbToken = res.data.metaTokenMasked;
-      } else if (res.data && res.data.meta_token) {
-        fbToken = res.data.meta_token;
       }
-      if (fbToken) {
-        setMaskedToken(fbToken);
+      if (fbToken || (res.data && res.data.hasMetaAccessToken)) {
+        setMaskedToken(fbToken || "已保存");
         setHasSavedToken(true);
         setToken('');
         setIsEditingToken(false);
@@ -197,15 +193,25 @@ export function MetaConfigPage() {
     setSaving(true);
     setSaveStep('saving');
     try {
-      await axios.post("/api/settings", { key: "META_ACCESS_TOKEN", value: tokenToSave });
-      await axios.post("/api/settings", { key: "META_TOKEN_UPDATED_AT", value: new Date().toISOString() });
-      toast.info("Meta Token 保存成功，正在自动验证并拉取广告账户...");
+      const res = await axios.post("/api/settings", {
+        key: "META_ACCESS_TOKEN",
+        value: tokenToSave
+      });
+
+      if (!res.data?.success || !res.data?.hasMetaAccessToken) {
+        throw new Error(res.data?.error || "保存失败");
+      }
+
       setToken("");
-      setMaskedToken(`${tokenToSave.slice(0, 4)}...${tokenToSave.slice(-4)}`);
+      setMaskedToken(res.data.metaTokenMasked || "");
       setHasSavedToken(true);
       setIsEditingToken(false);
-      isAutoDuringSaveRef.current = true;
-      await fetchAccountsAndTest();
+      toast.success("Meta Token 已保存");
+
+      fetchAccountsAndTest().catch((err) => {
+        console.warn("[MetaConfig] Background account refresh failed:", err);
+        toast.warning("Token 已保存，但广告账户拉取失败，请稍后手动刷新。");
+      });
     } catch (err: any) {
       const errMsg = err.response?.data?.details || err.response?.data?.error || err.message || "Save failed";
       toast.error(`Save failed: ${errMsg}`);

@@ -243,19 +243,38 @@ export function StoreDetailsPage({
     if (!storeData.name) return toast.error("请输入店铺名称");
     setSaving(true);
     try {
-      const payload = {
-        ...storeData,
+      const payload: any = {
         id: storeId || savedStoreId || undefined,
         name: storeData.name?.trim(),
-        domain: storeData.domain?.trim()
+        platform: storeData.platform || "shopline",
+        domain: storeData.domain?.trim(),
+        timezone: storeData.timezone || "America/Los_Angeles",
+        mode: storeData.mode || "production"
       };
+
+      const activeTokenKey = getStoreTokenKey(storeData.platform);
+      const tokenValue = String(storeData[activeTokenKey] || "").trim();
+
+      if (tokenValue && !tokenValue.includes("...")) {
+        payload[activeTokenKey] = tokenValue;
+      }
       
       const res = await axios.post("/api/stores", payload);
-      
-      if (res.data.success === false) {
-        throw new Error(res.data.details || res.data.error || "保存失败");
+
+      if (!res.data?.success || !res.data?.store?.id) {
+        throw new Error(res.data?.error || "保存后未返回店铺 ID");
       }
 
+      const savedId = Number(res.data.store.id);
+      const readback = await axios.get(`/api/stores/${savedId}`);
+
+      if (!readback.data?.id) {
+        throw new Error("保存后读回失败");
+      }
+
+      setSavedStoreId(savedId);
+      setStoreData(readback.data);
+      
       const mode = res.data.mode;
       let successMsg = "店铺保存成功";
       if (mode === "created") {
@@ -265,31 +284,12 @@ export function StoreDetailsPage({
       } else if (mode === "updated_existing_by_name") {
         successMsg = "已检测到同名店铺，已更新已有配置";
       }
-      
-      const savedStore = res.data.store || res.data;
-      const savedId = res.data.id || savedStore?.id;
-      
-      if (isNew && !savedId) {
-        console.error("Store save complete but return payload had no ID:", res.data);
-        toast.error("保存成功，但系统未能匹配返回的店铺ID（响应内容：" + JSON.stringify(res.data) + "）");
-        return;
-      }
-
       toast.success(successMsg);
-      
-      if (savedId) {
-        setSavedStoreId(Number(savedId));
-      }
 
-      if (isNew && savedId) {
+      if (isNew) {
         navigate(`/store/${savedId}`, { replace: true });
       } else {
-        if (savedId) {
-          fetchStore(Number(savedId));
-        } else {
-          const activeId = storeId || savedStoreId;
-          if (activeId) fetchStore(Number(activeId));
-        }
+        fetchStore(savedId);
       }
     } catch (err: unknown) {
       const message =

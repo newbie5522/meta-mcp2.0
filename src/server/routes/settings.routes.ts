@@ -24,7 +24,9 @@ router.get("/", async (req, res) => {
     const settings = await prisma.setting.findMany();
     const config: Record<string, any> = {};
     settings.forEach((s) => {
-      config[s.key] = isSensitiveSettingKey(s.key) ? maskSecret(s.value) : s.value;
+      if (s.key !== "META_ACCESS_TOKEN" && s.key !== "meta_token") {
+        config[s.key] = isSensitiveSettingKey(s.key) ? maskSecret(s.value) : s.value;
+      }
     });
 
     const metaTokenDb = settings.find(s => s.key === "META_ACCESS_TOKEN");
@@ -36,6 +38,10 @@ router.get("/", async (req, res) => {
     config["hasMetaAccessToken"] = activeToken ? true : false;
     config["metaTokenMasked"] = activeToken ? maskSecret(activeToken) : "";
 
+    // Explicitly delete to make sure they are not in response
+    delete config["META_ACCESS_TOKEN"];
+    delete config["meta_token"];
+
     res.json(config);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch settings" });
@@ -45,17 +51,77 @@ router.get("/", async (req, res) => {
 router.post("/", async (req, res) => {
   const { key, value } = req.body;
   if (!key) return res.status(400).json({ error: "Key is required" });
-  try {
-    await prisma.setting.upsert({
-      where: { key },
-      update: { value },
-      create: { key, value },
+
+  const normalizedKey = String(key).trim();
+
+  if (normalizedKey === "meta_token") {
+    return res.status(400).json({
+      success: false,
+      error: "LEGACY_META_TOKEN_WRITE_FORBIDDEN",
+      details: "meta_token is read-only legacy fallback. Use META_ACCESS_TOKEN."
     });
-    
+  }
+
+  try {
+    if (normalizedKey === "META_ACCESS_TOKEN") {
+      const token = String(value || "").trim();
+
+      if (!token) {
+        return res.status(400).json({ success: false, error: "TOKEN_REQUIRED" });
+      }
+
+      if (token.includes("...")) {
+        return res.status(400).json({ success: false, error: "MASKED_TOKEN_REJECTED" });
+      }
+
+      if (token.length < 20) {
+        return res.status(400).json({ success: false, error: "TOKEN_TOO_SHORT" });
+      }
+
+      const updatedAt = new Date().toISOString();
+
+      await prisma.$transaction([
+        prisma.setting.upsert({
+          where: { key: "META_ACCESS_TOKEN" },
+          update: { value: token },
+          create: { key: "META_ACCESS_TOKEN", value: token }
+        }),
+        prisma.setting.upsert({
+          where: { key: "META_TOKEN_UPDATED_AT" },
+          update: { value: updatedAt },
+          create: { key: "META_TOKEN_UPDATED_AT", value: updatedAt }
+        })
+      ]);
+
+      const saved = await prisma.setting.findUnique({
+        where: { key: "META_ACCESS_TOKEN" }
+      });
+
+      if (!saved?.value || saved.value.includes("...")) {
+        return res.status(500).json({
+          success: false,
+          error: "TOKEN_SAVE_READBACK_FAILED"
+        });
+      }
+
+      return res.json({
+        success: true,
+        key: "META_ACCESS_TOKEN",
+        hasMetaAccessToken: true,
+        metaTokenMasked: maskSecret(saved.value),
+        updatedAt
+      });
+    }
+
+    await prisma.setting.upsert({
+      where: { key: normalizedKey },
+      update: { value: String(value ?? "") },
+      create: { key: normalizedKey, value: String(value ?? "") }
+    });
+
     return res.json({
       success: true,
-      key,
-      syncTriggered: false,
+      key: normalizedKey
     });
   } catch (err: any) {
     console.error("[Save Token Error]:", err);
@@ -63,14 +129,14 @@ router.post("/", async (req, res) => {
       err.name === "PrismaClientInitializationError" ||
       err.message?.includes("Authentication failed")
     ) {
-      res
+      return res
         .status(500)
         .json({
           error:
             "数据库连接失败，请检查环境变量 DATABASE_URL 是否正确或密码是否已过期。",
         });
     } else {
-      res
+      return res
         .status(500)
         .json({
           error: "Failed to save setting",

@@ -496,11 +496,24 @@ router.post("/", async (req, res) => {
       message = "Store configuration created.";
     }
 
+    // Readback
+    const readbackStore = await prisma.store.findUnique({
+      where: { id: savedStore.id }
+    });
+
+    if (!readbackStore) {
+      return res.status(500).json({
+        success: false,
+        error: "READBACK_FAILED",
+        details: "Failed to read back the saved store configuration."
+      });
+    }
+
     return res.json({
       success: true,
       mode: responseMode,
-      store: sanitizeStore(savedStore),
-      id: savedStore.id,
+      store: sanitizeStore(readbackStore),
+      id: readbackStore.id,
       message,
       syncTriggered: false,
       warnings
