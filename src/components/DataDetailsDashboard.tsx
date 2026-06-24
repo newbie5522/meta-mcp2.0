@@ -123,6 +123,8 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const filteredAccounts = useMemo(() => {
     let list = [...(data.accounts || [])];
 
+    const isActiveAccount = (item: any) => (item.spend || 0) > 0;
+
     // 1. Apply Search
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
@@ -138,8 +140,8 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       // 有消耗账户: spend > 0
       list = list.filter(item => (item.spend || 0) > 0);
     } else if (statusFilter === "active") {
-      // 活跃账户: recentActivity90d equals true
-      list = list.filter(item => item.recentActivity90d === true);
+      // 活跃账户: spend > 0
+      list = list.filter(item => isActiveAccount(item));
     } else if (statusFilter === "unmapped") {
       // 未绑定店铺账户: isBound is false
       list = list.filter(item => !item.isBound);
@@ -396,7 +398,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
               statusFilter === "active" ? "bg-white text-slate-900 shadow-sm font-bold" : "hover:text-slate-900"
             )}
           >
-            活跃账户 ({data.accounts?.filter(a => a.recentActivity90d === true).length || 0})
+            活跃账户 ({data.summary?.activeAccounts ?? withSpendCount})
           </button>
           <button
             onClick={() => setStatusFilter("all")}
@@ -565,7 +567,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                           <div className="text-[10px] text-slate-400 truncate" title={row.timezone}>{row.timezone || "America/Los_Angeles"}</div>
                         </TableCell>
                         <TableCell className="text-center">
-                          {row.recentActivity90d || row.activityStatus === 1 ? (
+                          {(row.spend || 0) > 0 || row.activityStatus === 1 ? (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] font-semibold border border-emerald-100">
                               活跃
                             </span>

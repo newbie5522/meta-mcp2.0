@@ -194,6 +194,14 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
         }
       });
       setReconData(response.data);
+
+      if (response.data?.ledgerRefresh?.success) {
+        toast.success("订单校对完成，店铺账目已更新");
+      } else {
+        toast.warning("订单已抓取，但店铺账目刷新失败");
+      }
+
+      await fetchStoresData(true);
     } catch (error: any) {
       console.error("Failed to load store reconciliation details:", error);
       toast.error("未获取到校对明细: " + getApiErrorMessage(error));

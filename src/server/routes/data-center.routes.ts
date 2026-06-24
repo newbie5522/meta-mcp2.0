@@ -16,6 +16,7 @@ import { runDataPipelineAudit } from "../services/data-pipeline-audit.service.js
 import { runDataCenterAudit } from "../services/data-center-audit.service.js";
 import { runDataCenterRebuild } from "../services/data-center-rebuild.service.js";
 import { ensureDataCenterFreshness, getFreshnessMeta } from "../services/data-center-auto-refresh.service.js";
+import { refreshStoreDataCenterLedger } from "../services/datacenter-store-ledger.service.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -885,13 +886,19 @@ router.get("/stores", async (req, res) => {
   const storeId = req.query.storeId ? Number(req.query.storeId) : null;
 
   try {
-    const ledgerCount = await prisma.dataCenterStoreDaily.count({
-      where: {
-        date: {
-          gte: startDate,
-          lte: endDate
-        }
+    const ledgerWhere: any = {
+      date: {
+        gte: startDate,
+        lte: endDate
       }
+    };
+
+    if (storeId) {
+      ledgerWhere.storeId = storeId;
+    }
+
+    const ledgerCount = await prisma.dataCenterStoreDaily.count({
+      where: ledgerWhere
     });
     const freshnessMode = ledgerCount === 0 ? "blocking_if_missing" : "background";
 
@@ -1157,6 +1164,35 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       systemSalesAmount += uo.orderTotal;
     });
 
+    let ledgerRefreshResult: any = null;
+    try {
+      const refreshResult = await refreshStoreDataCenterLedger({
+        storeId: store.id,
+        startDate: startStr,
+        endDate: endStr
+      });
+      const recordsSaved = refreshResult.snapshots.length;
+      const orderCount = refreshResult.snapshots.reduce((sum, s) => sum + (s.orderCount || 0), 0);
+      const grossSales = Number(refreshResult.snapshots.reduce((sum, s) => sum + (s.grossSales || 0), 0).toFixed(2));
+
+      ledgerRefreshResult = {
+        success: true,
+        storeId: store.id,
+        startDate: startStr,
+        endDate: endStr,
+        recordsSaved,
+        orderCount,
+        grossSales,
+        source: "DataCenterStoreDaily"
+      };
+    } catch (err: any) {
+      console.error("[Reconciliation] Ledger refresh failed:", err);
+      ledgerRefreshResult = {
+        success: false,
+        error: err.message || "Failed to refresh ledger"
+      };
+    }
+
     res.json({
       startDate: startStr,
       endDate: endStr,
@@ -1176,7 +1212,8 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       utcStartDate: auditReport.utcStartDate,
       utcEndDate: auditReport.utcEndDate,
       platformUnsupported: false,
-      platformMessage: "自动直连平台 API 已完成深度对账审计，上面表格为原始详细订单链路状态。"
+      platformMessage: "自动直连平台 API 已完成深度对账审计，上面表格为原始详细订单链路状态。",
+      ledgerRefresh: ledgerRefreshResult
     });
 
   } catch (error: any) {
