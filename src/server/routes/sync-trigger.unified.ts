@@ -106,10 +106,6 @@ export class SyncLockManager {
         return { lockId: lock.id, acquired: true };
       });
     } catch (error: any) {
-      // Prisma P2002 = 唯一约束冲突
-      if (error.code === "P2002" || error.code === "SYNC_ALREADY_RUNNING") {
-        throw error;
-      }
       throw error;
     }
   }
