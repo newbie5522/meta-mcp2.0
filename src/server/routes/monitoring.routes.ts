@@ -69,7 +69,7 @@ router.get("/accounts", async (req, res) => {
     const activeAccounts = await prisma.factMetaPerformance.groupBy({
       by: ["account_id"],
       where: {
-        date: { gte: thirtyDaysAgoStr },
+        date: { gte: thirtyDaysAgo },
         spend: { gt: 0 },
         level: "account"
       },
@@ -85,8 +85,8 @@ router.get("/accounts", async (req, res) => {
       by: ["account_id"],
       where: {
         date: { 
-          gte: sevenDaysAgoStr,
-          lt: todayStr // 排除今天，取过去 7 个完整自然日的数据
+          gte: sevenDaysAgo,
+          lt: new Date() // 排除今天，取过去 7 个完整自然日的数据
         },
         level: "account"
       },
@@ -119,7 +119,7 @@ router.get("/accounts", async (req, res) => {
       let estimatedDays = null;
       if (avgDailySpend > 0) {
         if (realTimeBalance === Infinity) {
-          estimatedDays = Infinity;
+          estimatedDays = null;
         } else {
           // 可用天数 = 实际可用余额 (actualBalance) / 七日均消 (avgDailySpend)
           estimatedDays = Math.round(realTimeBalance / avgDailySpend);
