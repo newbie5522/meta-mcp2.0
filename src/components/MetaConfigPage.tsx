@@ -94,15 +94,9 @@ export function MetaConfigPage() {
   };
 
   const fetchAccountsAndTest = async () => {
-
     setLoadingAccounts(true);
     setApiError(null);
     setLastSyncError(null);
-
-    const isAutoDuringSave = isAutoDuringSaveRef.current;
-    if (isAutoDuringSave) {
-      setSaveStep('testing');
-    }
 
     try {
       // Step 1: Run diagnostics first (triggers identity /me endpoint verification)
@@ -110,10 +104,6 @@ export function MetaConfigPage() {
         // Continue but keep diagnostic error stored
         return null;
       });
-
-      if (isAutoDuringSave) {
-        setSaveStep('pulling');
-      }
 
       // Step 2: Grab the accounts list
       const res = await axios.get('/api/accounts/active-list');
@@ -137,14 +127,10 @@ export function MetaConfigPage() {
           } else if (accountsList.length === 0) {
             toast.warning("Token 验证成功，但没有拉取到广告账户，请检查 BM 资产分配 and ads_read 权限。");
           } else {
-            if (isAutoDuringSave) {
-              toast.success(`Meta Token 已保存，并成功拉取/注册 ${accountsList.length} 个广告账户。`);
-            } else {
-              toast.success(`成功拉取并注册了 ${accountsList.length} 个广告账户基础结构！`);
-            }
+            toast.success(`成功拉取并注册了 ${accountsList.length} 个广告账户基础结构！`);
           }
         } else {
-          toast.error("Token 验证或诊断失败，请检查网络和 API 权限状态。");
+          toast.error("Token 验证或诊断失败，请检查 network 和 API 权限状态。");
         }
       }
     } catch (err: any) {
@@ -159,18 +145,10 @@ export function MetaConfigPage() {
       }
       if (typeof errorMsg === "string" && /Meta Token|未配置|not configured/i.test(errorMsg)) {
         errorMsg = "请先保存 Meta Token";
-        setHasSavedToken(false);
-        setMaskedToken('');
-        setIsEditingToken(true);
       }
       setLastSyncError(errorMsg);
       toast.error(errorMsg);
     } finally {
-      if (isAutoDuringSave) {
-        setSaveStep('done');
-        setTimeout(() => setSaveStep('idle'), 2000);
-      }
-      isAutoDuringSaveRef.current = false;
       setLoadingAccounts(false);
     }
   };
@@ -207,17 +185,12 @@ export function MetaConfigPage() {
       setHasSavedToken(true);
       setIsEditingToken(false);
       toast.success("Meta Token 已保存");
-
-      fetchAccountsAndTest().catch((err) => {
-        console.warn("[MetaConfig] Background account refresh failed:", err);
-        toast.warning("Token 已保存，但广告账户拉取失败，请稍后手动刷新。");
-      });
     } catch (err: any) {
-      const errMsg = err.response?.data?.details || err.response?.data?.error || err.message || "Save failed";
-      toast.error(`Save failed: ${errMsg}`);
-      setSaveStep('idle');
+      const errMsg = err.response?.data?.details || err.response?.data?.error || err.message || "保存失败";
+      toast.error(`保存失败：${errMsg}`);
     } finally {
       setSaving(false);
+      setSaveStep('idle');
     }
   };
 
@@ -274,14 +247,10 @@ export function MetaConfigPage() {
               {isEditingToken ? (
                 <Button
                   onClick={handleSaveToken}
-                  disabled={saving || saveStep !== 'idle' || !token}
+                  disabled={saving || saveStep === 'saving' || !token.trim()}
                   className="px-6 h-10 bg-meta-blue hover:bg-meta-blue/90 text-white font-medium shadow-sm transition-all text-sm rounded-lg"
                 >
-                  {saveStep === 'saving' && "保存中..."}
-                  {saveStep === 'testing' && "验证中..."}
-                  {saveStep === 'pulling' && "拉取广告账户..."}
-                  {saveStep === 'done' && "完成"}
-                  {saveStep === 'idle' && "保存绑定"}
+                  {saveStep === 'saving' ? "保存中..." : "保存 Token"}
                 </Button>
               ) : (
                 <Button

@@ -114,7 +114,8 @@ export function StoreDetailsPage({
     shopify_token: "",
     shoplazza_token: "",
     domain: "",
-    timezone: "GMT+8",
+    timezone: "America/Los_Angeles",
+    mode: "production"
   });
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
@@ -261,20 +262,35 @@ export function StoreDetailsPage({
       
       const res = await axios.post("/api/stores", payload);
 
-      if (!res.data?.success || !res.data?.store?.id) {
-        throw new Error(res.data?.error || "保存后未返回店铺 ID");
+      if (!res.data?.success) {
+        throw new Error(res.data?.error || "保存失败");
       }
 
-      const savedId = Number(res.data.store.id);
-      const readback = await axios.get(`/api/stores/${savedId}`);
+      const savedId = Number(res.data.id || res.data.store?.id);
+      if (!savedId) {
+        throw new Error("保存后未返回店铺 ID");
+      }
 
-      if (!readback.data?.id) {
-        throw new Error("保存后读回失败");
+      let readbackData = res.data.store;
+      let readbackFailed = false;
+
+      try {
+        const readback = await axios.get(`/api/stores/${savedId}`);
+        if (readback.data && (readback.data.id || readback.data.name)) {
+          readbackData = readback.data;
+        } else {
+          readbackFailed = true;
+        }
+      } catch (readbackErr) {
+        console.error("Readback failed:", readbackErr);
+        readbackFailed = true;
       }
 
       setSavedStoreId(savedId);
-      setStoreData(readback.data);
-      
+      if (readbackData) {
+        setStoreData(readbackData);
+      }
+
       const mode = res.data.mode;
       let successMsg = "店铺保存成功";
       if (mode === "created") {
@@ -284,11 +300,16 @@ export function StoreDetailsPage({
       } else if (mode === "updated_existing_by_name") {
         successMsg = "已检测到同名店铺，已更新已有配置";
       }
-      toast.success(successMsg);
+
+      if (readbackFailed) {
+        toast.warning(`${successMsg}，但数据读回失败 (readback failed)。`);
+      } else {
+        toast.success(successMsg);
+      }
 
       if (isNew) {
         navigate(`/store/${savedId}`, { replace: true });
-      } else {
+      } else if (!readbackFailed) {
         fetchStore(savedId);
       }
     } catch (err: unknown) {

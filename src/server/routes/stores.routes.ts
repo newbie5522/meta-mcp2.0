@@ -906,29 +906,37 @@ router.post("/test-shopline-connection", async (req, res) => {
 });
 
 router.get("/:id", async (req, res) => {
-  const { id } = req.params;
   try {
-    const isNumeric = !isNaN(parseInt(id, 10)) && /^\d+$/.test(id);
-    let store;
-    if (isNumeric) {
-      store = await prisma.store.findUnique({
-        where: { id: parseInt(id, 10) },
-        include: { accounts: true },
-      });
-    } else {
-      store = await prisma.store.findFirst({
-        where: { name: { equals: id } },
-        include: { accounts: true },
+    const id = Number(req.params.id);
+
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: "INVALID_STORE_ID",
+        details: "Store id must be a positive number."
       });
     }
 
+    const store = await prisma.store.findUnique({
+      where: { id },
+      include: { accounts: true }
+    });
+
     if (!store) {
-      return res.status(404).json({ error: "Store not found" });
+      return res.status(404).json({
+        success: false,
+        error: "STORE_NOT_FOUND",
+        details: `Store not found: ${id}`
+      });
     }
 
     if (!isDemoDataEnabled()) {
       if (isFixtureStore(store)) {
-        return res.status(404).json({ error: "Store not found" });
+        return res.status(404).json({
+          success: false,
+          error: "STORE_NOT_FOUND",
+          details: `Store not found (fixture filtered): ${id}`
+        });
       }
     }
 
@@ -946,15 +954,16 @@ router.get("/:id", async (req, res) => {
     const sanitized = sanitizeStore(store);
     const timezoneDiagnostics = buildTimezoneDiagnostics(store, lastSyncLog);
 
-    // Static analysis contract check:
-    // res.json(sanitizeStore(store))
-
-    res.json({
+    return res.json({
       ...sanitized,
       timezoneDiagnostics
     });
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to fetch store" });
+    return res.status(500).json({
+      success: false,
+      error: "FAILED_TO_FETCH_STORE",
+      details: error.message
+    });
   }
 });
 
