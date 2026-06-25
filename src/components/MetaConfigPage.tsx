@@ -28,8 +28,8 @@ export function MetaConfigPage() {
   const [saving, setSaving] = useState(false);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
-  const [saveStep, setSaveStep] = useState<'idle' | 'saving' | 'testing' | 'pulling' | 'done'>('idle');
-  const isAutoDuringSaveRef = React.useRef(false);
+  const [tokenSaveStatus, setTokenSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const [accountRefreshStatus, setAccountRefreshStatus] = useState<'idle' | 'refreshing' | 'success' | 'failed'>('idle');
 
   // Diagnostics and testing state
   const [testResult, setTestResult] = useState<any>(null);
@@ -160,16 +160,20 @@ export function MetaConfigPage() {
 
   const handleSaveToken = async () => {
     const tokenToSave = token.trim();
+
     if (!tokenToSave) {
       toast.error("请输入有效的 Meta Token。");
       return;
     }
+
     if (tokenToSave.includes("...")) {
-      toast.error("请粘贴完整 Meta Token，不能保存已脱敏的 token。");
+      toast.error("不能保存脱敏 token。请粘贴完整 token。");
       return;
     }
+
     setSaving(true);
-    setSaveStep('saving');
+    setTokenSaveStatus("saving");
+
     try {
       const res = await axios.post("/api/settings", {
         key: "META_ACCESS_TOKEN",
@@ -184,13 +188,24 @@ export function MetaConfigPage() {
       setMaskedToken(res.data.metaTokenMasked || "");
       setHasSavedToken(true);
       setIsEditingToken(false);
+      setTokenSaveStatus("saved");
+
       toast.success("Meta Token 已保存");
+
+      setAccountRefreshStatus("refreshing");
+      fetchAccountsAndTest()
+        .then(() => setAccountRefreshStatus("success"))
+        .catch((err) => {
+          console.warn("[MetaConfig] auto account refresh failed:", err);
+          setAccountRefreshStatus("failed");
+          toast.warning("Token 已保存，但账户自动拉取失败，请手动点击拉取。");
+        });
     } catch (err: any) {
+      setTokenSaveStatus("failed");
       const errMsg = err.response?.data?.details || err.response?.data?.error || err.message || "保存失败";
       toast.error(`保存失败：${errMsg}`);
     } finally {
       setSaving(false);
-      setSaveStep('idle');
     }
   };
 
@@ -247,10 +262,10 @@ export function MetaConfigPage() {
               {isEditingToken ? (
                 <Button
                   onClick={handleSaveToken}
-                  disabled={saving || saveStep === 'saving' || !token.trim()}
+                  disabled={saving || tokenSaveStatus === 'saving' || !token.trim()}
                   className="px-6 h-10 bg-meta-blue hover:bg-meta-blue/90 text-white font-medium shadow-sm transition-all text-sm rounded-lg"
                 >
-                  {saveStep === 'saving' ? "保存中..." : "保存 Token"}
+                  {tokenSaveStatus === 'saving' ? "保存中..." : "保存 Token"}
                 </Button>
               ) : (
                 <Button
