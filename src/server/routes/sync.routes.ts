@@ -599,7 +599,8 @@ router.post("/sync/trigger", async (req, res, next) => {
 
       const summaryDays = range.days;
       const metaSummaryTaskId = await SyncCenter.rebuildMetaSummary(chainId, "frontend_safe_sync", lastTaskId, summaryDays);
-      await SyncCenter.rebuildDashboardSummary(chainId, "frontend_safe_sync", metaSummaryTaskId, summaryDays);
+      const roasTaskId2 = await SyncCenter.rebuildRoasSummary(chainId, "frontend_safe_sync", metaSummaryTaskId, summaryDays);
+      await SyncCenter.rebuildDashboardSummary(chainId, "frontend_safe_sync", roasTaskId2, summaryDays);
 
       const status = recordsFetched === 0 && recordsSaved === 0 ? "NO_NEW_DATA" : "SUCCESS";
       return res.json({
@@ -661,7 +662,8 @@ router.post("/sync/trigger", async (req, res, next) => {
 
       const summaryDays = range.days;
       const storeSummaryTaskId = await SyncCenter.rebuildStoreSummary(chainId, "frontend_safe_sync", lastTaskId, summaryDays);
-      await SyncCenter.rebuildDashboardSummary(chainId, "frontend_safe_sync", storeSummaryTaskId, summaryDays);
+      const roasTaskId1 = await SyncCenter.rebuildRoasSummary(chainId, "frontend_safe_sync", storeSummaryTaskId, summaryDays);
+      await SyncCenter.rebuildDashboardSummary(chainId, "frontend_safe_sync", roasTaskId1, summaryDays);
 
       const status = recordsFetched === 0 && recordsSaved === 0 ? "NO_NEW_DATA" : "SUCCESS";
       return res.json({
