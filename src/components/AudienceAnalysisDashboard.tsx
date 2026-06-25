@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React, { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { format } from "date-fns";
@@ -40,69 +39,6 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   const [countriesLoading, setCountriesLoading] = useState(false);
   const [countriesHealth, setCountriesHealth] = useState<any | null>(null);
 
-  // Syncing and backfilling states
-  const [syncing, setSyncing] = useState(false);
-  const [backfilling, setBackfilling] = useState(false);
-
-  // Sync audience breakdown action
-  const handleSyncAudienceBreakdown = async () => {
-    setSyncing(true);
-    const toastId = toast.loading("正在同步拉取 Meta 受众细分指标数据...");
-    try {
-      const startStr = format(startDate, "yyyy-MM-dd");
-      const endStr = format(endDate, "yyyy-MM-dd");
-      const res = await axios.post("/api/sync/meta-audience-breakdown", {
-        startDate: startStr,
-        endDate: endStr,
-        storeId: selectedStore === "all" ? undefined : Number(selectedStore),
-        dimensions: ["country", "age", "gender", "publisher_platform"],
-        includeUnmapped: true
-      });
-      if (res.data?.success) {
-        toast.success(`同步成功！拉取并入库了 ${res.data.recordsFetched || 0} 条细分受众指标。`, { id: toastId });
-        fetchAudienceInsights();
-      } else {
-        toast.error(`部分同步失败: ${res.data?.status || "PARTIAL"}`, { id: toastId });
-        fetchAudienceInsights();
-      }
-    } catch (err: any) {
-      console.error("Failed to sync meta audience breakdown:", err);
-      toast.error(`同步失败: ${err?.response?.data?.message || err.message}`, { id: toastId });
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  // Backfill/validate orders country action
-  const handleBackfillOrders = async () => {
-    if (selectedStore === "all") {
-      toast.warning("请在过滤器中选择具体店铺进行订单国别回填！");
-      return;
-    }
-    setBackfilling(true);
-    const toastId = toast.loading("正在重新解析并回填该店铺的订单国别属性...");
-    try {
-      const startStr = format(startDate, "yyyy-MM-dd");
-      const endStr = format(endDate, "yyyy-MM-dd");
-      const res = await axios.post("/api/sync/data-center/refresh-store", {
-        storeId: Number(selectedStore),
-        startDate: startStr,
-        endDate: endStr
-      });
-      if (res.data?.success) {
-        toast.success("成功完成店铺账目及订单收货国家回填刷新！", { id: toastId });
-        fetchAudienceInsights();
-      } else {
-        toast.error("账目回填未完全成功，请检查后台日志。", { id: toastId });
-      }
-    } catch (err: any) {
-      console.error("Failed to backfill and refresh store order country info:", err);
-      toast.error(`回填刷新失败: ${err?.response?.data?.message || err.message}`, { id: toastId });
-    } finally {
-      setBackfilling(false);
-    }
-  };
-  
   // Local/Backend Sorting
   const [sortBy, setSortBy] = useState<string>("spend");
 
@@ -333,19 +269,11 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     if (dataHealth?.reason === "META_AUDIENCE_BREAKDOWN_MISSING" || chartRows.length === 0) {
       return (
         <div className="h-64 flex flex-col items-center justify-center text-slate-400 bg-slate-50/50 rounded-xl border border-dashed border-slate-200 text-xs p-6 text-center">
-          <AlertTriangle className="w-8 h-8 text-amber-500 mb-2 animate-pulse" />
+          <AlertTriangle className="w-8 h-8 text-amber-500 mb-2" />
           <span className="font-bold text-slate-700 text-sm mb-1">受众细分数据未同步</span>
-          <p className="text-[11px] text-slate-500 max-w-sm mb-4">
-            当前日期范围内未检索到 Meta 交付受众、设备或版位细分数据，请点击下方按钮一键拉取。
+          <p className="text-[11px] text-slate-500 max-w-sm">
+            当前日期范围内未检索到 Meta 交付受众、设备或版位细分数据，请先运行同步。
           </p>
-          <button
-            onClick={handleSyncAudienceBreakdown}
-            disabled={syncing}
-            className="h-9 px-4 flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold rounded-lg text-xs shadow-xs active:scale-95 transition-all cursor-pointer"
-          >
-            {syncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-            一键启动 Meta 受众同步
-          </button>
         </div>
       );
     }
@@ -653,10 +581,10 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       )}
 
       {/* Visual Analytics Space */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-6">
         
         {/* Comparative Purchases vs Budget Column Chart */}
-        <Card className="lg:col-span-2 border-slate-200 shadow-sm">
+        <Card className="border-slate-200 shadow-sm">
           <CardHeader className="p-5 border-b pb-4">
             <div className="flex flex-col gap-1">
               <CardTitle className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
@@ -673,30 +601,6 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
           <CardContent className="p-5">
             <div className="h-[280px] w-full">
               {renderChart()}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Visual Info Block cards */}
-        <Card className="border-slate-200 shadow-sm flex flex-col justify-between">
-          <CardHeader className="p-5 border-b pb-4">
-            <CardTitle className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-emerald-500" />
-              受众决策分析小技巧 (Operational Guidance)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-5 flex-1 flex flex-col gap-4 text-xs text-slate-600 justify-center">
-            <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-lg">
-              <strong className="text-indigo-900 font-semibold block mb-1">1. 谁值得扩量？</strong>
-              <span>点击「Meta ROAS」表头，筛选出 ROAS 比值大于 1.5 且具有起量空间的受众特征，点击操作中的「问 AI」规划扩量方案。</span>
-            </div>
-            <div className="p-3 bg-rose-50/50 border border-rose-100 rounded-lg">
-              <strong className="text-rose-900 font-semibold block mb-1">2. 谁在浪费预算？</strong>
-              <span>点击「花费」表头降序排列，排查高花费但 purchases 为 0 或者是 ROAS 低于 0.5 的特定版位或设备特征，考虑予以独立排除设置。</span>
-            </div>
-            <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-lg">
-              <strong className="text-emerald-900 font-semibold block mb-1">3. 人群画像精细交叉</strong>
-              <span>本受众看板数据直接来自底表 FactAudienceBreakdown。绝对真实可靠，彻底消灭 Female 55% / Male 45% 的随机乱套数据。</span>
             </div>
           </CardContent>
         </Card>
@@ -729,19 +633,11 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
             </div>
           ) : (dataHealth?.reason === "META_AUDIENCE_BREAKDOWN_MISSING" || tableRows.length === 0) ? (
             <div className="p-16 text-center text-slate-500 bg-slate-50/20 rounded-xl my-4 flex flex-col items-center justify-center max-w-lg mx-auto">
-              <AlertTriangle className="w-8 h-8 text-amber-500 mb-2 animate-pulse" />
+              <AlertTriangle className="w-8 h-8 text-amber-500 mb-2" />
               <p className="text-xs font-bold text-slate-700">受众细分数据未同步</p>
-              <p className="text-[11px] text-slate-400 mt-1 mb-4">
-                当前周期或店铺筛选范围内未同步 Meta 受众细分底层数据，请点击下方按钮直接启动同步：
+              <p className="text-[11px] text-slate-400 mt-1">
+                当前周期或店铺筛选范围内未同步 Meta 受众细分底层数据，请先在「同步管理中心」运行同步。
               </p>
-              <button
-                onClick={handleSyncAudienceBreakdown}
-                disabled={syncing}
-                className="h-9 px-4 flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold rounded-lg text-xs shadow-xs active:scale-[0.98] transition-all cursor-pointer"
-              >
-                {syncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                一键同步 Meta 受众细分
-              </button>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -903,19 +799,11 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
               </div>
             ) : (countriesHealth?.status === "ORDER_COUNTRY_BACKFILL_REQUIRED" || orderCountryRows.length === 0) ? (
               <div className="p-12 text-center text-slate-500 bg-slate-50/20 rounded-xl my-4 flex flex-col items-center justify-center max-w-lg mx-auto border border-dashed border-amber-200">
-                <AlertTriangle className="w-8 h-8 text-amber-500 mb-2 animate-pulse" />
+                <AlertTriangle className="w-8 h-8 text-amber-500 mb-2" />
                 <p className="text-xs font-bold text-slate-700">订单国家/地区属性需要回填/校验</p>
-                <p className="text-[11px] text-slate-400 mt-1 mb-4">
-                  主站交易订单存在收货/账单国家解析为空的情况，需要运行账目刷新回填与别名映射校验。
+                <p className="text-[11px] text-slate-400 mt-1">
+                  主站交易订单存在收货/账单国家解析为空的情况，需要运行账目刷新回填与别名映射校验，请先在「数据中心」或「同步中心」执行相关操作。
                 </p>
-                <button
-                  onClick={handleBackfillOrders}
-                  disabled={backfilling}
-                  className="h-9 px-4 flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-bold rounded-lg text-xs shadow-xs active:scale-[0.98] transition-all cursor-pointer"
-                >
-                  {backfilling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <SlidersHorizontal className="w-3.5 h-3.5" />}
-                  立即执行回填与账目校验
-                </button>
               </div>
             ) : (
               <div className="overflow-x-auto">

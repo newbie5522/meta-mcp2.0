@@ -9,44 +9,26 @@ async function runSmokeAudienceChain() {
   console.log("🚀 Starting Audience & Country Data Chain Smoke Test...\n");
 
   try {
-    // 1. Ensure test store and orders exist
-    let store = await prisma.store.findFirst();
+    // 1. Read existing store
+    const store = await prisma.store.findFirst();
     if (!store) {
-      console.log("⚠️ No stores found in database, creating a test store...");
-      store = await prisma.store.create({
-        data: {
-          name: "Smoke Audience Store",
-          platform: "shopline",
-          domain: "smoke-audience.shoplineapp.com",
-          timezone: "America/Los_Angeles",
-          mode: "sandbox",
-          shopline_token: "mock-shopline-token-for-audience-smoke"
-        }
-      });
-      console.log(`✅ Created test store with ID: ${store.id}`);
+      console.log("PARTIAL_NO_EXISTING_DATA");
+      return;
     }
 
     const storeId = store.id;
 
-    // Ensure we have at least one test order with country info
-    const testOrderId = "smoke-aud-order-7777";
-    let order = await prisma.order.findFirst({ where: { orderId: testOrderId } });
+    // Read existing order
+    const order = await prisma.order.findFirst({
+      where: { storeId }
+    });
     if (!order) {
-      order = await prisma.order.create({
-        data: {
-          id: testOrderId,
-          orderId: testOrderId,
-          storeId,
-          productId: "smoke-product-id",
-          orderTotal: 199.99,
-          store_local_date: TEST_END_DATE,
-          paymentStatus: "paid",
-          shippingCountryCode: "US",
-          billingCountryCode: "US"
-        }
-      });
-      console.log(`✅ Created test order ${order.orderId} with shippingCountryCode: ${order.shippingCountryCode}`);
+      console.log("PARTIAL_NO_EXISTING_DATA");
+      return;
     }
+
+    console.log(`✅ Found existing store ID: ${storeId}`);
+    console.log(`✅ Found existing order ID: ${order.orderId}`);
 
     // 2. Trigger the audience sync API
     console.log("📡 Triggering audience breakdown sync via POST /api/sync/meta-audience-breakdown...");
