@@ -28,6 +28,7 @@
     "rebuild:store-ledger": "tsx src/server/scripts/rebuild-store-ledger.ts",
     "backfill:order-country": "tsx src/server/scripts/backfill-order-country-fields.ts",
     "smoke:menu-chain": "tsx src/server/scripts/smoke-menu-data-chain.ts",
+    "smoke:audience-chain": "tsx src/server/scripts/smoke-audience-chain.ts",
     "assert:data-contract": "tsx assert-data-contract-lock.ts"
   },
   "dependencies": {

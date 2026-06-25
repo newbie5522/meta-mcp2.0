@@ -275,6 +275,47 @@ export async function runDataCenterAudit(params: {
   const audPurchaseValue = canonicalAudRows.reduce((s, r) => s + (r.purchase_value || 0), 0);
   const audLatestDate = audienceRows.map(r => r.date).sort().reverse()[0] || null;
 
+  // Calculate country order stats for audit
+  const uniqueKnownCountryOrderIds = new Set<string>();
+  const uniqueUnknownCountryOrderIds = new Set<string>();
+
+  const ordersGroupedByIdForCountry = new Map<string, any[]>();
+  for (const r of orderRows) {
+    const oId = String(r.orderId || r.id);
+    if (!ordersGroupedByIdForCountry.has(oId)) {
+      ordersGroupedByIdForCountry.set(oId, []);
+    }
+    ordersGroupedByIdForCountry.get(oId)!.push(r);
+  }
+
+  for (const [oId, rows] of ordersGroupedByIdForCountry.entries()) {
+    let hasKnownCountry = false;
+    for (const r of rows) {
+      if (r.shippingCountryCode && r.shippingCountryCode.trim() !== "" && r.shippingCountryCode.trim().toUpperCase() !== "UNKNOWN") {
+        hasKnownCountry = true;
+        break;
+      }
+    }
+    if (!hasKnownCountry) {
+      for (const r of rows) {
+        if (r.billingCountryCode && r.billingCountryCode.trim() !== "" && r.billingCountryCode.trim().toUpperCase() !== "UNKNOWN") {
+          hasKnownCountry = true;
+          break;
+        }
+      }
+    }
+    if (hasKnownCountry) {
+      uniqueKnownCountryOrderIds.add(oId);
+    } else {
+      uniqueUnknownCountryOrderIds.add(oId);
+    }
+  }
+
+  const orderKnownCountryOrders = uniqueKnownCountryOrderIds.size;
+  const orderUnknownCountryOrders = uniqueUnknownCountryOrderIds.size;
+  const totalCountryOrders = orderKnownCountryOrders + orderUnknownCountryOrders;
+  const knownCountryRate = totalCountryOrders > 0 ? Number((orderKnownCountryOrders / totalCountryOrders).toFixed(4)) : 0;
+
   // 4. Mapping stats
   const storesCount = stores.length;
   const productionStoresCount = stores.filter(s =>
@@ -562,6 +603,13 @@ export async function runDataCenterAudit(params: {
       }
     },
     audience: {
+      factRows: audienceRows.length,
+      countryRows: audCountryRows.length,
+      ageRows: audAgeRows.length,
+      genderRows: audGenderRows.length,
+      publisherPlatformRows: audPlatformRows.length,
+      latestDate: audLatestDate,
+      status: audienceRows.length === 0 ? "META_AUDIENCE_BREAKDOWN_MISSING" : "OK",
       factAudienceBreakdown: {
         rows: audienceRows.length,
         countryRows: audCountryRows.length,
@@ -573,6 +621,12 @@ export async function runDataCenterAudit(params: {
         purchaseValue: audPurchaseValue,
         latestDate: audLatestDate
       }
+    },
+    country: {
+      orderKnownCountryOrders,
+      orderUnknownCountryOrders,
+      knownCountryRate,
+      status: (orderRows.length > 0 && orderKnownCountryOrders === 0) ? "ORDER_COUNTRY_BACKFILL_REQUIRED" : "OK"
     },
     mapping: {
       storesCount,

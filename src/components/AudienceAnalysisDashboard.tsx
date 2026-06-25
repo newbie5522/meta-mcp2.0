@@ -39,6 +39,69 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   const [orderCountryRows, setOrderCountryRows] = useState<any[]>([]);
   const [countriesLoading, setCountriesLoading] = useState(false);
   const [countriesHealth, setCountriesHealth] = useState<any | null>(null);
+
+  // Syncing and backfilling states
+  const [syncing, setSyncing] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
+
+  // Sync audience breakdown action
+  const handleSyncAudienceBreakdown = async () => {
+    setSyncing(true);
+    const toastId = toast.loading("正在同步拉取 Meta 受众细分指标数据...");
+    try {
+      const startStr = format(startDate, "yyyy-MM-dd");
+      const endStr = format(endDate, "yyyy-MM-dd");
+      const res = await axios.post("/api/sync/meta-audience-breakdown", {
+        startDate: startStr,
+        endDate: endStr,
+        storeId: selectedStore === "all" ? undefined : Number(selectedStore),
+        dimensions: ["country", "age", "gender", "publisher_platform"],
+        includeUnmapped: true
+      });
+      if (res.data?.success) {
+        toast.success(`同步成功！拉取并入库了 ${res.data.recordsFetched || 0} 条细分受众指标。`, { id: toastId });
+        fetchAudienceInsights();
+      } else {
+        toast.error(`部分同步失败: ${res.data?.status || "PARTIAL"}`, { id: toastId });
+        fetchAudienceInsights();
+      }
+    } catch (err: any) {
+      console.error("Failed to sync meta audience breakdown:", err);
+      toast.error(`同步失败: ${err?.response?.data?.message || err.message}`, { id: toastId });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Backfill/validate orders country action
+  const handleBackfillOrders = async () => {
+    if (selectedStore === "all") {
+      toast.warning("请在过滤器中选择具体店铺进行订单国别回填！");
+      return;
+    }
+    setBackfilling(true);
+    const toastId = toast.loading("正在重新解析并回填该店铺的订单国别属性...");
+    try {
+      const startStr = format(startDate, "yyyy-MM-dd");
+      const endStr = format(endDate, "yyyy-MM-dd");
+      const res = await axios.post("/api/sync/data-center/refresh-store", {
+        storeId: Number(selectedStore),
+        startDate: startStr,
+        endDate: endStr
+      });
+      if (res.data?.success) {
+        toast.success("成功完成店铺账目及订单收货国家回填刷新！", { id: toastId });
+        fetchAudienceInsights();
+      } else {
+        toast.error("账目回填未完全成功，请检查后台日志。", { id: toastId });
+      }
+    } catch (err: any) {
+      console.error("Failed to backfill and refresh store order country info:", err);
+      toast.error(`回填刷新失败: ${err?.response?.data?.message || err.message}`, { id: toastId });
+    } finally {
+      setBackfilling(false);
+    }
+  };
   
   // Local/Backend Sorting
   const [sortBy, setSortBy] = useState<string>("spend");
@@ -267,10 +330,22 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       );
     }
 
-    if (chartRows.length === 0) {
+    if (dataHealth?.reason === "META_AUDIENCE_BREAKDOWN_MISSING" || chartRows.length === 0) {
       return (
-        <div className="h-64 flex flex-col items-center justify-center text-slate-400 bg-slate-50/50 rounded-xl border border-dashed border-slate-200 text-xs">
-          <span>当前日期范围内暂无受众数据，无法渲染图表对比</span>
+        <div className="h-64 flex flex-col items-center justify-center text-slate-400 bg-slate-50/50 rounded-xl border border-dashed border-slate-200 text-xs p-6 text-center">
+          <AlertTriangle className="w-8 h-8 text-amber-500 mb-2 animate-pulse" />
+          <span className="font-bold text-slate-700 text-sm mb-1">受众细分数据未同步</span>
+          <p className="text-[11px] text-slate-500 max-w-sm mb-4">
+            当前日期范围内未检索到 Meta 交付受众、设备或版位细分数据，请点击下方按钮一键拉取。
+          </p>
+          <button
+            onClick={handleSyncAudienceBreakdown}
+            disabled={syncing}
+            className="h-9 px-4 flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold rounded-lg text-xs shadow-xs active:scale-95 transition-all cursor-pointer"
+          >
+            {syncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            一键启动 Meta 受众同步
+          </button>
         </div>
       );
     }
@@ -652,13 +727,21 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
               <Loader2 className="w-6 h-6 animate-spin text-indigo-500 mb-2" />
               <p className="text-xs font-semibold">分析引擎智能计算中...</p>
             </div>
-          ) : tableRows.length === 0 ? (
+          ) : (dataHealth?.reason === "META_AUDIENCE_BREAKDOWN_MISSING" || tableRows.length === 0) ? (
             <div className="p-16 text-center text-slate-500 bg-slate-50/20 rounded-xl my-4 flex flex-col items-center justify-center max-w-lg mx-auto">
               <AlertTriangle className="w-8 h-8 text-amber-500 mb-2 animate-pulse" />
-              <p className="text-xs font-bold text-slate-700">当前筛选周期或店铺范围内暂无物理受众数据</p>
-              <p className="text-[11px] text-slate-400 mt-1">
-                请先前往「同步管理中心」启动 Meta 受众指标同步任务。
+              <p className="text-xs font-bold text-slate-700">受众细分数据未同步</p>
+              <p className="text-[11px] text-slate-400 mt-1 mb-4">
+                当前周期或店铺筛选范围内未同步 Meta 受众细分底层数据，请点击下方按钮直接启动同步：
               </p>
+              <button
+                onClick={handleSyncAudienceBreakdown}
+                disabled={syncing}
+                className="h-9 px-4 flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold rounded-lg text-xs shadow-xs active:scale-[0.98] transition-all cursor-pointer"
+              >
+                {syncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                一键同步 Meta 受众细分
+              </button>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -818,10 +901,21 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                 <Loader2 className="w-6 h-6 animate-spin text-emerald-500 mb-2" />
                 <p className="text-xs font-semibold">主站订单国家数据分析中...</p>
               </div>
-            ) : orderCountryRows.length === 0 ? (
-              <div className="p-8 text-center text-slate-500 bg-slate-50/20 rounded-xl my-4 flex flex-col items-center justify-center max-w-lg mx-auto">
-                <AlertTriangle className="w-6 h-6 text-amber-500 mb-1" />
-                <p className="text-xs font-semibold font-bold text-slate-700">订单国家数据未完成回填</p>
+            ) : (countriesHealth?.status === "ORDER_COUNTRY_BACKFILL_REQUIRED" || orderCountryRows.length === 0) ? (
+              <div className="p-12 text-center text-slate-500 bg-slate-50/20 rounded-xl my-4 flex flex-col items-center justify-center max-w-lg mx-auto border border-dashed border-amber-200">
+                <AlertTriangle className="w-8 h-8 text-amber-500 mb-2 animate-pulse" />
+                <p className="text-xs font-bold text-slate-700">订单国家/地区属性需要回填/校验</p>
+                <p className="text-[11px] text-slate-400 mt-1 mb-4">
+                  主站交易订单存在收货/账单国家解析为空的情况，需要运行账目刷新回填与别名映射校验。
+                </p>
+                <button
+                  onClick={handleBackfillOrders}
+                  disabled={backfilling}
+                  className="h-9 px-4 flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-bold rounded-lg text-xs shadow-xs active:scale-[0.98] transition-all cursor-pointer"
+                >
+                  {backfilling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <SlidersHorizontal className="w-3.5 h-3.5" />}
+                  立即执行回填与账目校验
+                </button>
               </div>
             ) : (
               <div className="overflow-x-auto">

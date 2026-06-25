@@ -672,12 +672,34 @@ router.get("/audience", async (req, res) => {
 
     let healthStatus: "READY" | "PARTIAL" | "EMPTY" | "FAILED" = "READY";
     if (paginatedRows.length === 0) {
-      healthStatus = "EMPTY";
+      return res.json({
+        success: true,
+        data: [],
+        rows: [],
+        summary: {
+          totalSpend: 0,
+          totalImpressions: 0,
+          totalClicks: 0,
+          totalPurchases: 0,
+          totalPurchaseValue: 0,
+          ctr: 0,
+          cpc: 0,
+          cpm: 0,
+          cpa: 0,
+          roas: 0
+        },
+        dataHealth: {
+          status: "EMPTY",
+          reason: "META_AUDIENCE_BREAKDOWN_MISSING"
+        }
+      });
     } else if (missing.length > 0 || warnings.length > 0) {
       healthStatus = "PARTIAL";
     }
 
     res.json({
+      success: true,
+      data: paginatedRows,
       rows: paginatedRows,
       summary,
       filters: {

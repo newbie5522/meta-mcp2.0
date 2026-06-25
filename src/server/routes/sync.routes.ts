@@ -12,6 +12,7 @@ import { syncMetaAccountSpendRealtime } from "../services/meta-realtime-sync.ser
 import { getStoreOrderSummary } from "../services/order-fact.service.js";
 import { refreshStoreDataCenterLedger } from "../services/datacenter-store-ledger.service.js";
 import { refreshMetaDataCenterLedger } from "../services/datacenter-meta-ledger.service.js";
+import { syncMetaAudienceBreakdown } from "../services/meta-audience-breakdown-sync.service.js";
 
 const router = Router();
 
@@ -1182,6 +1183,37 @@ router.get("/sync/stores/:storeId/reconcile", requireManualSyncEnabled, async (r
   } catch (err: any) {
     console.error(`Reconcile store orders error (ID: ${storeId}):`, err);
     res.status(500).json({ error: "Failed to perform order reconciliation", details: err?.message || String(err) });
+  }
+});
+
+router.post("/sync/meta-audience-breakdown", async (req, res) => {
+  try {
+    const { startDate, endDate, storeId, dimensions, includeUnmapped } = req.body;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: "MISSING_DATE_RANGE",
+        message: "startDate and endDate are required."
+      });
+    }
+
+    const result = await syncMetaAudienceBreakdown({
+      startDate,
+      endDate,
+      storeId: storeId ? Number(storeId) : null,
+      dimensions,
+      includeUnmapped: includeUnmapped === undefined ? true : (includeUnmapped === true || includeUnmapped === "true")
+    });
+
+    return res.json(result);
+  } catch (error: any) {
+    console.error("[Sync Routes] Meta audience breakdown sync error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "META_AUDIENCE_BREAKDOWN_SYNC_FAILED",
+      message: error?.message || String(error)
+    });
   }
 });
 
