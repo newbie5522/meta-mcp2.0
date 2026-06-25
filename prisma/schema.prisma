@@ -284,10 +284,16 @@ model DailySummary {
   @@unique([scope, scopeId, date])
 }
 
+// ============================================================
+// SyncLog - 同步任务日志
+// 新增字段与约束（支持 sync-trigger.unified.ts 的竞态锁机制）
+// ============================================================
 model SyncLog {
   id             String    @id @default(cuid())
-  type           String
-  status         String    @default("pending")
+  taskChainId    String    @default("")
+  taskType       String    @default("")
+  type           String    @default("sync_task") // "sync_lock" | "sync_task" | "lock_acquisition"
+  status         String    @default("pending")   // "running" | "success" | "failed" | "pending"
   storeId        Int?
   adAccountId    String?
   startedAt      DateTime  @default(now())
@@ -296,14 +302,23 @@ model SyncLog {
   rangeEnd       DateTime?
   recordsFetched Int       @default(0)
   recordsSaved   Int       @default(0)
+  error          String?
   errorMessage   String?
-  metadata       String?
-  taskType       String?
   sourceType     String?
   fbtraceId      String?
   triggeredBy    String?
-  taskChainId    String?
-  error          String?
+  metadata       String?
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // ✅ 关键约束：防止同一 taskType 有多个并发 running 的任务
+  // 数据库会自动拒绝插入第二条 (taskType, "running") 的记录
+  @@unique([taskType, status])
+
+  @@index([status])
+  @@index([taskType])
+  @@index([taskChainId])
 }
 
 model AiProviderSetting {
@@ -392,7 +407,7 @@ model FactAudienceBreakdown {
   synced_at                  DateTime @default(now())
   raw_payload                String?
 
-  @@unique([date, level, account_id, dimension_type, dimension_value, dimension_value_secondary, campaign_id, adset_id, ad_id], name: "date_level_account_id_dimension_type_dimension_value_dimension_value_secondary_campaign_id_adset_id_ad_id")
+  @@unique([date, level, account_id, dimension_type, dimension_value, dimension_value_secondary, campaign_id, adset_id, ad_id], name: "date_level_account_id_dimension_type_dimension_value_dimensi_key")
   @@index([account_id])
   @@index([date])
 }
