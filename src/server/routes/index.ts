@@ -15,6 +15,7 @@ import aiRoutes from "./ai.routes.js";
 
 import dashboardRoutes from "./dashboard.routes.js";
 import dataCenterRoutes from "./data-center.routes.js";
+import dataCenterRefreshRoutes from "./data-center-refresh.routes.js";
 import systemRoutes from "./system.routes.js";
 
 const router = Router();
@@ -31,6 +32,7 @@ router.use("/diagnostics", diagnosticsRoutes);
 router.use("/ai", aiRoutes);
 router.use("/accounts", accountsRoutes);
 router.use("/", syncRoutes);
+router.use("/sync", dataCenterRefreshRoutes);
 router.use("/settings", settingsRoutes);
 router.use("/mappings", mappingsRoutes);
 router.use("/monitoring", monitoringRoutes);
