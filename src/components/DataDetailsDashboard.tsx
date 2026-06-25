@@ -23,6 +23,8 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
+import { useNavigate } from "react-router-dom";
+
 interface DataDetailsDashboardProps {
   startDate: Date;
   endDate: Date;
@@ -41,6 +43,7 @@ function getApiErrorMessage(error: any): string {
 }
 
 export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboardProps) {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>({
     metaInsights: [],
@@ -210,7 +213,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const handleViewHierarchy = (accountId: string) => {
     const startStr = format(startDate, "yyyy-MM-dd");
     const endStr = format(endDate, "yyyy-MM-dd");
-    window.location.href = `/data-center/ad-hierarchy?accountId=${accountId}&startDate=${startStr}&endDate=${endStr}`;
+    navigate(`/?tab=data-campaigns&accountId=${accountId}&startDate=${startStr}&endDate=${endStr}`);
   };
 
   const allAccountsCount = data.accountsInventoryCount ?? data.summary?.totalAccounts ?? data.accounts?.length ?? 0;

@@ -1870,7 +1870,35 @@ router.get("/ad-hierarchy/accounts", async (req, res) => {
 
     results.sort((a, b) => b.spend - a.spend);
 
-    res.json({ success: true, data: results });
+    let reason = "OK";
+    if (results.length === 0) {
+      if (adAccounts.length === 0) {
+        reason = "NO_STRUCTURE_ROWS";
+      } else if (performanceRows.length === 0) {
+        reason = "NO_FACT_LEVEL_ROWS";
+      } else if (!showAll) {
+        reason = "FILTER_ZERO_SPEND_HIDDEN";
+      } else {
+        reason = "NO_FACT_LEVEL_ROWS";
+      }
+    }
+
+    res.json({
+      success: true,
+      data: results,
+      dataHealth: {
+        status: results.length === 0 ? "EMPTY" : "READY",
+        level: "account",
+        reason,
+        factRows: performanceRows.length,
+        structureRows: adAccounts.length,
+        dateRange: {
+          startDate: startStr,
+          endDate: endStr
+        },
+        accountId: ""
+      }
+    });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to list hierarchy accounts", details: error.message });
   }
@@ -1890,12 +1918,13 @@ router.get("/ad-hierarchy/campaigns", async (req, res) => {
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
     const showAll = includeZeroSpend === "true";
     const normAccountId = normalizeMetaAccountId(String(accountId));
+    const numericAccountId = normAccountId.replace(/^act_/, "");
 
     // 1. Fetch performance rows
     const performanceRows = await prisma.factMetaPerformance.findMany({
       where: {
         level: "campaign",
-        account_id: normAccountId,
+        account_id: { in: [normAccountId, numericAccountId] },
         date: { gte: startStr, lte: endStr }
       }
     });
@@ -1991,7 +2020,37 @@ router.get("/ad-hierarchy/campaigns", async (req, res) => {
 
     results.sort((a, b) => b.spend - a.spend);
 
-    res.json({ success: true, data: results });
+    let reason = "OK";
+    if (results.length === 0) {
+      if (!accountId || String(accountId) === "undefined") {
+        reason = "ACCOUNT_ID_FORMAT_MISMATCH";
+      } else if (structuralCamps.length === 0) {
+        reason = "NO_STRUCTURE_ROWS";
+      } else if (performanceRows.length === 0) {
+        reason = "NO_FACT_LEVEL_ROWS";
+      } else if (!showAll) {
+        reason = "FILTER_ZERO_SPEND_HIDDEN";
+      } else {
+        reason = "NO_FACT_LEVEL_ROWS";
+      }
+    }
+
+    res.json({
+      success: true,
+      data: results,
+      dataHealth: {
+        status: results.length === 0 ? "EMPTY" : "READY",
+        level: "campaign",
+        reason,
+        factRows: performanceRows.length,
+        structureRows: structuralCamps.length,
+        dateRange: {
+          startDate: startStr,
+          endDate: endStr
+        },
+        accountId: normAccountId
+      }
+    });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to load hierarchy campaigns", details: error.message });
   }
@@ -2011,12 +2070,13 @@ router.get("/ad-hierarchy/adsets", async (req, res) => {
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
     const showAll = includeZeroSpend === "true";
     const normAccountId = normalizeMetaAccountId(String(accountId));
+    const numericAccountId = normAccountId.replace(/^act_/, "");
 
     // 1. Fetch performance rows
     const performanceRows = await prisma.factMetaPerformance.findMany({
       where: {
         level: "adset",
-        account_id: normAccountId,
+        account_id: { in: [normAccountId, numericAccountId] },
         campaign_id: String(campaignId),
         date: { gte: startStr, lte: endStr }
       }
@@ -2115,7 +2175,39 @@ router.get("/ad-hierarchy/adsets", async (req, res) => {
 
     results.sort((a, b) => b.spend - a.spend);
 
-    res.json({ success: true, data: results });
+    let reason = "OK";
+    if (results.length === 0) {
+      if (!accountId || String(accountId) === "undefined") {
+        reason = "ACCOUNT_ID_FORMAT_MISMATCH";
+      } else if (!campaign) {
+        reason = "CAMPAIGN_ID_MISMATCH";
+      } else if (structuralAdsets.length === 0) {
+        reason = "NO_STRUCTURE_ROWS";
+      } else if (performanceRows.length === 0) {
+        reason = "NO_FACT_LEVEL_ROWS";
+      } else if (!showAll) {
+        reason = "FILTER_ZERO_SPEND_HIDDEN";
+      } else {
+        reason = "NO_FACT_LEVEL_ROWS";
+      }
+    }
+
+    res.json({
+      success: true,
+      data: results,
+      dataHealth: {
+        status: results.length === 0 ? "EMPTY" : "READY",
+        level: "adset",
+        reason,
+        factRows: performanceRows.length,
+        structureRows: structuralAdsets.length,
+        dateRange: {
+          startDate: startStr,
+          endDate: endStr
+        },
+        accountId: normAccountId
+      }
+    });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to load hierarchy adsets", details: error.message });
   }
@@ -2135,12 +2227,13 @@ router.get("/ad-hierarchy/ads", async (req, res) => {
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
     const showAll = includeZeroSpend === "true";
     const normAccountId = normalizeMetaAccountId(String(accountId));
+    const numericAccountId = normAccountId.replace(/^act_/, "");
 
     // 1. Fetch performance rows
     const performanceRows = await prisma.factMetaPerformance.findMany({
       where: {
         level: "ad",
-        account_id: normAccountId,
+        account_id: { in: [normAccountId, numericAccountId] },
         adset_id: String(adsetId),
         date: { gte: startStr, lte: endStr }
       }
@@ -2248,7 +2341,39 @@ router.get("/ad-hierarchy/ads", async (req, res) => {
 
     results.sort((a, b) => b.spend - a.spend);
 
-    res.json({ success: true, data: results });
+    let reason = "OK";
+    if (results.length === 0) {
+      if (!accountId || String(accountId) === "undefined") {
+        reason = "ACCOUNT_ID_FORMAT_MISMATCH";
+      } else if (!adset) {
+        reason = "ADSET_ID_MISMATCH";
+      } else if (structuralAds.length === 0) {
+        reason = "NO_STRUCTURE_ROWS";
+      } else if (performanceRows.length === 0) {
+        reason = "NO_FACT_LEVEL_ROWS";
+      } else if (!showAll) {
+        reason = "FILTER_ZERO_SPEND_HIDDEN";
+      } else {
+        reason = "NO_FACT_LEVEL_ROWS";
+      }
+    }
+
+    res.json({
+      success: true,
+      data: results,
+      dataHealth: {
+        status: results.length === 0 ? "EMPTY" : "READY",
+        level: "ad",
+        reason,
+        factRows: performanceRows.length,
+        structureRows: structuralAds.length,
+        dateRange: {
+          startDate: startStr,
+          endDate: endStr
+        },
+        accountId: normAccountId
+      }
+    });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to load hierarchy ads", details: error.message });
   }

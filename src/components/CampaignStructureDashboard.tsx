@@ -45,6 +45,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
 
   const [data, setData] = useState<any[]>([]);
+  const [dataHealth, setDataHealth] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
   // Manage initial load with URL parameters (deep linkage from Account Performance page or Creative Insights tab)
@@ -104,8 +105,10 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
       const res = await axios.get(url, { params });
       if (res.data && res.data.success) {
         setData(res.data.data || []);
+        setDataHealth(res.data.dataHealth || null);
       } else {
         setData([]);
+        setDataHealth(null);
       }
     } catch (e: any) {
       console.error("Failed to fetch ad hierarchy details:", e);
@@ -592,11 +595,33 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                   {sortedData.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={viewLevel === "ads" ? 15 : 14} className="text-center py-20 text-gray-500">
-                        <div className="flex flex-col items-center justify-center max-w-md mx-auto bg-slate-50 p-6 rounded-2xl border border-slate-200">
+                        <div className="flex flex-col items-center justify-center max-w-xl mx-auto bg-slate-50 p-6 rounded-2xl border border-slate-200">
                           <AlertTriangle className="w-10 h-10 text-amber-500 mb-3" />
                           <h4 className="text-sm font-bold text-slate-800">未检索到符合条件的层级节点</h4>
-                          <p className="text-xs text-slate-400 mt-2 leading-relaxed text-left">
-                            本级筛选下未匹配到任何有投花节点成效数据。提示诊断排查：<br />
+                          
+                          {dataHealth?.reason && (
+                            <div className="my-3 px-4 py-2.5 bg-red-50/60 border border-red-200/60 text-red-700 rounded-lg text-xs font-medium text-left w-full space-y-1">
+                              <p className="font-mono text-[10px] text-red-500 uppercase tracking-wider font-semibold">Diagnostic Code: {dataHealth.reason}</p>
+                              <p className="leading-relaxed text-[11px]">
+                                {dataHealth.reason === "NO_FACT_LEVEL_ROWS" && "【当前层级无记账事实行】：数据库中该时段无广告消耗及行为记账，但可能存在结构拓扑。"}
+                                {dataHealth.reason === "NO_STRUCTURE_ROWS" && "【当前层级无结构拓扑】：此账户在系统中无对应的广告层级结构数据，需要同步或结构不存在。"}
+                                {dataHealth.reason === "ACCOUNT_ID_FORMAT_MISMATCH" && "【广告账户ID格式不匹配】：广告账户ID空缺或格式不规范。"}
+                                {dataHealth.reason === "CAMPAIGN_ID_MISMATCH" && "【广告系列ID不存在】：当前广告系列在结构中未检索到。"}
+                                {dataHealth.reason === "ADSET_ID_MISMATCH" && "【广告组ID不存在】：当前广告组在结构中未检索到。"}
+                                {dataHealth.reason === "DATE_RANGE_EMPTY" && "【时间区间无数据】：选择的起始或结束日期无效或越界。"}
+                                {dataHealth.reason === "FILTER_ZERO_SPEND_HIDDEN" && "【零消耗已被隐藏】：当前节点有对应结构，但选择的时间范围内花费为0，且当前筛选开启了【仅看有消耗】。请切换至上方【全部对象】查看。"}
+                                {!["NO_FACT_LEVEL_ROWS", "NO_STRUCTURE_ROWS", "ACCOUNT_ID_FORMAT_MISMATCH", "CAMPAIGN_ID_MISMATCH", "ADSET_ID_MISMATCH", "DATE_RANGE_EMPTY", "FILTER_ZERO_SPEND_HIDDEN"].includes(dataHealth.reason) && `【未知原因】：${dataHealth.reason}`}
+                              </p>
+                              <div className="pt-1.5 border-t border-red-100 mt-1.5 flex gap-4 text-[10px] text-red-400 font-mono">
+                                <span>Fact Rows: {dataHealth.factRows}</span>
+                                <span>Structure Rows: {dataHealth.structureRows}</span>
+                                <span>Level: {dataHealth.level}</span>
+                              </div>
+                            </div>
+                          )}
+
+                          <p className="text-[11px] text-slate-400 mt-2 leading-relaxed text-left w-full">
+                            提示诊断排查：<br />
                             1. <b>【时间范围无成效】</b>：在该历史区间内可能未跑量发出消耗。<br />
                             2. <b>【有消耗隐藏】</b>：当前处于“有消耗对象”筛选，可切换到<b>“全部对象”</b>查看未发生花费的结构拓扑，或重新点击<b>“同步广告成效”</b>重新加载指标。<br />
                             3. <b>【账户未同步】</b>：请确保该账户已通过本底同步成功重写关联。

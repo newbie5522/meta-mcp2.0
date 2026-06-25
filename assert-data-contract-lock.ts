@@ -57,6 +57,36 @@ if (!fs.existsSync(contractPath)) {
   }
 }
 
+// 1B. Check menu-data-contract.ts exists and is populated
+const menuContractPath = "./src/shared/menu-data-contract.ts";
+if (!fs.existsSync(menuContractPath)) {
+  console.error("❌ Rule Check failed: src/shared/menu-data-contract.ts does not exist.");
+  failed = true;
+} else {
+  const content = fs.readFileSync(menuContractPath, "utf-8");
+  if (!content.includes("MENU_DATA_CONTRACT")) {
+    console.error("❌ Rule Check failed: src/shared/menu-data-contract.ts does not export MENU_DATA_CONTRACT.");
+    failed = true;
+  } else {
+    console.log("✅ Rule Check passed: src/shared/menu-data-contract.ts exists and exports MENU_DATA_CONTRACT.");
+  }
+}
+
+// 1C. Check data-center-audit.service.ts computes and returns menuChain
+const auditServicePath = "./src/server/services/data-center-audit.service.ts";
+if (!fs.existsSync(auditServicePath)) {
+  console.error("❌ Rule Check failed: src/server/services/data-center-audit.service.ts does not exist.");
+  failed = true;
+} else {
+  const content = fs.readFileSync(auditServicePath, "utf-8");
+  if (!content.includes("menuChain")) {
+    console.error("❌ Rule Check failed: data-center-audit.service.ts does not compute or return 'menuChain'.");
+    failed = true;
+  } else {
+    console.log("✅ Rule Check passed: data-center-audit.service.ts computes and returns 'menuChain'.");
+  }
+}
+
 // 2. Scan files for forbidden queries, decommissioned API calls, and config leaks
 for (const file of files) {
   const code = fs.readFileSync(file, "utf-8");

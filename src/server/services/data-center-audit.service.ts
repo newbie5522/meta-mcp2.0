@@ -435,6 +435,61 @@ export async function runDataCenterAudit(params: {
     status = "WARNING";
   }
 
+  // Process Menu Chain Audit
+  let campaignsStatus = "PASS";
+  let campaignsReason = "ALL_LEVELS_WIRED";
+  if (fAccountRows.length > 0) {
+    if (fCampaignRows.length === 0) {
+      campaignsStatus = "FAIL";
+      campaignsReason = "campaigns rows = 0 but accounts has spend > 0";
+    } else if (fAdsetRows.length === 0) {
+      campaignsStatus = "FAIL";
+      campaignsReason = "adsets rows = 0 but campaigns rows > 0";
+    } else if (fAdRows.length === 0) {
+      campaignsStatus = "FAIL";
+      campaignsReason = "ads rows = 0 but adsets rows > 0";
+    }
+  } else {
+    campaignsStatus = "EMPTY";
+    campaignsReason = "No accounts with performance data";
+  }
+
+  let audienceStatus = "PASS";
+  if (audienceRows.length > 0) {
+    audienceStatus = "PASS";
+  } else if (fAccountRows.length > 0) {
+    audienceStatus = "FAIL";
+  } else {
+    audienceStatus = "EMPTY";
+  }
+
+  const creativePerformanceCount = typeof prisma.creativePerformanceDaily !== "undefined" ? await prisma.creativePerformanceDaily.count() : 0;
+  let creativesStatus = "PASS";
+  if (creativePerformanceCount > 0) {
+    creativesStatus = "PASS";
+  } else if (fAccountRows.length > 0) {
+    creativesStatus = "FAIL";
+  } else {
+    creativesStatus = "EMPTY";
+  }
+
+  const menuChain = {
+    overview: (dcStoreRows.length > 0 || dcMetaRows.length > 0) ? "PASS" : "EMPTY",
+    "data-details": dcMetaRows.length > 0 ? "PASS" : "EMPTY",
+    "data-store": (dcStoreRows.length > 0 || orderRows.length > 0) ? "PASS" : "EMPTY",
+    "data-campaigns": {
+      status: campaignsStatus,
+      accountsRows: fAccountRows.length,
+      campaignRows: fCampaignRows.length,
+      adsetRows: fAdsetRows.length,
+      adRows: fAdRows.length,
+      reason: campaignsReason
+    },
+    "data-audiences": audienceStatus,
+    "data-creatives": creativesStatus,
+    "data-products": "NOT_WIRED"
+  };
+
   return {
     success: true,
     startDate,
@@ -443,6 +498,7 @@ export async function runDataCenterAudit(params: {
       storeId,
       accountId
     },
+    menuChain,
     meta: {
       factMetaPerformance: {
         rows: factMetaRows.length,

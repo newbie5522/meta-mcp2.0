@@ -118,7 +118,9 @@ function BusinessClock() {
 }
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return sessionStorage.getItem("META_INSIGHTS_AUTH") === "true";
+  });
   const [activeTab, setActiveTab] = useState('data-details');
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     data: true,
@@ -139,8 +141,18 @@ export default function App() {
     }
   }, [location.search]);
 
+  const handleLogin = () => {
+    sessionStorage.setItem("META_INSIGHTS_AUTH", "true");
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem("META_INSIGHTS_AUTH");
+    setIsAuthenticated(false);
+  };
+
   if (!isAuthenticated) {
-    return <LoginScreen onLogin={() => setIsAuthenticated(true)} />;
+    return <LoginScreen onLogin={handleLogin} />;
   }
 
   const handleSetActiveTab = (tab: string) => {
@@ -170,7 +182,7 @@ export default function App() {
         setActiveTab={handleSetActiveTab} 
         expandedSections={expandedSections} 
         toggleSection={toggleSection}
-        onLogout={() => setIsAuthenticated(false)}
+        onLogout={handleLogout}
       />
       
       <main className="flex-1 py-8 px-10 overflow-y-auto custom-scrollbar relative">
@@ -195,7 +207,7 @@ export default function App() {
           <Route path="/data-center/ad-hierarchy" element={<AdHierarchyBridge />} />
           <Route path="/store/new" element={<StoreDetailsPage isNew={true} />} />
           <Route path="/store/:storeId" element={<StoreDetailsPage />} />
-          <Route path="/account/:accountId" element={<AccountDetailsPage onLogout={() => setIsAuthenticated(false)} />} />
+          <Route path="/account/:accountId" element={<AccountDetailsPage onLogout={handleLogout} />} />
         </Routes>
       </main>
       
