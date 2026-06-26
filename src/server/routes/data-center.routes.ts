@@ -4,6 +4,7 @@ import prisma from "../../db/index.js";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
+import { getProductIntelligence } from "../services/product-intelligence.service.js";
 import { getCreativeIntelligence } from "../services/creative-intelligence.service.js";
 import { getAggregatedCreativeInsights } from "../services/creative-insights.service.js";
 import { syncStoreData } from "../services/store-sync.service.js";
@@ -783,6 +784,51 @@ router.get("/countries", async (req, res) => {
   }
 });
 
+/**
+ * GET /api/data-center/products
+ * Product intelligence must read from Data Center route only.
+ * Source: Order + Product metadata.
+ */
+router.get("/products", async (req, res) => {
+  const { startDate, endDate } = req.query;
+
+  try {
+    const startStr = startDate
+      ? String(startDate)
+      : dayjs().subtract(30, "day").format("YYYY-MM-DD");
+
+    const endStr = endDate
+      ? String(endDate)
+      : dayjs().format("YYYY-MM-DD");
+
+    const products = await getProductIntelligence(startStr, endStr);
+
+    return res.json({
+      success: true,
+      source: "Order",
+      mode: "DATACENTER_PRODUCTS_FROM_ORDER",
+      startDate: startStr,
+      endDate: endStr,
+      data: products,
+      products,
+      count: products.length,
+      dataSourceExplain: {
+        primarySource: "Order",
+        metadataSource: "Product",
+        legacyUsed: false,
+        demoUsed: false,
+        productPerformanceDailyUsed: false
+      }
+    });
+  } catch (error: any) {
+    console.error("[Data Center API] Products error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to load product intelligence",
+      details: error.message
+    });
+  }
+});
 /**
  * GET /api/data-center/creatives
  * Returns creative performance summaries
