@@ -121,7 +121,7 @@ export class SyncCenter {
       originalStoreId: storeId !== null && storeId !== undefined ? String(storeId) : null
     };
 
-        const existingRunningTask = await prisma.syncLog.findFirst({
+      const existingRunningTask = await prisma.syncLog.findFirst({
       where: {
         taskType,
         status: "running"
