@@ -217,16 +217,13 @@ setProducts(rows);
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {products.map((p, index) => {
-                    const isDemoSample = ["prod_fashion_01", "prod_fashion_02", "prod_elec_01", "prod_elec_02"].includes(p.productId);
-                    return (
+                    
                       <tr key={p.productId} className="hover:bg-slate-50/80 transition-colors">
                         <td className="px-6 py-4">
                           <div className="flex flex-col gap-1 max-w-[280px]">
                             <span 
-                              className={`text-[13.5px] font-semibold text-slate-900 truncate leading-tight ${
-                                isDemoSample ? "text-slate-400 font-medium italic" : "text-slate-900"
-                              }`}
-                              title={p.productName}
+                               className="text-[13.5px] font-semibold text-slate-900 truncate leading-tight"
+                               title={p.productName}
                             >
                               {p.productName}
                             </span>
@@ -234,11 +231,7 @@ setProducts(rows);
                               <span className="text-[11px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200">
                                 SKU: {p.sku || p.productId}
                               </span>
-                              {isDemoSample && (
-                                <span className="text-[10px] bg-red-50 text-red-600 px-1.5 rounded border border-red-200 font-medium">
-                                  Seed Demo
-                                </span>
-                              )}
+                              
                             </div>
                           </div>
                         </td>
