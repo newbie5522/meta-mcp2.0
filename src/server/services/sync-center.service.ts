@@ -121,6 +121,37 @@ export class SyncCenter {
       originalStoreId: storeId !== null && storeId !== undefined ? String(storeId) : null
     };
 
+        const existingRunningTask = await prisma.syncLog.findFirst({
+      where: {
+        taskType,
+        status: "running"
+      },
+      orderBy: {
+        startedAt: "desc"
+      }
+    });
+
+    if (existingRunningTask) {
+      const ageMs = Date.now() - existingRunningTask.startedAt.getTime();
+      const maxRunningAgeMs = 30 * 60 * 1000;
+
+      if (ageMs < maxRunningAgeMs) {
+        throw new Error(
+          `SYNC_TASK_ALREADY_RUNNING: ${taskType} is already running. taskId=${existingRunningTask.id}`
+        );
+      }
+
+      await prisma.syncLog.update({
+        where: { id: existingRunningTask.id },
+        data: {
+          status: "failed",
+          finishedAt: new Date(),
+          error: "STALE_RUNNING_TASK_MARKED_FAILED",
+          errorMessage: "Stale running task was automatically marked failed before starting a new task."
+        }
+      });
+    }
+    
     try {
       await prisma.syncLog.create({
         data: {
