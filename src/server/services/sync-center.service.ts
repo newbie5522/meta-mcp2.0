@@ -25,40 +25,24 @@ async function safeEnsureAdAccount(fb_account_id: string): Promise<void> {
 }
 
 async function safeEnsureCampaign(id: string, accountId: string): Promise<void> {
-  try {
-    await safeEnsureAdAccount(accountId);
-    const existing = await prisma.campaign.findUnique({ where: { id } });
-    if (!existing) {
-      await prisma.campaign.create({
-        data: {
-          id,
-          accountId,
-          name: `Campaign ${id}`,
-          status: "ACTIVE"
-        }
-      });
-    }
-  } catch (err: any) {
-    console.warn(`[Sync Center] Error ensuring Campaign placeholder for ${id}:`, err.message);
+  await safeEnsureAdAccount(accountId);
+
+  const existing = await prisma.campaign.findUnique({ where: { id } });
+  if (!existing) {
+    throw new Error(
+      `STRUCTURE_PARENT_CAMPAIGN_MISSING: Campaign ${id} must be synced from Meta before writing child rows.`
+    );
   }
 }
 
 async function safeEnsureAdSet(id: string, campaignId: string, accountId: string): Promise<void> {
-  try {
-    await safeEnsureCampaign(campaignId, accountId);
-    const existing = await prisma.adSet.findUnique({ where: { id } });
-    if (!existing) {
-      await prisma.adSet.create({
-        data: {
-          id,
-          campaignId,
-          accountId,
-          name: `Ad Set ${id}`
-        }
-      });
-    }
-  } catch (err: any) {
-    console.warn(`[Sync Center] Error ensuring AdSet placeholder for ${id}:`, err.message);
+  await safeEnsureCampaign(campaignId, accountId);
+
+  const existing = await prisma.adSet.findUnique({ where: { id } });
+  if (!existing) {
+    throw new Error(
+      `STRUCTURE_PARENT_ADSET_MISSING: AdSet ${id} must be synced from Meta before writing child rows.`
+    );
   }
 }
 
@@ -429,8 +413,8 @@ export class SyncCenter {
               await safeEnsureAdAccount(actId);
               await prisma.campaign.upsert({
                 where: { id: camp.id },
-                update: { accountId: actId, name: camp.name || "Unnamed Campaign", status: camp.status || "ACTIVE" },
-                create: { id: camp.id, accountId: actId, name: camp.name || "Unnamed Campaign", status: camp.status || "ACTIVE" }
+                update: { accountId: actId, name: camp.name || camp.id, status: camp.status || null },
+                create: { id: camp.id, accountId: actId, name: camp.name || camp.id, status: camp.status || null }
               });
             }
 
@@ -446,8 +430,8 @@ export class SyncCenter {
               }
               await prisma.adSet.upsert({
                 where: { id: adset.id },
-                update: { campaignId: adset.campaign_id, accountId: actId, name: adset.name || "Unnamed Ad Set" },
-                create: { id: adset.id, campaignId: adset.campaign_id, accountId: actId, name: adset.name || "Unnamed Ad Set" }
+                update: { campaignId: adset.campaign_id, accountId: actId, name: adset.name || adset.id },
+                create: { id: adset.id, campaignId: adset.campaign_id, accountId: actId, name: adset.name || adset.id }
               });
             }
 
@@ -480,11 +464,11 @@ export class SyncCenter {
                       videoHash: assets.videoHash || null,
                       imageHash: assets.imageHash || null,
                       storeId: account.storeId,
-                      name: ad.name ? `${ad.name} Creative` : "Auto Creative",
+                      name: ad.name || creativeId,
                       landingUrl: assets.landingUrl || null,
                       previewUrl: assets.previewUrl || null,
                       metaAssetId: assets.metaAssetId || null,
-                      hookRate: 0.15
+                      hookRate: 0
                     }
                   }).catch(() => {});
                   creativeCountTotal++;
@@ -497,7 +481,7 @@ export class SyncCenter {
                   adsetId: ad.adset_id,
                   campaignId: ad.campaign_id,
                   accountId: actId,
-                  name: ad.name || "Unnamed Ad",
+                  name: ad.name || ad.id,
                   creativeId: creativeId || null
                 },
                 create: {
@@ -505,7 +489,7 @@ export class SyncCenter {
                   adsetId: ad.adset_id,
                   campaignId: ad.campaign_id,
                   accountId: actId,
-                  name: ad.name || "Unnamed Ad",
+                  name: ad.name || ad.id,
                   creativeId: creativeId || null
                 }
               });
