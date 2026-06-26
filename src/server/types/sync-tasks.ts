@@ -13,6 +13,7 @@ export enum SyncTaskType {
   SYNC_META_STRUCTURE = 'sync_meta_structure',
   SYNC_META_ACCOUNTS = 'sync_meta_accounts',
   SYNC_META_AUDIENCE = 'sync_meta_audience',
+  SYNC_META_CREATIVES = 'sync_meta_creatives',
   
   // 店铺订单数据同步
   SYNC_STORE_ORDERS = 'sync_store_orders',
