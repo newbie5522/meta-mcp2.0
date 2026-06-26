@@ -53,7 +53,7 @@ export function SuggestionsDashboard() {
   const fetchCards = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/intelligence/suggestions");
+      const res = await fetch("/api/ai-analysis/suggestions");
       if (res.ok) {
         const data = await res.json();
         const parsedData = data.map((item: any) => {
@@ -104,7 +104,7 @@ export function SuggestionsDashboard() {
 
   const handleUpdateStatus = async (id: string, newStatus: "applied" | "ignored" | "pending") => {
     try {
-      const res = await fetch(`/api/intelligence/suggestions/${id}/status`, {
+      const res = await fetch(`/api/ai-analysis/suggestions/${id}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus })
