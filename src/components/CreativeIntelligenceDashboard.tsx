@@ -137,10 +137,12 @@ export function CreativeIntelligenceDashboard({
       const startStr = startDate ? format(startDate, "yyyy-MM-dd") : format(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), "yyyy-MM-dd");
       const endStr = endDate ? format(endDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
 
-      const response = await axios.post("/api/sync-creatives", {
-        startDate: startStr,
-        endDate: endStr
-      });
+     const response = await axios.post("/api/sync/trigger", {
+       taskType: "sync_meta_creatives",
+       startDate: startStr,
+       endDate: endStr,
+       days: 30
+     });
       toast.success(response.data.message || "创意素材数据同步成功！", {
         id: syncToast,
       });
