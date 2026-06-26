@@ -312,9 +312,8 @@ model SyncLog {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  // ✅ 关键约束：防止同一 taskType 有多个并发 running 的任务
-  // 数据库会自动拒绝插入第二条 (taskType, "running") 的记录
-  @@unique([taskType, status])
+  // Running-task concurrency is guarded in SyncCenter.runTask.
+// Do not use @@unique([taskType, status]) because it blocks historical success/failed logs.
 
   @@index([status])
   @@index([taskType])
