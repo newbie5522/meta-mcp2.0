@@ -57,17 +57,21 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
     setLoading(true);
     setError(null);
     try {
-      const res = await axios.get("/api/intelligence/products", {
+      const res = await axios.get("/api/data-center/products", {
         params: {
           startDate: format(startDate, "yyyy-MM-dd"),
           endDate: format(endDate, "yyyy-MM-dd")
         }
       });
-      if (Array.isArray(res.data)) {
-        setProducts(res.data);
-      } else {
-        setProducts([]);
-      }
+     const rows = Array.isArray(res.data?.data)
+  ? res.data.data
+  : Array.isArray(res.data?.products)
+    ? res.data.products
+    : Array.isArray(res.data)
+      ? res.data
+      : [];
+
+setProducts(rows);
     } catch (err: any) {
       console.error("Failed to load product intelligence:", err);
       setError(err.response?.data?.details || err.message || "Failed to load product intelligence");
