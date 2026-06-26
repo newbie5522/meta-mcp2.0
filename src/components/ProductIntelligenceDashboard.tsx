@@ -5,7 +5,6 @@ import {
   PackageSearch, 
   Coins, 
   FileSpreadsheet, 
-  Info, 
   HelpCircle, 
   BadgePercent, 
   LineChart, 
@@ -112,29 +111,9 @@ setProducts(rows);
     : 0;
 
   return (
-    <div className="space-y-6">
-      {/* Informative alert box for code reliability & validation */}
-      <div className="bg-amber-50/70 border border-amber-200 text-amber-900 p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
-        <div className="flex gap-3 items-start">
-          <div className="p-2 bg-amber-100 rounded-xl text-amber-700 mt-0.5">
-            <Info className="w-5 h-5 flex-shrink-0" />
-          </div>
-          <div>
-            <strong className="block font-semibold text-amber-950">AI 归因状态告知与验证</strong>
-            <p className="text-sm text-amber-800 mt-1">
-              当前产品销售数据来自 <span className="font-semibold text-amber-950 underline underline-offset-2">真实订单聚合</span>；产品级广告花费归因尚未重建。
-            </p>
-            <span className="text-xs text-amber-600 block mt-1.5 font-mono">
-              [治理规则] 已降级 demo 数据源 (ProductPerformanceDaily)。真实产品财务流水由 Order 进行确定性对账。
-            </span>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <span className="px-3 py-1 bg-amber-100/80 rounded-full text-xs font-semibold text-amber-800 border border-amber-200 whitespace-nowrap">
-            事实源: Order Table
-          </span>
-        </div>
-      </div>
+  <div className="space-y-6">
+    {loading ? (
+      <div className="flex flex-col items-center justify-center min-h-[400px] bg-white rounded-2xl border border-slate-100 p-8 space-y-3">
 
       {loading ? (
         <div className="flex flex-col items-center justify-center min-h-[400px] bg-white rounded-2xl border border-slate-100 p-8 space-y-3">
