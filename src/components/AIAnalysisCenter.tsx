@@ -184,7 +184,7 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
 
   const updateSuggestionStatus = async (suggId: string, newStatus: string) => {
     try {
-      await axios.post(`/api/intelligence/suggestions/${suggId}/status`, { status: newStatus });
+      await axios.post(`/api/ai-analysis/suggestions/${suggId}/status`, { status: newStatus });
       toast.success(`建议已标记为 ${newStatus === "applied" ? "已实施" : "已忽略"}`);
       // Update local report suggestion state
       if (report && report.recommendations) {
