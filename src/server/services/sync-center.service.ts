@@ -16,21 +16,11 @@ function generateUUID(): string {
 
 // Pre-check and ensure parent records exist in database before child insertions to prevent foreign key errors (P2003)
 async function safeEnsureAdAccount(fb_account_id: string): Promise<void> {
-  try {
-    const existing = await prisma.adAccount.findUnique({ where: { fb_account_id } });
-    if (!existing) {
-      await prisma.adAccount.create({
-        data: {
-          fb_account_id,
-          fb_account_name: `Meta Account ${fb_account_id}`,
-          status: "1",
-          activityStatus: 1,
-          recentActivity90d: true
-        }
-      });
-    }
-  } catch (err: any) {
-    console.warn(`[Sync Center] Error ensuring AdAccount placeholder for ${fb_account_id}:`, err.message);
+  const existing = await prisma.adAccount.findUnique({ where: { fb_account_id } });
+  if (!existing) {
+    throw new Error(
+      `STRUCTURE_PARENT_ACCOUNT_MISSING: AdAccount ${fb_account_id} must be synced before writing structure.`
+    );
   }
 }
 
