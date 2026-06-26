@@ -279,13 +279,16 @@ export function CreativeIntelligenceDashboard({
       const startStr = startDate ? format(startDate, "yyyy-MM-dd") : format(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), "yyyy-MM-dd");
       const endStr = endDate ? format(endDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
 
-      const [resGrouped, resDaily, resStores] = await Promise.all([
+      const [resGrouped, resStores] = await Promise.all([
         axios.get("/api/data-center/creative-insights", {
-          params: { startDate: startStr, endDate: endStr, storeFilter: localStoreFilter, pageSize: 1000, includeZeroSpend: true }
+          params: {
+            startDate: startStr,
+            endDate: endStr,
+            storeFilter: localStoreFilter,
+            pageSize: 1000,
+            includeZeroSpend: true
+          }
         }),
-        axios.get("/api/intelligence/creatives/daily", {
-          params: { startDate: startStr, endDate: endStr, storeFilter: localStoreFilter }
-        }).catch(() => ({ data: [] })), 
         axios.get("/api/stores").catch(() => ({ data: [] }))
       ]);
 
@@ -296,8 +299,13 @@ export function CreativeIntelligenceDashboard({
 
       setCreatives(formattedGrouped);
       setDiagnostics(resGrouped.data?.diagnostics || null);
-      setDailyRecords(resDaily.data || []);
-      setStoresList(resStores.data || []);
+
+      // P0-B: removed legacy /api/intelligence/creatives/daily.
+      // Trend tab will stay empty until a Data Center daily creative endpoint is added.
+      setDailyRecords([]);
+
+      const storesPayload = resStores.data?.stores || resStores.data?.data || resStores.data || [];
+      setStoresList(Array.isArray(storesPayload) ? storesPayload : []);
 
       // Autofill default trends options
       if (formattedGrouped.length > 0) {
