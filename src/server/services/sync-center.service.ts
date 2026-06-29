@@ -5,7 +5,7 @@ import dayjs from "dayjs";
 import { getMetaToken, normalizeMetaAccountId } from "../utils.js";
 import { ensureAdAccounts } from "./meta-hierarchy-sync.service.js";
 import { syncMetaInsightsForActiveAccounts } from "./meta-insights.service.js";
-import { syncAudienceBreakdownsForActiveAccounts } from "./audience-insights.service.js";
+import { syncMetaAudienceBreakdown } from "./audience-insights.service.js";
 import { syncStoreData } from "./store-sync.service.js";
 import { extractMetaAssetHash } from "./metaFetchPatch.service.js";
 
@@ -547,7 +547,10 @@ export class SyncCenter {
             accountId,
             targetTable: "fact_meta_performance",
             recordsUpdated: stats.recordsUpdated,
-            recordsFailed: stats.recordsFailed,
+            recordsFailed: stats.failedAccounts.length,
+accountsSynced: stats.accountsSynced,
+dimensionsSynced: stats.dimensionsSynced,
+status: stats.status,
             levelCounts: stats.levelCounts,
             completedAt: new Date().toISOString()
           }
@@ -575,24 +578,31 @@ export class SyncCenter {
       null,
       accountId,
       async () => {
-        const stats = await syncAudienceBreakdownsForActiveAccounts({
-          days,
-          startDate: startDate || undefined,
-          endDate: endDate || undefined,
-          accountId: accountId || undefined,
-          taskChainId,
-          parentTaskId,
-          triggeredBy
-        });
+        const endStr = endDate || dayjs().format("YYYY-MM-DD");
+const startStr = startDate || dayjs(endStr).subtract(days - 1, "day").format("YYYY-MM-DD");
+
+const stats = await syncMetaAudienceBreakdown({
+  startDate: startStr,
+  endDate: endStr,
+  accountIds: accountId ? [accountId] : undefined,
+  dimensions: ["country", "age", "gender", "publisher_platform"],
+  includeUnmapped: false
+});
+
+if (!stats.success) {
+  throw new Error(
+    `META_AUDIENCE_SYNC_FAILED: ${stats.failedAccounts.map(item => `${item.accountId}:${item.dimension || "unknown"}:${item.message}`).join("; ")}`
+  );
+}
         
         return {
           recordsFetched: stats.recordsFetched,
           recordsSaved: stats.recordsSaved,
           metadata: {
             days,
-            startDate,
-            endDate,
-            accountId,
+startDate: startStr,
+endDate: endStr,
+accountId,
             targetTable: "FactAudienceBreakdown",
             recordsUpdated: stats.recordsUpdated,
             recordsFailed: stats.recordsFailed,
