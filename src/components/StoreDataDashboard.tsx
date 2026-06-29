@@ -230,21 +230,33 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
     setAiReport("");
     try {
       // Fetch dynamic insights using AI helper routes or simulated deep metadata intelligence block
-      const payload = {
-        prompt: `你是一个懂跨境电商和流量投放的顶级运营专家。这是我们系统捕获的 2026 年度一段时间内，店铺 "${store.name}" （平台是 ${store.platform}，其域名是 ${store.domain || "无"}）的经营报告：
-        1. 发生交易的系统订单数：${store.ordersCount} 单
-        2. 全渠道销售额：$${store.totalSales.toFixed(2)} USD
-        3. 退款金额：$${store.totalRefunded.toFixed(2)} USD
-        4. 结算客单价 (AOV)：$${store.avgOrderValue.toFixed(2)} USD
-        5. 对接 Meta 广告花费总支出：$${store.adSpend.toFixed(2)} USD
-        6. 该店铺最终计算出的真实整店广告 ROAS：${store.realRoas !== null ? `${store.realRoas.toFixed(2)}x` : "未绑定推广广告账号，无法换算 ROI"}
-        7. 该商铺所属国家数：${store.countryCount !== null ? `共累计 ${store.countryCount} 个主要热销国家` : "不适用 (订单缺乏国家字段)"}
-        
-        作为 AI 商业参谋，请立刻为该店主撰写一个直观、落地、排版清晰（利用 markdown，配有生动的 emoji）的《整店投放经营体检与优化建议短报》。请对它的真实 ROAS 状况进行犀利点评（若 ROAS 低于 1.5 警告其注意亏损，若没有绑定则建议映射账户，若销售额为空提出冷启动建站对策），字数在 280 字内，要求语气自信专业，直击要点，不要说过多废话和客套话。`
-      };
-      
-      const response = await axios.post("/api/intelligence/audit", payload);
-      setAiReport(response.data.analysis || response.data.report || response.data.response || "未返回分析报告");
+      const response = await axios.post("/api/ai-analysis/generate", {
+  type: "store_analysis",
+  entityType: "store",
+  entityId: String(store.id),
+  startDate: formattedStartDate,
+  endDate: formattedEndDate,
+  storeId: store.id,
+  stylePrompt: `你是一个懂跨境电商和流量投放的顶级运营专家。请为店铺 "${store.name}" 输出一份直观、落地、排版清晰的《整店投放经营体检与优化建议短报》。要求使用 markdown，可适当使用 emoji；语气自信专业，直击要点；重点点评真实 ROAS、订单、销售额、广告花费、AOV、退款和国家表现；若 ROAS 低于 1.5，提醒亏损风险；若未绑定广告账户，提示先完成账户映射；若销售额为空，给出冷启动建议；控制在 280 字内。`
+});
+
+const report = response.data?.report || response.data;
+const reportText = [
+  `## ${report.title || `${store.name} 店铺经营体检`}`,
+  report.summary,
+  Array.isArray(report.findings) && report.findings.length > 0
+    ? report.findings.map((item: string) => `- ${item}`).join("\n")
+    : "",
+  Array.isArray(report.recommendations) && report.recommendations.length > 0
+    ? [
+        "### 建议动作",
+        ...report.recommendations.map((item: any) => `- ${item.action || item.rationale || JSON.stringify(item)}`)
+      ].join("\n")
+    : "",
+  report.dataSourceExplain ? `数据源：${report.dataSourceExplain}` : ""
+].filter(Boolean).join("\n\n");
+
+setAiReport(reportText || "未返回分析报告");
     } catch (error: any) {
       console.error("AI analyst error:", error);
       setAiReport(`🤖 AI 分析出现一点偏差，让我们再次重试。错误提示: ${error.message}`);
