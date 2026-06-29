@@ -272,7 +272,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
           <AlertTriangle className="w-8 h-8 text-amber-500 mb-2" />
           <span className="font-bold text-slate-700 text-sm mb-1">受众细分数据未同步</span>
           <p className="text-[11px] text-slate-500 max-w-sm">
-            当前日期范围内未检索到 Meta 交付受众、设备或版位细分数据，请先运行同步。
+            当前日期范围内未检索到 Meta 交付受众或版位细分数据，请先运行同步。
           </p>
         </div>
       );
@@ -346,22 +346,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
             </BarChart>
           </ResponsiveContainer>
         );
-      case "impression_device":
-        return (
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart key={chartKey} data={chartRows} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-              <XAxis dataKey="dimensionValue" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} interval={0} />
-              <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} />
-              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#10b981' }} axisLine={false} />
-              <RechartsTooltip formatter={(value, name) => [typeof value === 'number' ? value.toFixed(2) : value, name]} contentStyle={{ fontSize: 11, borderRadius: 8 }} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar yAxisId="left" dataKey="spend" name="花费 ($)" fill="#8b5cf6" radius={[4, 4, 0, 0]} barSize={25} />
-              <Bar yAxisId="right" dataKey="purchases" name="购买 (单)" fill="#10b981" radius={[4, 4, 0, 0]} barSize={25} />
-            </BarChart>
-          </ResponsiveContainer>
-        );
-      case "region":
+     
       default:
         return (
           <div className="h-64 flex flex-col items-center justify-center text-indigo-800 bg-indigo-50/40 rounded-xl border border-dashed border-indigo-200 text-xs px-6 text-center">
