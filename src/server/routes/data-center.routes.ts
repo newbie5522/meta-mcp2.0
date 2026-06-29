@@ -432,7 +432,9 @@ router.get("/audience", async (req, res) => {
   try {
     const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
-    const currentDimType = String(dimensionType || "country");
+    const requestedDimType = String(dimensionType || "country");
+    const allowedDimensionTypes = ["country", "age", "gender", "publisher_platform"];
+    const currentDimType = allowedDimensionTypes.includes(requestedDimType) ? requestedDimType : "country";
 
     // 1. Store filtering: resolve store mapped accounts
     let filterAccountIds: string[] | null = null;
@@ -601,14 +603,6 @@ router.get("/audience", async (req, res) => {
       filteredRows = filteredRows.filter(r => r.spend >= minSpendNum);
     }
 
-    // Special restrictions for high cardinality 'region'
-    if (currentDimType === "region") {
-      filteredRows = filteredRows.filter(r => r.spend > 0);
-      if (minSpendNum !== null && !isNaN(minSpendNum)) {
-        filteredRows = filteredRows.filter(r => r.spend >= minSpendNum);
-      }
-    }
-
     // 7. Dynamic Sorting
     const sortByField = String(sortBy || "spend");
     filteredRows.sort((a: any, b: any) => {
@@ -623,11 +617,6 @@ router.get("/audience", async (req, res) => {
     // 8. Dynamic Pagination & default Top limits
     const pageNum = Number(page || 1);
     let pageSizeNum = Number(pageSize || 50);
-
-    // Default limit Region type to Top 20 unless pageSize explicitly defined
-    if (currentDimType === "region" && !req.query.pageSize) {
-      pageSizeNum = 20;
-    }
 
     const totalItems = filteredRows.length;
     const totalPages = Math.ceil(totalItems / pageSizeNum);
