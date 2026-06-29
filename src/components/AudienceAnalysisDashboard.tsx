@@ -349,16 +349,10 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
      
       default:
         return (
-          <div className="h-64 flex flex-col items-center justify-center text-indigo-800 bg-indigo-50/40 rounded-xl border border-dashed border-indigo-200 text-xs px-6 text-center">
-            <MapPin className="w-8 h-8 text-indigo-500 mb-2 animate-pulse" />
-            <span className="font-semibold text-indigo-900">高基数特定 Region 维度不渲染冗余图形</span>
-            <span className="text-slate-500 mt-1 max-w-sm">
-              Region 为高基数二级物理地理单元，建议运营直接通过右侧的表现指标表进行花费与 ROI 深度排序分析。
-            </span>
+          <div className="h-64 flex items-center justify-center text-slate-400 text-xs">
+            当前维度暂无可视化配置
           </div>
         );
-    }
-  };
 
   return (
     <div className="flex flex-col gap-6 font-sans">
@@ -431,8 +425,6 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                 <option value="age">年龄段 (age)</option>
                 <option value="gender">性别 (gender)</option>
                 <option value="publisher_platform">版位 (publisher_platform)</option>
-                <option value="impression_device">设备 (impression_device)</option>
-                <option value="region">地区 (region)</option>
               </select>
             </div>
 
