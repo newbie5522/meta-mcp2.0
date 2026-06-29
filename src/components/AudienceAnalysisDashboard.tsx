@@ -347,14 +347,16 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
           </ResponsiveContainer>
         );
      
-      default:
-        return (
-          <div className="h-64 flex items-center justify-center text-slate-400 text-xs">
-            当前维度暂无可视化配置
-          </div>
-        );
+            default:
+              return (
+                <div className="h-64 flex items-center justify-center text-slate-400 text-xs">
+                  当前维度暂无可视化配置
+                </div>
+              );
+           }
+         };
 
-  return (
+         return (
     <div className="flex flex-col gap-6 font-sans">
       
       {/* ⚠️ Data Health Warning Banner (warnings & missing from API) */}
