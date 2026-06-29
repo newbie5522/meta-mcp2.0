@@ -124,7 +124,6 @@ export function CreativeIntelligenceDashboard({
   const [creatives, setCreatives] = useState<CreativeData[]>([]);
   const [selectedAccountFilter, setSelectedAccountFilter] = useState("all");
   const [selectedCampaignFilter, setSelectedCampaignFilter] = useState("all");
-  const [dailyRecords, setDailyRecords] = useState<any[]>([]);
   const [storesList, setStoresList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -300,9 +299,6 @@ export function CreativeIntelligenceDashboard({
       setCreatives(formattedGrouped);
       setDiagnostics(resGrouped.data?.diagnostics || null);
 
-      // P0-B: removed legacy /api/intelligence/creatives/daily.
-      // Trend tab will stay empty until a Data Center daily creative endpoint is added.
-      setDailyRecords([]);
 
       const storesPayload = resStores.data?.stores || resStores.data?.data || resStores.data || [];
       setStoresList(Array.isArray(storesPayload) ? storesPayload : []);
@@ -314,7 +310,6 @@ export function CreativeIntelligenceDashboard({
     } catch (err: any) {
       toast.error("加载素材分析数据失败");
       setCreatives([]);
-      setDailyRecords([]);
     } finally {
       setLoading(false);
     }
@@ -377,19 +372,6 @@ export function CreativeIntelligenceDashboard({
   }, [selectedPreviewCreative]);
 
   // Daily records index by creative ID
-  const dailyRecordsByCreative = React.useMemo(() => {
-    const map: Record<string, any[]> = {};
-    for (const r of dailyRecords) {
-      if (!map[r.creativeId]) {
-        map[r.creativeId] = [];
-      }
-      map[r.creativeId].push(r);
-    }
-    for (const key of Object.keys(map)) {
-      map[key].sort((a, b) => a.date.localeCompare(b.date));
-    }
-    return map;
-  }, [dailyRecords]);
 
   // Calculate ad spend per store ID inside this date range
   const storeSpends = React.useMemo(() => {
@@ -481,25 +463,19 @@ export function CreativeIntelligenceDashboard({
   }, [creatives, activeStoreIds, selectedType, searchTerm, selectedAccountFilter, selectedCampaignFilter]);
 
   // Daily records matching current selection
-  const filteredDailyRecords = React.useMemo(() => {
-    return dailyRecords.filter(r => {
-      return activeStoreIds.length === 0 || activeStoreIds.includes(Number(r.storeId));
-    });
-  }, [dailyRecords, activeStoreIds]);
 
   // Fatigue Calculations based on static models for filtered subset
   const fatigueMap = React.useMemo(() => {
     const map: Record<string, FatigueDetails> = {};
     for (const c of creatives) {
-      const history = dailyRecordsByCreative[c.id] || [];
       const rulesTriggered: string[] = [];
       const recommendations: string[] = [];
       
-      const frequency = c.frequency || (history.length > 0 ? history[history.length - 1].frequency : 1.0);
-      const ctr = c.ctr || (history.length > 0 ? history[history.length - 1].ctr : 1.0);
-      const cpm = c.cpm || (history.length > 0 ? history[history.length - 1].cpm : 10.0);
-      const roas = c.roas || (history.length > 0 ? history[history.length - 1].roas : 2.0);
-      const spend = c.spend || (history.length > 0 ? history[history.length - 1].spend : 0);
+      const frequency = c.frequency || 1.0;
+      const ctr = c.ctr || 0;
+	  const cpm = c.cpm || 0;
+      const roas = c.roas || 0;
+      const spend = c.spend || 0;
 
       let score = 5;
 
@@ -513,21 +489,11 @@ export function CreativeIntelligenceDashboard({
         recommendations.push("受众表现衰减前兆。建议配置多图文或多视频素材轮播机制，分流展示压力。");
       }
 
-      if (history.length >= 3) {
-        const recent = history.slice(-3);
-        const ctr1 = recent[0].ctr;
-        const ctr2 = recent[1].ctr;
-        const ctr3 = recent[2].ctr;
-        if (ctr3 < ctr2 && ctr2 < ctr1) {
-          score += 30;
-          rulesTriggered.push(`CTR 连续 3 日滑落 (${ctr1.toFixed(2)}% → ${ctr2.toFixed(2)}% → ${ctr3.toFixed(2)}%)`);
-          recommendations.push("素材对当前受众失去吸睛作用。请重新编排视频前3秒或更换高反差底图。");
-        }
-      } else if (ctr < 1.0) {
-        score += 15;
-        rulesTriggered.push(`点击率偏低 (CTR ${ctr.toFixed(2)}% < 1.0%)`);
-        recommendations.push("网民点击兴趣微弱。建议简化缩短核心文案，使用突出折扣诱导点击。");
-      }
+      if (ctr > 0 && ctr < 1.0) {
+  score += 15;
+  rulesTriggered.push(`点击率偏低 (CTR ${ctr.toFixed(2)}% < 1.0%)`);
+  recommendations.push("素材点击兴趣偏弱。建议优化前3秒视觉钩子或简化核心文案。");
+}
 
       if (cpm > 25) {
         score += 10;
@@ -573,7 +539,7 @@ export function CreativeIntelligenceDashboard({
       };
     }
     return map;
-  }, [creatives, dailyRecordsByCreative]);
+  }, [creatives]);
 
   const evaluateSingleFatigue = (creativeId: string, creativeName: string, type: string): FatigueDetails => {
     if (fatigueMap[creativeId]) {
@@ -826,6 +792,8 @@ export function CreativeIntelligenceDashboard({
 
   // Historical charting metrics aggregation
   const getTrendChartData = () => {
+  return [];
+};
     if (selectedTrendCreativeIds.length === 0 || filteredDailyRecords.length === 0) return [];
     
     const dateMap: Record<string, Record<string, any>> = {};
