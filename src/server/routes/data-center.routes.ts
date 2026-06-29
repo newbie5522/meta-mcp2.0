@@ -652,10 +652,6 @@ router.get("/audience", async (req, res) => {
     const warnings: string[] = [];
     const missing: string[] = [];
 
-    if (currentDimType === "region") {
-      warnings.push("Region 为高基数维度，默认仅展示 Top 20。");
-    }
-
     if (campaignId || adsetId || adId) {
       missing.push("当前受众 breakdown 仅同步账户层级，Campaign / AdSet / Ad 受众层级尚未同步。");
     }
