@@ -601,7 +601,10 @@ export class SyncCenter {
             accountId,
             targetTable: "FactAudienceBreakdown",
             recordsUpdated: stats.recordsUpdated,
-            recordsFailed: stats.recordsFailed,
+            recordsFailed: stats.failedAccounts.length,
+            accountsSynced: stats.accountsSynced,
+            dimensionsSynced: stats.dimensionsSynced,
+            status: stats.status,
             completedAt: new Date().toISOString()
           }
         };
