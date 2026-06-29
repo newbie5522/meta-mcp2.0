@@ -71,7 +71,6 @@ export interface TaskResult {
  * Sync Center Core Engine
  */
 export class SyncCenter {
-  
   /**
    * Helper to execute a single task, write logs, handle fails, and propagate status.
    */
@@ -95,7 +94,7 @@ export class SyncCenter {
       originalStoreId: storeId !== null && storeId !== undefined ? String(storeId) : null
     };
 
-      const existingRunningTask = await prisma.syncLog.findFirst({
+    const existingRunningTask = await prisma.syncLog.findFirst({
       where: {
         taskType,
         status: "running"
@@ -125,7 +124,7 @@ export class SyncCenter {
         }
       });
     }
-    
+
     try {
       await prisma.syncLog.create({
         data: {
@@ -149,7 +148,7 @@ export class SyncCenter {
 
     try {
       const result = await executor();
-      
+
       await prisma.syncLog.update({
         where: { id: taskId },
         data: {
@@ -165,14 +164,14 @@ export class SyncCenter {
           })
         }
       });
-      
+
       console.log(`[Sync Center | chain:${taskChainId}] Task ${taskType} completed successfully.`);
       return taskId;
     } catch (err: any) {
       const errMsg = err.response?.data?.error?.message || err.message || "Unknown error";
       const fbtraceId = err.response?.data?.error?.fbtrace_id || null;
       const errorCode = err.response?.status?.toString() || "500";
-      
+
       await prisma.syncLog.update({
         where: { id: taskId },
         data: {
@@ -191,7 +190,7 @@ export class SyncCenter {
           })
         }
       });
-      
+
       console.error(`[Sync Center | chain:${taskChainId}] Task ${taskType} failed: ${errMsg}`);
       throw err;
     }
@@ -214,12 +213,12 @@ export class SyncCenter {
         if (!store) {
           throw new Error(`Store with ID ${storeId} not found`);
         }
-        
+
         // Simulating profile read with token or updates
         const domain = store.domain || `${store.name}.shoplineapp.com`;
         const currency = "USD"; // Default Currency
         const timezone = store.timezone || "Asia/Shanghai";
-        
+
         await prisma.store.update({
           where: { id: storeId },
           data: {
@@ -378,10 +377,7 @@ export class SyncCenter {
         // Sync for each active/mapped account
         const activeAccounts = await prisma.adAccount.findMany({
           where: {
-            OR: [
-              { storeId: null },
-              { store: { mode: { not: "sandbox" } } }
-            ]
+            OR: [{ storeId: null }, { store: { mode: { not: "sandbox" } } }]
           },
           include: { store: true }
         });
@@ -395,14 +391,14 @@ export class SyncCenter {
         for (const account of activeAccounts) {
           const actId = normalizeMetaAccountId(account.fb_account_id);
           const cleanAccountId = actId.replace("act_", "");
-          
+
           try {
             console.log(`[Sync Center] Querying Meta structure for active account ${actId}`);
-            
+
             if (account.store?.mode === "sandbox") {
               throw new Error("Sandbox Account Mode");
             }
-            
+
             // Fetch campaigns
             const campRes = await axios.get(`https://graph.facebook.com/v19.0/${actId}/campaigns`, {
               params: { fields: "id,name,status", limit: 300, access_token: token }
@@ -453,7 +449,7 @@ export class SyncCenter {
                   try {
                     assets = await extractMetaAssetHash(creativeId, token);
                   } catch (err) {}
-                  
+
                   await prisma.adCreative.create({
                     data: {
                       creativeId,
@@ -494,7 +490,7 @@ export class SyncCenter {
                 }
               });
             }
-          } catch(accErr: any) {
+          } catch (accErr: any) {
             console.log(`[Sync Center] Account structure info check for ${actId} failed (network status: ${accErr.message}). No sandbox fallback data will be written.`);
           }
         }
@@ -536,7 +532,7 @@ export class SyncCenter {
           parentTaskId,
           triggeredBy
         });
-        
+
         return {
           recordsFetched: stats.recordsFetched,
           recordsSaved: stats.recordsSaved,
@@ -548,9 +544,9 @@ export class SyncCenter {
             targetTable: "fact_meta_performance",
             recordsUpdated: stats.recordsUpdated,
             recordsFailed: stats.failedAccounts.length,
-accountsSynced: stats.accountsSynced,
-dimensionsSynced: stats.dimensionsSynced,
-status: stats.status,
+            accountsSynced: stats.accountsSynced,
+            dimensionsSynced: stats.dimensionsSynced,
+            status: stats.status,
             levelCounts: stats.levelCounts,
             completedAt: new Date().toISOString()
           }
@@ -579,30 +575,30 @@ status: stats.status,
       accountId,
       async () => {
         const endStr = endDate || dayjs().format("YYYY-MM-DD");
-const startStr = startDate || dayjs(endStr).subtract(days - 1, "day").format("YYYY-MM-DD");
+        const startStr = startDate || dayjs(endStr).subtract(days - 1, "day").format("YYYY-MM-DD");
 
-const stats = await syncMetaAudienceBreakdown({
-  startDate: startStr,
-  endDate: endStr,
-  accountIds: accountId ? [accountId] : undefined,
-  dimensions: ["country", "age", "gender", "publisher_platform"],
-  includeUnmapped: false
-});
+        const stats = await syncMetaAudienceBreakdown({
+          startDate: startStr,
+          endDate: endStr,
+          accountIds: accountId ? [accountId] : undefined,
+          dimensions: ["country", "age", "gender", "publisher_platform"],
+          includeUnmapped: false
+        });
 
-if (!stats.success) {
-  throw new Error(
-    `META_AUDIENCE_SYNC_FAILED: ${stats.failedAccounts.map(item => `${item.accountId}:${item.dimension || "unknown"}:${item.message}`).join("; ")}`
-  );
-}
-        
+        if (!stats.success) {
+          throw new Error(
+            `META_AUDIENCE_SYNC_FAILED: ${stats.failedAccounts.map(item => `${item.accountId}:${item.dimension || "unknown"}:${item.message}`).join("; ")}`
+          );
+        }
+
         return {
           recordsFetched: stats.recordsFetched,
           recordsSaved: stats.recordsSaved,
           metadata: {
             days,
-startDate: startStr,
-endDate: endStr,
-accountId,
+            startDate: startStr,
+            endDate: endStr,
+            accountId,
             targetTable: "FactAudienceBreakdown",
             recordsUpdated: stats.recordsUpdated,
             recordsFailed: stats.recordsFailed,
@@ -631,7 +627,7 @@ accountId,
           // Loop over last N days date by date
           for (let i = 0; i < days; i++) {
             const dateStr = dayjs().subtract(i, "day").format("YYYY-MM-DD");
-            
+
             // Calculate orders for this store on this day
             const orders = await prisma.order.findMany({
               where: {
@@ -829,7 +825,7 @@ accountId,
             select: { fbAccountId: true }
           });
           const mappedFbIds = mappings.map(m => normalizeMetaAccountId(m.fbAccountId));
-          
+
           const hasMappings = mappedFbIds.length > 0;
 
           for (let i = 0; i < days; i++) {
@@ -958,7 +954,7 @@ accountId,
 
           // Combined calculations
           const combinedRoas = totalSpend > 0 ? (totalRevenue / totalSpend) : 0;
-          
+
           // Combined Meta conversion value
           const adAccountSummaries = await prisma.dailySummary.findMany({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
             where: {
@@ -1038,7 +1034,7 @@ accountId,
         // Clear any old pending and generate real alerts inside SQLite!
         // Read recent daily summaries in aggregate of 7 days
         const last7Days = Array.from({ length: 7 }, (_, i) => dayjs().subtract(i, "day").format("YYYY-MM-DD"));
-        
+
         const dashboardSummaries = await prisma.dailySummary.findMany({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
           where: {
             scope: "store",
@@ -1065,7 +1061,7 @@ accountId,
               entityType: "store",
               entityId: storesWithLowRoas[0].scopeId,
               dateRange: JSON.stringify({ gte: last7Days[6], lte: last7Days[0] }),
-              conclusion: `检测到店铺和广告账映射中的ROAS异常下降（最低ROAS：${storesWithLowRoas[0].roas.toFixed(2)}）。花费了大量广告费（$${storesWithLowRoas[0].spend.toFixed(2)}），但店铺销售额没有实现同比例增加。`,
+              conclusion: `检测到店铺和广告账映射中的ROAS异常下降（最低ROAS：${storesWithLowRoas[0].roas.toFixed(2)}）。花费了大量广告费（$${storesWithLowRoas[0].spend.toFixed(2)}）。`,
               dataBasis: JSON.stringify(storesWithLowRoas),
               riskPoints: JSON.stringify(["ROAS低于平衡点1.0", "有流量但转化不佳"]),
               priority: 1,
@@ -1185,8 +1181,8 @@ accountId,
         const id2 = await this.syncStoreOrders(storeId, taskChainId, triggeredBy, id1);
         const id3 = await this.rebuildStoreSummary(taskChainId, triggeredBy, id2);
         const id4 = await this.rebuildDashboardSummary(taskChainId, triggeredBy, id3);
-         console.log(`[Sync Center] Store Init pipeline finished nicely. Chain ID: ${taskChainId}`);
-      } catch(err) {
+        console.log(`[Sync Center] Store Init pipeline finished nicely. Chain ID: ${taskChainId}`);
+      } catch (err) {
         console.error(`[Sync Center] Store Initialization chain ${taskChainId} failed:`, err);
       }
     })();
