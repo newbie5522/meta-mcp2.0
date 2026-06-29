@@ -791,32 +791,9 @@ export function CreativeIntelligenceDashboard({
   };
 
   // Historical charting metrics aggregation
+    // Historical charting metrics aggregation
   const getTrendChartData = () => {
-  return [];
-};
-    if (selectedTrendCreativeIds.length === 0 || filteredDailyRecords.length === 0) return [];
-    
-    const dateMap: Record<string, Record<string, any>> = {};
-    
-    filteredDailyRecords.forEach(rec => {
-      if (!selectedTrendCreativeIds.includes(rec.creativeId)) return;
-      const dateKey = rec.date;
-      if (!dateMap[dateKey]) {
-        dateMap[dateKey] = { date: dateKey };
-      }
-      
-      const creativeName = rec.creativeName || `素材 ${rec.creativeId}`;
-      let metricValue = 0;
-      if (trendMetric === "spend") metricValue = rec.spend;
-      else if (trendMetric === "roas") metricValue = rec.spend > 0 ? (rec.revenue / rec.spend) : 0;
-      else if (trendMetric === "ctr") metricValue = rec.ctr;
-      else if (trendMetric === "cpm") metricValue = rec.cpm;
-      else if (trendMetric === "frequency") metricValue = rec.frequency;
-
-      dateMap[dateKey][creativeName] = Number(metricValue.toFixed(2));
-    });
-
-    return Object.values(dateMap).sort((a: any, b: any) => a.date.localeCompare(b.date));
+    return [];
   };
 
   return (
