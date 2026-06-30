@@ -388,61 +388,61 @@ export class SyncCenter {
         if (!token) throw new Error("Meta Access Token is not set");
 
         const requestedAccountIds = [
-  options.accountId,
-  ...(Array.isArray(options.accountIds) ? options.accountIds : [])
-]
-  .filter(Boolean)
-  .map(id => normalizeMetaAccountId(String(id)))
-  .filter((id, index, arr) => id && arr.indexOf(id) === index);
-
-const take =
-  options.limit !== undefined && options.limit !== null
-    ? Math.max(1, Math.min(parseInt(String(options.limit), 10) || 1, 50))
-    : undefined;
-
-const activeAccounts = await prisma.adAccount.findMany({
-  where: requestedAccountIds.length > 0
-    ? {
-        fb_account_id: { in: requestedAccountIds },
-        OR: [
-          { storeId: null },
-          { store: { mode: { not: "sandbox" } } }
+          options.accountId,
+          ...(Array.isArray(options.accountIds) ? options.accountIds : [])
         ]
-      }
-    : {
-        recentActivity90d: true,
-        OR: [
-          { storeId: null },
-          { store: { mode: { not: "sandbox" } } }
-        ]
-      },
-  include: { store: true },
-  orderBy: { updatedAt: "desc" },
-  ...(take ? { take } : {})
-});
+          .filter(Boolean)
+          .map(id => normalizeMetaAccountId(String(id)))
+          .filter((id, index, arr) => id && arr.indexOf(id) === index);
 
-console.log(
-  `[Sync Center] Syncing structures for ${activeAccounts.length} Meta Accounts. ` +
-  `requested=${JSON.stringify(requestedAccountIds)}, limit=${options.limit || null}`
-);
+        const take =
+          options.limit !== undefined && options.limit !== null
+            ? Math.max(1, Math.min(parseInt(String(options.limit), 10) || 1, 50))
+            : undefined;
 
-if (activeAccounts.length === 0) {
-  return {
-    recordsFetched: 0,
-    recordsSaved: 0,
-    metadata: {
-      status: "NO_SYNC_TARGETS",
-      accountId: options.accountId || null,
-      accountIds: requestedAccountIds,
-      limit: options.limit || null,
-      targetAccountsCount: 0,
-      campaignsFetched: 0,
-      adsetsFetched: 0,
-      adsFetched: 0,
-      creativesFetched: 0
-    }
-  };
-}
+        const activeAccounts = await prisma.adAccount.findMany({
+          where: requestedAccountIds.length > 0
+            ? {
+                fb_account_id: { in: requestedAccountIds },
+                OR: [
+                  { storeId: null },
+                  { store: { mode: { not: "sandbox" } } }
+                ]
+              }
+            : {
+                recentActivity90d: true,
+                OR: [
+                  { storeId: null },
+                  { store: { mode: { not: "sandbox" } } }
+                ]
+              },
+          include: { store: true },
+          orderBy: { updatedAt: "desc" },
+          ...(take ? { take } : {})
+        });
+
+        console.log(
+          `[Sync Center] Syncing structures for ${activeAccounts.length} Meta Accounts. ` +
+          `requested=${JSON.stringify(requestedAccountIds)}, limit=${options.limit || null}`
+        );
+
+        if (activeAccounts.length === 0) {
+          return {
+            recordsFetched: 0,
+            recordsSaved: 0,
+            metadata: {
+              status: "NO_SYNC_TARGETS",
+              accountId: options.accountId || null,
+              accountIds: requestedAccountIds,
+              limit: options.limit || null,
+              targetAccountsCount: 0,
+              campaignsFetched: 0,
+              adsetsFetched: 0,
+              adsFetched: 0,
+              creativesFetched: 0
+            }
+          };
+        }
         let creativeCountTotal = 0;
         let campaignsTotal = 0;
         let adsetsTotal = 0;
