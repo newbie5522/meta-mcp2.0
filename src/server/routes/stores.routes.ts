@@ -1,7 +1,7 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
-import { getTimezoneOffsetStr, isDemoDataEnabled, normalizeMetaAccountId } from "../utils.js";
+import { getTimezoneOffsetStr, normalizeMetaAccountId } from "../utils.js";
 import { normalizeTimezone } from "../utils/timezone.js";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
@@ -12,18 +12,12 @@ dayjs.extend(timezone);
 
 const router = Router();
 const shoplineCache = new Map<string, { data: any; expiry: number }>();
-const demoStoreNames = ["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"];
-const demoStoreDomains = ["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"];
 
 function toNumber(value: unknown): number {
   if (value === null || value === undefined) return 0;
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
   const parsed = Number(String(value));
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function isFixtureStore(store: { name: string; domain?: string | null }): boolean {
-  return demoStoreNames.includes(store.name) || demoStoreDomains.includes(store.domain || "");
 }
 
 function isTokenInput(value: unknown): value is string {
@@ -195,10 +189,6 @@ router.get("/", async (req, res) => {
     let stores = await prisma.store.findMany({
       include: { accounts: true },
     });
-
-    if (!isDemoDataEnabled()) {
-      stores = stores.filter(store => !isFixtureStore(store));
-    }
 
     const processed = await Promise.all(
       stores.map(async (store) => {
