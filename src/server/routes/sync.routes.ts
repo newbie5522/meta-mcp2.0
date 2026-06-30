@@ -922,6 +922,7 @@ async function resolveSafeMetaTargets(input: {
 
   const targets = await prisma.adAccount.findMany({
     where: {
+      recentActivity90d: true,
       OR: [
         { storeId: null },
         { store: { mode: { not: "sandbox" } } }
