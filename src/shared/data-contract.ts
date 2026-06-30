@@ -39,7 +39,7 @@ export const DATA_CONTRACT = {
     },
     creatives: {
       endpoint: "/api/data-center/creative-insights",
-      source: "CreativePerformanceDaily + AdCreative",
+      source: "FactMetaPerformance + Ad + AdCreative",
       requiredTraceSource: "FactMetaPerformance level=ad creative_id"
     }
   },
@@ -68,7 +68,7 @@ export const DATA_CONTRACT = {
     },
     autoLightRefresh: {
       targets: ["DataCenterMetaAccountDaily", "DataCenterStoreDaily"],
-      forbiddenTargets: ["FactAudienceBreakdown", "CreativePerformanceDaily", "AdInsight", "DailySummary"]
+      forbiddenTargets: ["FactAudienceBreakdown", "nonCanonicalPerformanceTables"]
     }
   }
 } as const;
