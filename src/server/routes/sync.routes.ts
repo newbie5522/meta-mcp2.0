@@ -422,68 +422,68 @@ router.post("/sync/trigger", async (req, res) => {
         taskIds: [taskId]
       } as SyncTriggerResponse);
     }
-    
+
     if (taskType === SyncTaskType.SYNC_META_CREATIVES) {
-  const daysVal = days ? parseInt(String(days), 10) : 30;
-  const range = boundedDateRange(startDate, endDate, daysVal, 3650);
+      const daysVal = days ? parseInt(String(days), 10) : 30;
+      const range = boundedDateRange(startDate, endDate, daysVal, 3650);
 
-  // Creative intelligence depends on:
-  // 1. Meta structure: Campaign / AdSet / Ad / AdCreative
-  // 2. Ad-level performance: FactMetaPerformance level='ad'
-  const structureTaskId = await SyncCenter.syncMetaStructure(
-    chainId,
-    "frontend_safe_sync"
-  );
+      // Creative intelligence depends on:
+      // 1. Meta structure: Campaign / AdSet / Ad / AdCreative
+      // 2. Ad-level performance: FactMetaPerformance level='ad'
+      const structureTaskId = await SyncCenter.syncMetaStructure(
+        chainId,
+        "frontend_safe_sync"
+      );
 
-  const targets = await resolveSafeMetaTargets({
-    accountId,
-    accountIds,
-    limit
-  });
+      const targets = await resolveSafeMetaTargets({
+        accountId,
+        accountIds,
+        limit
+      });
 
-  let lastTaskId: string | null = structureTaskId;
-  let recordsFetched = 0;
-  let recordsSaved = 0;
-  const taskIds: string[] = [structureTaskId];
+      let lastTaskId: string | null = structureTaskId;
+      let recordsFetched = 0;
+      let recordsSaved = 0;
+      const taskIds: string[] = [structureTaskId];
 
-  for (const account of targets) {
-    const taskId = await SyncCenter.syncMetaInsights(
-      chainId,
-      "frontend_safe_sync",
-      lastTaskId,
-      range.days,
-      account.fb_account_id,
-      range.startDate,
-      range.endDate
-    );
+      for (const account of targets) {
+        const taskId = await SyncCenter.syncMetaInsights(
+          chainId,
+          "frontend_safe_sync",
+          lastTaskId,
+          range.days,
+          account.fb_account_id,
+          range.startDate,
+          range.endDate
+        );
 
-    taskIds.push(taskId);
-    lastTaskId = taskId;
+        taskIds.push(taskId);
+        lastTaskId = taskId;
 
-    const log = await prisma.syncLog.findUnique({ where: { id: taskId } });
-    recordsFetched += log?.recordsFetched || 0;
-    recordsSaved += log?.recordsSaved || 0;
-  }
+        const log = await prisma.syncLog.findUnique({ where: { id: taskId } });
+        recordsFetched += log?.recordsFetched || 0;
+        recordsSaved += log?.recordsSaved || 0;
+      }
 
-  return res.json({
-    success: true,
-    status: "SUCCESS",
-    message: `创意素材链路同步完成：已同步广告结构与 Ad Level 成效，处理 ${targets.length} 个账户，期间 ${range.startDate} 到 ${range.endDate}。`,
-    chainId,
-    taskType,
-    taskIds,
-    targetAccounts: targets.map(account => ({
-      accountId: account.fb_account_id,
-      name: account.fb_account_name,
-      storeId: account.storeId || null
-    })),
-    recordsFetched,
-    recordsSaved,
-    startDate: range.startDate,
-    endDate: range.endDate
-  } as SyncTriggerResponse);
-}
-    
+      return res.json({
+        success: true,
+        status: "SUCCESS",
+        message: `创意素材链路同步完成：已同步广告结构与 Ad Level 成效，处理 ${targets.length} 个账户，期间 ${range.startDate} 到 ${range.endDate}。`,
+        chainId,
+        taskType,
+        taskIds,
+        targetAccounts: targets.map(account => ({
+          accountId: account.fb_account_id,
+          name: account.fb_account_name,
+          storeId: account.storeId || null
+        })),
+        recordsFetched,
+        recordsSaved,
+        startDate: range.startDate,
+        endDate: range.endDate
+      } as SyncTriggerResponse);
+    }
+
     if (taskType === SyncTaskType.SYNC_META_ACCOUNTS) {
       const taskId = await SyncCenter.syncMetaAccounts(chainId, "frontend_safe_sync");
       await SyncCenter.syncMetaActivity(chainId, "frontend_safe_sync", taskId);
@@ -746,7 +746,7 @@ router.post("/sync/trigger", async (req, res) => {
 
   } catch (error: any) {
     console.error(`[Sync Trigger] Chain ${chainId} failed:`, error);
-    
+
     const statusCode = error?.statusCode || 500;
     return res.status(statusCode).json({
       success: false,
