@@ -533,21 +533,39 @@ export class SyncCenter {
           triggeredBy
         });
 
+        const failedAccounts = Array.isArray(stats?.failedAccounts)
+          ? stats.failedAccounts
+          : [];
+
+        const dimensionsSynced = Array.isArray(stats?.dimensionsSynced)
+          ? stats.dimensionsSynced
+          : [];
+
+        const levelCounts = stats?.levelCounts || {};
+
+        const recordsFetched = Number(stats?.recordsFetched || 0);
+        const recordsSaved = Number(stats?.recordsSaved || 0);
+        const recordsUpdated = Number(stats?.recordsUpdated || 0);
+        const recordsFailed = Number(stats?.recordsFailed || failedAccounts.length || 0);
+
         return {
-          recordsFetched: stats.recordsFetched,
-          recordsSaved: stats.recordsSaved,
+          recordsFetched,
+          recordsSaved,
           metadata: {
             days,
             startDate,
             endDate,
             accountId,
-            targetTable: "fact_meta_performance",
-            recordsUpdated: stats.recordsUpdated,
-            recordsFailed: stats.failedAccounts.length,
-            accountsSynced: stats.accountsSynced,
-            dimensionsSynced: stats.dimensionsSynced,
-            status: stats.status,
-            levelCounts: stats.levelCounts,
+            targetTable: "FactMetaPerformance",
+            recordsUpdated,
+            recordsFailed,
+            failedAccounts,
+            accountsSynced: Number(stats?.accountsSynced || (accountId ? 1 : 0)),
+            dimensionsSynced,
+            status:
+              stats?.status ||
+              (recordsFetched === 0 && recordsSaved === 0 ? "NO_NEW_DATA" : "SUCCESS"),
+            levelCounts,
             completedAt: new Date().toISOString()
           }
         };
