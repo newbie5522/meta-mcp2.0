@@ -5,7 +5,6 @@ import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import { getProductIntelligence } from "../services/product-intelligence.service.js";
-import { getCreativeIntelligence } from "../services/creative-intelligence.service.js";
 import { getAggregatedCreativeInsights } from "../services/creative-insights.service.js";
 import { syncStoreData } from "../services/store-sync.service.js";
 import { normalizeMetaAccountId, isDemoDataEnabled } from "../utils.js";
@@ -812,25 +811,6 @@ router.get("/products", async (req, res) => {
       error: "Failed to load product intelligence",
       details: error.message
     });
-  }
-});
-/**
- * GET /api/data-center/creatives
- * Returns creative performance summaries
- */
-router.get("/creatives", async (req, res) => {
-  const { startDate, endDate, storeFilter } = req.query;
-
-  try {
-    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
-
-    const data = await getCreativeIntelligence(startStr, endStr, storeFilter as string);
-    res.json(data);
-
-  } catch (error: any) {
-    console.error("[Data Center API] Creatives error:", error);
-    res.status(500).json({ error: "Failed to load creative performance", details: error.message });
   }
 });
 
