@@ -14,7 +14,7 @@ export async function getProductIntelligence(startDate: string, endDate: string)
     }
   });
 
-  // 2. Filter orders by store_local_date fallback to createdAt
+  // 2. Filter orders by store_local_date; use createdAt only when local date is absent
   const filteredOrders = rawOrders.filter(order => {
     let orderDateStr = order.store_local_date;
     if (!orderDateStr && order.createdAt) {
@@ -133,8 +133,7 @@ export async function getProductIntelligence(startDate: string, endDate: string)
       dataSourceExplain: {
         primarySource: "Order",
         productTableUsedForMetadataOnly: hasProductMeta,
-        productPerformanceDailyUsed: false,
-        revenueRule: "orderTotal first, fallback to revenue",
+        revenueRule: "orderTotal preferred, revenue used only when orderTotal is absent",
         invalidOrderExcluded: true,
         adSpendAvailable: false,
         adSpendReason: "Product-level ad spend is not available until product-to-ad attribution is rebuilt."
