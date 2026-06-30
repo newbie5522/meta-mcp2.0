@@ -8,35 +8,6 @@ datasource db {
   url      = "file:./dev.db"
 }
 
-model AdInsight {
-  id               Int      @id @default(autoincrement())
-  accountId        String
-  level            String   @default("account")
-  campaignId       String   @default("")
-  adsetId          String   @default("")
-  adId             String   @default("")
-  date             String
-  accountName      String
-  reach            Int      @default(0)
-  impressions      Int      @default(0)
-  clicks           Int      @default(0)
-  spend            Float    @default(0)
-  addToCart        Int      @default(0)
-  initiateCheckout Int      @default(0)
-  purchases        Int      @default(0)
-  purchaseValue    Float    @default(0)
-  cpc              Float    @default(0)
-  ctr              Float    @default(0)
-  atcRate          Float    @default(0)
-  checkoutRate     Float    @default(0)
-  cpp              Float    @default(0)
-  roas             Float    @default(0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  @@unique([accountId, level, campaignId, adsetId, adId, date])
-}
-
 model Setting {
   key   String @id
   value String
@@ -201,39 +172,6 @@ model AdCreative {
   metaAssetId  String?
   hookRate     Float                      @default(0)
   ads          Ad[]
-  creativePerformanceDaily CreativePerformanceDaily[]
-}
-
-model ProductPerformanceDaily {
-  id               Int      @id @default(autoincrement())
-  date             String
-  storeId          Int
-  productId        String
-  productName      String
-  sku              String
-  category         String
-  revenue          Float    @default(0)
-  orders           Int      @default(0)
-  profit           Float    @default(0)
-  adSpend          Float    @default(0)
-  productRoas      Float    @default(0)
-  profitRoas       Float    @default(0)
-  ctr              Float    @default(0)
-  cpc              Float    @default(0)
-  cpm              Float    @default(0)
-  frequency        Float    @default(0)
-  refundRate       Float    @default(0)
-  inventory        Int      @default(0)
-  topRegion        String?
-  topCampaign      String?
-  topCreative      String?
-  aiRiskStatus     String?
-  trendStatus      String?
-  aiSuggestion     String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  @@unique([storeId, productId, date])
 }
 
 
@@ -409,36 +347,6 @@ model FactAudienceBreakdown {
   @@unique([date, level, account_id, dimension_type, dimension_value, dimension_value_secondary, campaign_id, adset_id, ad_id], name: "date_level_account_id_dimension_type_dimension_value_dimensi_key")
   @@index([account_id])
   @@index([date])
-}
-
-model CreativePerformanceDaily {
-  id               Int        @id @default(autoincrement())
-  creativeId       String
-  date             String
-  spend            Float      @default(0)
-  impressions      Int        @default(0)
-  clicks           Int        @default(0)
-  revenue          Float      @default(0)
-  storeId          Int?
-  creativeName     String?
-  type             String?
-  purchases        Int        @default(0)
-  roas             Float      @default(0)
-  ctr              Float      @default(0)
-  cpc              Float      @default(0)
-  cpm              Float      @default(0)
-  frequency        Float      @default(0)
-  hookRate         Float      @default(0)
-  aiRiskStatus     String?
-  trendStatus      String?
-  aiSuggestion     String?
-  createdAt        DateTime   @default(now())
-  updatedAt        DateTime   @updatedAt
-
-  creative         AdCreative @relation(fields: [creativeId], references: [creativeId], onDelete: Cascade)
-
-  @@unique([creativeId, date])
-  @@index([creativeId, date])
 }
 
 model DataCenterStoreDaily {
