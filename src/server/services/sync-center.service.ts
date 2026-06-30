@@ -361,7 +361,20 @@ export class SyncCenter {
   }
 
   // 5. sync_meta_structure
-  static async syncMetaStructure(taskChainId: string, triggeredBy: string, parentTaskId: string | null = null): Promise<string> {
+  static async syncMetaStructure(
+    taskChainId: string,
+    triggeredBy: string,
+    parentTaskId: string | null = null,
+    options: {
+      accountId?: string | null;
+      accountIds?: string[] | null;
+      limit?: number | string | null;
+    } = {}
+  ): Promise<string> {
+    const normalizedTaskAccountId = options.accountId
+      ? normalizeMetaAccountId(String(options.accountId))
+      : null;
+
     return this.runTask(
       "sync_meta_structure",
       "meta",
@@ -369,20 +382,60 @@ export class SyncCenter {
       taskChainId,
       parentTaskId,
       null,
-      null,
+      normalizedTaskAccountId,
       async () => {
         const token = await getMetaToken();
         if (!token) throw new Error("Meta Access Token is not set");
 
-        // Sync for each active/mapped account
-        const activeAccounts = await prisma.adAccount.findMany({
-          where: {
-            OR: [{ storeId: null }, { store: { mode: { not: "sandbox" } } }]
-          },
-          include: { store: true }
-        });
+        const requestedAccountIds = [
+  options.accountId,
+  ...(Array.isArray(options.accountIds) ? options.accountIds : [])
+]
+  .filter(Boolean)
+  .map(id => normalizeMetaAccountId(String(id)))
+  .filter((id, index, arr) => id && arr.indexOf(id) === index);
 
-        console.log(`[Sync Center] Syncing structures for ${activeAccounts.length} Meta Accounts...`);
+const take =
+  options.limit !== undefined && options.limit !== null
+    ? Math.max(1, Math.min(parseInt(String(options.limit), 10) || 1, 50))
+    : undefined;
+
+const activeAccounts = await prisma.adAccount.findMany({
+  where: requestedAccountIds.length > 0
+    ? {
+        fb_account_id: { in: requestedAccountIds },
+        OR: [{ storeId: null }, { store: { mode: { not: "sandbox" } } }]
+      }
+    : {
+        OR: [{ storeId: null }, { store: { mode: { not: "sandbox" } } }]
+      },
+  include: { store: true },
+  orderBy: { updatedAt: "desc" },
+  ...(take ? { take } : {})
+});
+
+console.log(
+  `[Sync Center] Syncing structures for ${activeAccounts.length} Meta Accounts. ` +
+  `requested=${JSON.stringify(requestedAccountIds)}, limit=${options.limit || null}`
+);
+
+if (activeAccounts.length === 0) {
+  return {
+    recordsFetched: 0,
+    recordsSaved: 0,
+    metadata: {
+      status: "NO_SYNC_TARGETS",
+      accountId: options.accountId || null,
+      accountIds: requestedAccountIds,
+      limit: options.limit || null,
+      targetAccountsCount: 0,
+      campaignsFetched: 0,
+      adsetsFetched: 0,
+      adsFetched: 0,
+      creativesFetched: 0
+    }
+  };
+}
         let creativeCountTotal = 0;
         let campaignsTotal = 0;
         let adsetsTotal = 0;
@@ -498,7 +551,17 @@ export class SyncCenter {
         return {
           recordsFetched: campaignsTotal + adsetsTotal + adsTotal,
           recordsSaved: campaignsTotal + adsetsTotal + adsTotal,
-          metadata: { campaignsFetched: campaignsTotal, adsetsFetched: adsetsTotal, adsFetched: adsTotal, creativesFetched: creativeCountTotal }
+          metadata: {
+            targetAccountsCount: activeAccounts.length,
+            accountId: options.accountId || null,
+            accountIds: requestedAccountIds,
+            limit: options.limit || null,
+            campaignsFetched: campaignsTotal,
+            adsetsFetched: adsetsTotal,
+            adsFetched: adsTotal,
+            creativesFetched: creativeCountTotal,
+            completedAt: new Date().toISOString()
+          }
         };
       }
     );
