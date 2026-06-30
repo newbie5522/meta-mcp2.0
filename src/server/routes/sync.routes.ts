@@ -88,8 +88,6 @@ router.get("/sync/status", async (req, res) => {
       })),
       dataSourceExplain: {
         primarySource: "FactMetaPerformance",
-        legacySource: "AdInsight",
-        legacyUsed: false
       }
     });
   } catch (error: any) {
