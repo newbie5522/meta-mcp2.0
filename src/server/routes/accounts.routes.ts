@@ -1,7 +1,7 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
-import { getMetaToken, normalizeMetaAccountId, isDemoDataEnabled } from "../utils.js";
+import { getMetaToken, normalizeMetaAccountId } from "../utils.js";
 import dayjs from "dayjs";
 
 const router = Router();
@@ -207,20 +207,6 @@ router.get("/db-list", async (req, res) => {
       }
     });
 
-    if (!isDemoDataEnabled()) {
-      const activeStores = await prisma.store.findMany({
-        where: {
-          NOT: [
-            { mode: "sandbox" },
-            { name: { in: ["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"] } },
-            { domain: { in: ["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"] } }
-          ]
-        }
-      });
-      const activeStoreIds = new Set(activeStores.map(s => s.id));
-      accounts = accounts.filter(acc => !acc.storeId || activeStoreIds.has(acc.storeId));
-    }
-
     const results = accounts.map((acc: any) => ({
       id: acc.fb_account_id,
       name: acc.fb_account_name || "",
@@ -295,39 +281,20 @@ router.get("/active-list", async (req, res) => {
         }
       }).catch(() => {});
 
-      console.warn(`[Meta Accounts Sync Option] Direct live fetch failed: ${formattedError.message}. Loading accounts from local database cache fallbacks store list.`);
+      console.warn(`[Meta Accounts Sync Option] Direct live fetch failed: ${formattedError.message}.`);
 
-      // Extremely Friendly Resilient Fallback: If FB API fails due to rate limits or permission locks (subcode 2446079),
-      // we load all existing ad accounts already in the database and present them as-is.
-      let dbAccounts = await prisma.adAccount.findMany({
-        orderBy: { fb_account_name: 'asc' }
-      });
-      if (!isDemoDataEnabled()) {
-        const activeStores = await prisma.store.findMany({
-          where: {
-            NOT: [
-              { mode: "sandbox" },
-              { name: { in: ["Shopline Fashion Store", "Shopify Electronics Hub", "Shoplazza Home Decor"] } },
-              { domain: { in: ["fashion.shoplineapp.com", "electronics.myshopify.com", "decor.shoplazza.com"] } }
-            ]
-          }
-        });
-        const activeStoreIds = new Set(activeStores.map(s => s.id));
-        dbAccounts = dbAccounts.filter(acc => !acc.storeId || activeStoreIds.has(acc.storeId));
-      }
-      const results = dbAccounts.map((acc: any) => ({
-        id: acc.fb_account_id,
-        name: acc.fb_account_name || "",
-        status: acc.recentActivity90d ? 'active' : 'inactive',
-        currency: acc.currency || "USD",
-        timezone: acc.timezone || "America/New_York",
-        isActive: acc.recentActivity90d || false,
-        isFallbackDbCopy: true,
-        fallbackWarning: `无法从 Meta 实时接口同步最新列表 (由于权限或暂时的网络问题: ${formattedError.message})。已加载本地缓存数据。`,
-        apiAccessStatus: formattedError.code === 80004 ? "rate_limited" : "blocked",
-        apiError: formattedError
-      }));
-      return res.json(results);
+const statusCode =
+  formattedError.code === 80004 || formattedError.error_subcode === 2446079
+    ? 429
+    : 502;
+
+return res.status(statusCode).json({
+  success: false,
+  error: "META_ACCOUNTS_LIVE_FETCH_FAILED",
+  message: "无法从 Meta 实时接口同步最新广告账户列表。请检查 Token 权限、频率限制或稍后重试。",
+  apiAccessStatus: statusCode === 429 ? "rate_limited" : "blocked",
+  apiError: formattedError
+});
     }
 
     if (allAccounts.length > syncLimit) {
