@@ -412,14 +412,35 @@ router.post("/sync/trigger", async (req, res) => {
     }
 
     if (taskType === SyncTaskType.SYNC_META_STRUCTURE) {
-      const taskId = await SyncCenter.syncMetaStructure(chainId, "frontend_safe_sync");
+      const taskId = await SyncCenter.syncMetaStructure(
+        chainId,
+        "frontend_safe_sync",
+        null,
+        {
+          accountId,
+          accountIds,
+              limit
+    }
+      );
+
+      const log = await prisma.syncLog.findUnique({ where: { id: taskId } });
+
+      const recordsFetched = log?.recordsFetched || 0;
+      const recordsSaved = log?.recordsSaved || 0;
+      const status = recordsFetched === 0 && recordsSaved === 0 ? "NO_NEW_DATA" : "SUCCESS";
+
       return res.json({
         success: true,
-        status: "SUCCESS",
-        message: "已启动并成功同步 Meta 创意结构拆解任务 (Campaign / AdSet / Ads)。",
+        status,
+        message:
+          status === "NO_NEW_DATA"
+            ? "Meta 广告结构同步完成，但当前目标账户没有返回新的 Campaign / AdSet / Ad / Creative 结构数据。"
+            : `Meta 广告结构同步完成：拉取 ${recordsFetched} 条结构记录，写入/更新 ${recordsSaved} 条。`,
         chainId,
         taskType,
-        taskIds: [taskId]
+        taskIds: [taskId],
+        recordsFetched,
+        recordsSaved
       } as SyncTriggerResponse);
     }
 
@@ -432,7 +453,13 @@ router.post("/sync/trigger", async (req, res) => {
       // 2. Ad-level performance: FactMetaPerformance level='ad'
       const structureTaskId = await SyncCenter.syncMetaStructure(
         chainId,
-        "frontend_safe_sync"
+        "frontend_safe_sync",
+        null,
+        {
+          accountId,
+          accountIds,
+          limit
+        }
       );
 
       const targets = await resolveSafeMetaTargets({
@@ -682,8 +709,17 @@ router.post("/sync/trigger", async (req, res) => {
         });
       }
 
+      const metaLedgerAccountIds = [
+        accountId,
+        ...(Array.isArray(accountIds) ? accountIds : [])
+      ]
+        .filter(Boolean)
+        .map(id => normalizeMetaAccountId(String(id)))
+        .filter((id, index, arr) => id && arr.indexOf(id) === index);
+
       const result = await refreshMetaDataCenterLedger({
         storeId: storeId ? Number(storeId) : null,
+        accountIds: metaLedgerAccountIds.length > 0 ? metaLedgerAccountIds : undefined,
         startDate,
         endDate,
         includeUnmapped: includeUnmapped === true || includeUnmapped === "true"
