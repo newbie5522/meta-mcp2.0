@@ -816,42 +816,23 @@ router.get("/products", async (req, res) => {
 
 /**
  * POST /api/data-center/creatives/:creativeId/analyze
- * Generates an automated AI creative analysis diagnostic report using Google Gemini, cached locally.
+ * Generates deterministic rule diagnostics from canonical FactMetaPerformance ad-level facts.
  */
 router.post("/creatives/:creativeId/analyze", async (req, res) => {
   const { creativeId } = req.params;
-  const { startDate, endDate, creativeUrl, mediaType } = req.body;
+  const { startDate, endDate, onlyCached } = req.body;
 
   try {
     const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const dateRange = `${startStr} 至 ${endStr}`;
 
-    // 1. Check if a report already exists for this entity and daterange
-    // Exclude old non-compliant fallback reports that lack model or metadata context
     const existing = await prisma.aiAnalysisReport.findFirst({
       where: {
         entityId: creativeId,
         entityType: "creative",
-        dateRange: `${startStr} 至 ${endStr}`,
-        NOT: {
-          OR: [
-            {
-              conclusion: { contains: "AI 未启用" },
-              model: null
-            },
-            {
-              conclusion: { contains: "离线" },
-              model: null
-            },
-            {
-              conclusion: { contains: ["GEMINI", "API", "KEY"].join("_") },
-              model: null
-            },
-            {
-              metadata: null
-            }
-          ]
-        }
+        dateRange,
+        model: "rule-diagnostic-engine"
       },
       orderBy: { createdAt: "desc" }
     });
@@ -860,52 +841,108 @@ router.post("/creatives/:creativeId/analyze", async (req, res) => {
       return res.json(existing);
     }
 
-    // 2. Fetch performance data for the requested creative ID
-    const stats = await prisma.creativePerformanceDaily.findMany({
+    if (onlyCached) {
+      return res.json({ cached: false });
+    }
+
+    const relatedAds = await prisma.ad.findMany({
+      where: { creativeId },
+      select: { id: true }
+    });
+
+    const relatedAdIds = relatedAds.map(ad => ad.id).filter(Boolean);
+
+    const orFilters: any[] = [
+      { creative_id: creativeId }
+    ];
+
+    if (relatedAdIds.length > 0) {
+      orFilters.push(
+        { ad_id: { in: relatedAdIds } },
+        { entity_id: { in: relatedAdIds } }
+      );
+    }
+
+    const stats = await prisma.factMetaPerformance.findMany({
       where: {
-        creativeId,
-        date: { gte: startStr, lte: endStr }
+        level: "ad",
+        date: { gte: startStr, lte: endStr },
+        OR: orFilters
       }
     });
+
+    if (stats.length === 0) {
+      return res.status(404).json({
+        error: "NO_CANONICAL_CREATIVE_FACTS",
+        message: "当前日期范围内没有找到该素材对应的 FactMetaPerformance 广告级成效数据。请先同步 Meta ad level insights 与素材结构。",
+        creativeId,
+        startDate: startStr,
+        endDate: endStr,
+        source: "FactMetaPerformance"
+      });
+    }
 
     const spend = stats.reduce((sum, item) => sum + (item.spend || 0), 0);
     const impressions = stats.reduce((sum, item) => sum + (item.impressions || 0), 0);
     const clicks = stats.reduce((sum, item) => sum + (item.clicks || 0), 0);
     const purchases = stats.reduce((sum, item) => sum + (item.purchases || 0), 0);
-    const revenue = stats.reduce((sum, item) => sum + (item.revenue || 0), 0);
+    const purchaseValue = stats.reduce((sum, item) => sum + (item.purchase_value || 0), 0);
 
     const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
     const cpc = clicks > 0 ? spend / clicks : 0;
     const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
-    const roas = spend > 0 ? revenue / spend : 0;
+    const roas = spend > 0 ? purchaseValue / spend : 0;
 
-    // 3. Generate a structured, compliant offline report with explicit offline tags and analytics context without reading any external API keys or SDKs
-    const fallbackReport = await prisma.aiAnalysisReport.create({
+    const riskItems: string[] = [];
+    if (spend > 100 && roas < 1.0) {
+      riskItems.push(`高消耗低回收：花费 $${spend.toFixed(2)}，ROAS ${roas.toFixed(2)}x。`);
+    }
+    if (ctr > 0 && ctr < 1.0) {
+      riskItems.push(`点击率偏低：CTR ${ctr.toFixed(2)}%，素材前置钩子可能不足。`);
+    }
+    if (purchases === 0 && spend > 50) {
+      riskItems.push(`已有消耗但没有购买转化：建议检查落地页承接和素材受众匹配。`);
+    }
+
+    const report = await prisma.aiAnalysisReport.create({
       data: {
         type: "creative",
         entityType: "creative",
         entityId: creativeId,
-        dateRange: `${startStr} 至 ${endStr}`,
-        conclusion: `【离线规则评估模式】\n[时段：${startStr} ~ ${endStr}] 核心评估：该素材在观察时段内产生的 ROAS 表现为 ${roas.toFixed(2)}。建议根据实时转化指标持续微调，加强针对特定跑量版位的投放精细度。`,
-        dataBasis: `source=CreativePerformanceDaily;mode=offline_rule_engine;isFallback=true;Spend: $${spend.toFixed(2)}, CTR: ${ctr.toFixed(2)}%, Clicks: ${clicks}, Purchases: ${purchases}, ROAS: ${roas.toFixed(2)}`,
-        riskPoints: `[离线规则评估] ${ctr < 1 ? "⚠️ 点击率低于1.0%偏低，建议优化创意视觉钩子。" : "✅ 整体转化表现稳健，暂无重大异常风险项。"}`,
-        priority: roas < 1.0 ? 1 : (roas > 2.5 ? 4 : 3),
-        model: "offline-rule-engine",
+        dateRange,
+        conclusion: `【规则诊断模式】\n[时段：${startStr} ~ ${endStr}] 该素材基于 FactMetaPerformance 广告级真实数据计算：花费 $${spend.toFixed(2)}，CTR ${ctr.toFixed(2)}%，购买 ${purchases}，ROAS ${roas.toFixed(2)}x。`,
+        dataBasis: `source=FactMetaPerformance;mode=rule_diagnostic_engine;Spend=$${spend.toFixed(2)};Impressions=${impressions};Clicks=${clicks};Purchases=${purchases};PurchaseValue=$${purchaseValue.toFixed(2)};CTR=${ctr.toFixed(2)}%;CPC=$${cpc.toFixed(2)};CPM=$${cpm.toFixed(2)};ROAS=${roas.toFixed(2)}`,
+        riskPoints: riskItems.length > 0 ? riskItems.join("\n") : "✅ 当前素材在该周期内未触发明显高风险规则。",
+        priority: roas < 1.0 && spend > 100 ? 1 : (ctr < 1.0 && spend > 50 ? 2 : 3),
+        model: "rule-diagnostic-engine",
         metadata: JSON.stringify({
-          isFallback: true,
-          mode: "offline_rule_engine",
-          aiProvider: "none",
-          primarySource: "CreativePerformanceDaily",
-          geminiEnabled: false,
-          metrics: { spend, impressions, clicks, purchases, revenue, ctr, cpc, cpm, roas }
+          mode: "rule_diagnostic_engine",
+          primarySource: "FactMetaPerformance",
+          creativeId,
+          relatedAdIds,
+          factRows: stats.length,
+          metrics: {
+            spend,
+            impressions,
+            clicks,
+            purchases,
+            purchaseValue,
+            ctr,
+            cpc,
+            cpm,
+            roas
+          }
         })
       }
     });
 
-    return res.json(fallbackReport);
+    return res.json(report);
   } catch (error: any) {
-    console.error("[Data Center API] Creative evaluation error:", error);
-    res.status(500).json({ error: "Creative evaluation failed", details: error.message });
+    console.error("[Data Center API] Creative rule diagnosis error:", error);
+    res.status(500).json({
+      error: "Creative rule diagnosis failed",
+      details: error.message
+    });
   }
 });
 
