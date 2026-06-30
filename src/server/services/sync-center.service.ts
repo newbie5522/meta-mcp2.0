@@ -404,10 +404,17 @@ const activeAccounts = await prisma.adAccount.findMany({
   where: requestedAccountIds.length > 0
     ? {
         fb_account_id: { in: requestedAccountIds },
-        OR: [{ storeId: null }, { store: { mode: { not: "sandbox" } } }]
+        OR: [
+          { storeId: null },
+          { store: { mode: { not: "sandbox" } } }
+        ]
       }
     : {
-        OR: [{ storeId: null }, { store: { mode: { not: "sandbox" } } }]
+        recentActivity90d: true,
+        OR: [
+          { storeId: null },
+          { store: { mode: { not: "sandbox" } } }
+        ]
       },
   include: { store: true },
   orderBy: { updatedAt: "desc" },
