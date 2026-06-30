@@ -283,18 +283,18 @@ router.get("/active-list", async (req, res) => {
 
       console.warn(`[Meta Accounts Sync Option] Direct live fetch failed: ${formattedError.message}.`);
 
-const statusCode =
-  formattedError.code === 80004 || formattedError.error_subcode === 2446079
-    ? 429
-    : 502;
+      const statusCode =
+        formattedError.code === 80004 || formattedError.error_subcode === 2446079
+          ? 429
+          : 502;
 
-return res.status(statusCode).json({
-  success: false,
-  error: "META_ACCOUNTS_LIVE_FETCH_FAILED",
-  message: "无法从 Meta 实时接口同步最新广告账户列表。请检查 Token 权限、频率限制或稍后重试。",
-  apiAccessStatus: statusCode === 429 ? "rate_limited" : "blocked",
-  apiError: formattedError
-});
+      return res.status(statusCode).json({
+        success: false,
+        error: "META_ACCOUNTS_LIVE_FETCH_FAILED",
+        message: "无法从 Meta 实时接口同步最新广告账户列表。请检查 Token 权限、频率限制或稍后重试。",
+        apiAccessStatus: statusCode === 429 ? "rate_limited" : "blocked",
+        apiError: formattedError
+      });
     }
 
     if (allAccounts.length > syncLimit) {
