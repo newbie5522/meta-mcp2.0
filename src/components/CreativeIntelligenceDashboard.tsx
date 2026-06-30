@@ -322,7 +322,7 @@ export function CreativeIntelligenceDashboard({
     fetchCreatives();
   }, [startStrKey, endStrKey, localStoreFilter]);
 
-  // Load cached or trigger offline rule-based performance analysis report
+  // Load cached or trigger canonical rule-based performance analysis report
   const handleTriggerAiAnalysis = async (creativeId: string) => {
     setAiLoading(true);
     try {
@@ -335,11 +335,11 @@ export function CreativeIntelligenceDashboard({
       });
       if (res.data) {
         setAiReport(res.data);
-        toast.success("✨ 离线规则诊断已生成。");
+        toast.success("✨ 规则诊断已生成。");
       }
     } catch (err: any) {
-      console.error("Failed to run offline rule audit on creative", err);
-      toast.error("离线规则诊断暂时无法生成，请稍后重试。");
+      console.error("Failed to run rule diagnosis on creative", err);
+      toast.error("规则诊断暂时无法生成，请稍后重试。");
     } finally {
       setAiLoading(false);
     }
@@ -371,7 +371,6 @@ export function CreativeIntelligenceDashboard({
     }
   }, [selectedPreviewCreative]);
 
-  // Daily records index by creative ID
 
   // Calculate ad spend per store ID inside this date range
   const storeSpends = React.useMemo(() => {
