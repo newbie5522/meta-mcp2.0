@@ -853,21 +853,34 @@ async function resolveSafeMetaTargets(input: {
     .map(id => normalizeMetaAccountId(String(id)))
     .filter((id, index, arr) => id && arr.indexOf(id) === index);
 
+  const take =
+    input.limit !== undefined && input.limit !== null
+      ? Math.max(1, Math.min(parseInt(String(input.limit), 10) || 1, 50))
+      : undefined;
+
   if (requested.length > 0) {
     const accounts = await prisma.adAccount.findMany({
-      where: { fb_account_id: { in: requested } },
+      where: {
+        fb_account_id: { in: requested },
+        OR: [
+          { storeId: null },
+          { store: { mode: { not: "sandbox" } } }
+        ]
+      },
       include: { store: true },
-      orderBy: { updatedAt: "desc" }
+      orderBy: { updatedAt: "desc" },
+      ...(take ? { take } : {})
     });
 
     if (accounts.length === 0) {
       const error: any = new Error(
-        "未找到可同步的已落库 Meta 广告账户。请先在配置中心拉取账户。"
+        "未找到可同步的已落库 Meta 广告账户，或该账户属于 sandbox / 不可同步范围。请先在配置中心拉取账户并确认账户状态。"
       );
       error.statusCode = 404;
       error.code = "ACCOUNT_NOT_FOUND";
       throw error;
     }
+
     return accounts;
   }
 
@@ -879,7 +892,8 @@ async function resolveSafeMetaTargets(input: {
       ]
     },
     include: { store: true },
-    orderBy: { updatedAt: "desc" }
+    orderBy: { updatedAt: "desc" },
+    ...(take ? { take } : {})
   });
 
   if (targets.length === 0) {
