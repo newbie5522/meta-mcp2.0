@@ -181,7 +181,7 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
     const currentDate = day.date_start;
     
     const itemAccountId = normalizeMetaAccountId(day.account_id || normAccountId);
-    const accountNameRaw = day.account_name || "Default Meta Account";
+    const accountNameRaw = day.account_name || itemAccountId;
 
     const actions = day.actions || [];
     const getActionValue = (type: string) => {
@@ -317,13 +317,7 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
     entry.purchaseValue += purchaseValue;
   }
 
-  // GLOBLAL METRIC GOVERNANCE PROTOCOL - READINESS TRANSITION
-  // Primary single source of truth: FactMetaPerformance model
-  // Legacy fallback source of truth: AdInsight model
-  // 
-  // [LEGACY-DOUBLE-WRITE]: The block below performs double-writing to AdInsight ONLY to support legacy backward-compatibility.
-  // No new features or endpoints are allowed to read from AdInsight.
-  // TODO: Decommission this write block during retirement Phase 4.
+  // Single source of truth: FactMetaPerformance.
   for (const dateKey of Object.keys(accountInsightsByDate)) {
     const item = accountInsightsByDate[dateKey];
     const cpc = item.clicks > 0 ? item.spend / item.clicks : 0;
@@ -403,8 +397,4 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
   }
 
   return syncedRecords;
-}
-
-export function isDemoDataEnabled(): boolean {
-  return process.env.NODE_ENV === "development" && process.env.ENABLE_DEMO_DATA === "true";
 }
