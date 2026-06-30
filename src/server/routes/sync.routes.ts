@@ -725,15 +725,27 @@ router.post("/sync/trigger", async (req, res) => {
         includeUnmapped: includeUnmapped === true || includeUnmapped === "true"
       });
 
+      const recordsFetched = result.recordsFetched || 0;
+      const recordsSaved = result.recordsSaved || 0;
+      const status =
+        recordsFetched === 0 && recordsSaved === 0
+          ? "NO_NEW_DATA"
+          : "SUCCESS";
+
       return res.json({
         success: true,
-        status: "SUCCESS",
-        message: `Meta 数据中心账本刷新完成`,
+        status,
+        message:
+          status === "NO_NEW_DATA"
+            ? "Meta 数据中心账本刷新完成，但当前目标账户和日期范围没有返回新的账户数据。"
+            : `Meta 数据中心账本刷新完成：拉取 ${recordsFetched} 条，写入/更新 ${recordsSaved} 条。`,
         chainId,
         taskType,
+        targetAccounts: metaLedgerAccountIds,
+        recordsFetched,
+        recordsSaved,
         ...result
       } as SyncTriggerResponse);
-    }
 
     if (taskType === SyncTaskType.REBUILD_ALL) {
       const summaryDays = days ? parseInt(String(days), 10) : 90;
