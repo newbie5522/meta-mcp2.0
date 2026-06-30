@@ -7,7 +7,7 @@ import timezone from "dayjs/plugin/timezone.js";
 import { getProductIntelligence } from "../services/product-intelligence.service.js";
 import { getAggregatedCreativeInsights } from "../services/creative-insights.service.js";
 import { syncStoreData } from "../services/store-sync.service.js";
-import { normalizeMetaAccountId, isDemoDataEnabled } from "../utils.js";
+import { normalizeMetaAccountId } from "../utils.js";
 import { getCountryAnalytics } from "../services/country-analytics.service.js";
 import { getStoreOrderFacts, getStoreOrderSummary } from "../services/order-fact.service.js";
 import { getMetaAccountPerformanceFacts, getMetaPerformanceSummary } from "../services/meta-performance-fact.service.js";
@@ -798,10 +798,7 @@ router.get("/products", async (req, res) => {
       count: products.length,
       dataSourceExplain: {
         primarySource: "Order",
-        metadataSource: "Product",
-        legacyUsed: false,
-        demoUsed: false,
-        productPerformanceDailyUsed: false
+        metadataSource: "Product"
       }
     });
   } catch (error: any) {
@@ -1556,9 +1553,8 @@ router.get("/max-date", async (req, res) => {
     res.json({
       maxDate: maxDateStr,
       dataSourceExplain: {
-        primarySource: "FactMetaPerformance",
-        legacySource: "AdInsight",
-        legacyUsed: false
+        metaDateSource: "FactMetaPerformance.date",
+        orderDateSource: "Order.store_local_date"
       }
     });
   } catch (err) {
