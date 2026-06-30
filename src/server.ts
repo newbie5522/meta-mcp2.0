@@ -1,18 +1,15 @@
-import express, { Request, Response, NextFunction } from "express";
+import express from "express";
 import cron from "node-cron";
 import path from "path";
-import axios from "axios";
 import prisma from "./db/index.js";
-import { subDays, format } from "date-fns";
-import nodemailer from "nodemailer";
-import crypto from "crypto";
 import { aggregateData } from "./server/services/aggregation.service.js";
 import { attributePurchases } from "./server/services/attribution.service.js";
 import { getMetaToken } from "./server/utils.js";
 import { SyncCenter } from "./server/services/sync-center.service.js";
 import { businessYesterdayString } from "./server/utils/business-time.js";
 import { startDataCenterAutoRefreshLoop } from "./server/services/data-center-auto-refresh.service.js";
-
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { createServer as createMcpServer } from "./mcp/server.js";
 
 
 
@@ -34,9 +31,8 @@ if (syncSchedulerEnabled) {
   });
 }
 
-// Log available models on startup to debug the "undefined" error
+// Read-only database connectivity check.
 
-// Log available models on startup to debug the "undefined" error
 async function checkDb() {
   try {
     await prisma.$connect();
@@ -86,9 +82,6 @@ app.get("/health", (req, res) => {
   res.json(getHealthPayload());
 });
 
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import { createServer as createMcpServer } from "./mcp/server.js";
-
 // MCP Transport states
 const mcpTransports = new Map<string, SSEServerTransport>();
 
@@ -121,75 +114,6 @@ app.post("/mcp/message", async (req, res) => {
   }
   await transport.handlePostMessage(req, res);
 });
-
-// Helper to get Meta Access Token from DB or Env
-
-
-// Helper to extract Meta Error Message
-
-
-// 1. 获取所有广告账户
-
-
-// 2. 同步数据
-
-
-// 2a. 同步店铺和订单数据 (和 Meta 广告同步分开)
-
-
-// 2b. 同步创意和素材数据 (和 Meta 广告及店铺同步分开)
-
-
-// --- CACHING LOGIC ---
-const cache = new Map<string, { data: any; expiry: number }>();
-const CACHE_TTL = 10 * 60 * 1000; // Increased to 10 minutes
-
-
-
-
-
-// [NEW API] 单个账户层级详情 (Campaigns, AdSets, Ads)
-
-
-// GET /api/accounts/:accountId/audience-insights
-
-
-// [NEW API] 获取账户层级结构 (用于级联过滤)
-
-
-// 3. 获取本地数据
-
-
-// 4. 系统设置
-
-
-
-
-// --- NEW ACCOUNT MAPPING ENDPOINTS ---
-
-// 获取数据库中已保存的账户映射
-
-
-// 批量保存/更新账户映射
-
-
-// 获取本地已有的去重账户列表 (用于设置页面分配 - 只看近期 30 天内有消耗且未禁用的账户)
-
-
-// --- NEW ACCOUNT MONITORING ENDPOINTS ---
-
-// GET /api/monitoring/accounts - Detailed monitoring for all accounts
-
-
-// POST /api/monitoring/accounts/:accountId/reset - Reset spend cap
-
-
-// --- END MONITORING ENDPOINTS ---
-
-
-
-
-// --- User Authentication and Management ---
 
 // ---后台静默同步逻辑 (Background Auto-Sync) ---
 async function runBackgroundSync() {
