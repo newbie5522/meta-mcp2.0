@@ -746,6 +746,7 @@ router.post("/sync/trigger", async (req, res) => {
         recordsSaved,
         ...result
       } as SyncTriggerResponse);
+      }
 
     if (taskType === SyncTaskType.REBUILD_ALL) {
       const summaryDays = days ? parseInt(String(days), 10) : 90;
