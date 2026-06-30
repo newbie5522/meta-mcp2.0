@@ -135,19 +135,19 @@ async function runBackgroundSync() {
 // Run daily retroactive 30-day Meta Insights sync at 1:00 AM (attributions correction)
 if (syncSchedulerEnabled) {
   cron.schedule("0 1 * * *", async () => {
-  const syncId = "daily-30d-" + Math.random().toString(36).substring(2, 8);
-  console.log(`[Retroactive Sync | ${syncId}] 🔄 Starting daily 30-day retroactive Meta Insights sync...`);
-  try {
-    const token = await getMetaToken();
-    if (!token) {
-      console.log(`[Retroactive Sync | ${syncId}] ⚠️ Skip: Meta Token missing`);
-      return;
+    const syncId = "daily-30d-" + Math.random().toString(36).substring(2, 8);
+    console.log(`[Retroactive Sync | ${syncId}] 🔄 Starting daily 30-day retroactive Meta Insights sync...`);
+    try {
+      const token = await getMetaToken();
+      if (!token) {
+        console.log(`[Retroactive Sync | ${syncId}] ⚠️ Skip: Meta Token missing`);
+        return;
+      }
+      await SyncCenter.syncMetaInsights(syncId, "daily_scheduled_30d", null, 30);
+      console.log(`[Retroactive Sync | ${syncId}] ✅ Completed retroactive 30-day sync.`);
+    } catch (error: any) {
+      console.error(`[Retroactive Sync | ${syncId}] ❌ Failed:`, error.message);
     }
-    await SyncCenter.syncMetaInsights(syncId, "daily_scheduled_30d", null, 30);
-    console.log(`[Retroactive Sync | ${syncId}] ✅ Completed retroactive 30-day sync.`);
-  } catch (error: any) {
-    console.error(`[Retroactive Sync | ${syncId}] ❌ Failed:`, error.message);
-  }
   });
 }
 
