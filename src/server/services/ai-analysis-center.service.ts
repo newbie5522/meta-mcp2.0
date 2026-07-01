@@ -239,7 +239,7 @@ export async function buildAnalysisContext(params: AnalysisCenterParams): Promis
             purchaseValue: 0,
             mediaType: "UNKNOWN"
           };
-      }
+        }
 
         grouped[creativeId].spend += item.spend || 0;
         grouped[creativeId].impressions += item.impressions || 0;
@@ -266,9 +266,9 @@ export async function buildAnalysisContext(params: AnalysisCenterParams): Promis
         })
         .sort((a: any, b: any) => b.spend - a.spend)
         .slice(0, 5);
-
+  
       metrics = { count: creativeList.length, topCreatives: creativeList };
-
+  
       if (creativeList.length === 0) {
         severity = "info";
         findings.push("此时间范围内未录得任何广告级素材表现数据。");
