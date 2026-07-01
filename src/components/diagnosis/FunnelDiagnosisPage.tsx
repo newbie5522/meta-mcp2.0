@@ -150,7 +150,7 @@ export function FunnelDiagnosisPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">转化漏斗诊断</h1>
           <p className="text-sm text-slate-500 mt-1">
-            全链路展现到独立站成交的漏斗监测。追踪在每个节点上流失的用户比率，分析底层物理漏洞。
+            查看从广告点击到下单成交的关键环节，帮助团队发现转化流失位置。
           </p>
         </div>
 
@@ -203,16 +203,16 @@ export function FunnelDiagnosisPage() {
             onClick={refetch}
             className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold font-mono inline-flex items-center gap-1.5"
           >
-            <RefreshCw className="w-3.5 h-3.5" /> 重新连接并刷新
+            <RefreshCw className="w-3.5 h-3.5" /> 重新加载
           </button>
         </div>
       ) : !hasFunnelSnapshot ? (
         <div className="bg-white/50 border border-slate-200 border-dashed rounded-2xl p-16 text-center space-y-4 max-w-3xl mx-auto">
           <Database className="w-12 h-12 text-slate-400 mx-auto" />
           <div className="space-y-2">
-            <h4 className="text-sm font-bold text-slate-700">当前没有可用漏斗快照。请先同步 Meta 和店铺订单数据。</h4>
+            <h4 className="text-sm font-bold text-slate-700">暂无可执行漏斗诊断建议</h4>
             <p className="text-xs text-slate-400">
-              底层的规则引擎在所选日期区间内，未捕获到具有 evidence.funnelSnapshot 的任何诊断报告。空数据库或未绑定账户时亦会出现此状态。
+              当前日期范围内没有发现明显的转化流失异常。请确认广告数据和店铺订单已同步。
             </p>
           </div>
         </div>
@@ -226,7 +226,7 @@ export function FunnelDiagnosisPage() {
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
               <div className="space-y-1">
-                <span className="font-bold text-amber-950 block">缺漏流损指标 (missingMetrics):</span>
+                <span className="font-bold text-amber-950 block">缺失指标：</span>
                 {allMissingMetrics.length === 0 ? (
                   <p className="text-amber-800 italic">检测通过。无任何指标字段阻碍分析。</p>
                 ) : (
@@ -241,7 +241,7 @@ export function FunnelDiagnosisPage() {
               </div>
 
               <div className="space-y-1">
-                <span className="font-bold text-amber-950 block">快照异常备注 (notes):</span>
+                <span className="font-bold text-amber-950 block">异常说明：</span>
                 {allNotes.length === 0 ? (
                   <p className="text-amber-850 italic">未收到附加快照审计提示。</p>
                 ) : (
