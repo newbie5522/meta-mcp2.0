@@ -995,11 +995,7 @@ export async function detectCreativeIssues(params: any): Promise<any[]> {
       continue;
     }
 
-    const creativeName =
-      rec.creative_name ||
-      rec.ad_name ||
-      rec.entity_name ||
-      cid;
+    const creativeName = cid;
 
     if (!creativeMap[cid]) {
       creativeMap[cid] = {
