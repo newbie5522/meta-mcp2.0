@@ -16,6 +16,11 @@ import {
   FileSpreadsheet,
   Calendar
 } from "lucide-react";
+import {
+  triggerSyncTask,
+  formatSyncReceipt,
+  getSyncErrorMessage
+} from "@/lib/sync-trigger";
 
 interface SyncStatus {
   healthStatus: string;
@@ -111,27 +116,29 @@ export function SyncCenterPage() {
 
   const handleRebuildStoreLedger = async () => {
     if (!selectedStoreId) return;
-    setIsTriggering("rebuild_store_ledger");
+
+    setIsTriggering("refresh_store_datacenter_ledger");
     setInfoMessage(null);
+
     try {
-      const response = await fetch("/api/sync/rebuild-store-ledger", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          storeId: selectedStoreId,
-          startDate: rebuildStartDate,
-          endDate: rebuildEndDate
-        })
+      const data = await triggerSyncTask({
+        taskType: "refresh_store_datacenter_ledger",
+        storeId: selectedStoreId,
+        startDate: rebuildStartDate,
+        endDate: rebuildEndDate
       });
-      const data = await response.json();
-      if (response.ok) {
-        setInfoMessage({ text: "店铺销售账目重构级联刷流与汇总数据对齐完成！", type: "success" });
-        fetchStatusAndData();
-      } else {
-        setInfoMessage({ text: data.error || data.details || "重构店铺账目失败", type: "error" });
-      }
+
+      setInfoMessage({
+        text: formatSyncReceipt(data),
+        type: "success"
+      });
+
+      await fetchStatusAndData();
     } catch (err: any) {
-      setInfoMessage({ text: err.message || "请求异常", type: "error" });
+      setInfoMessage({
+        text: getSyncErrorMessage(err),
+        type: "error"
+      });
     } finally {
       setIsTriggering(null);
     }
@@ -139,27 +146,30 @@ export function SyncCenterPage() {
 
   const handleRebuildMetaLedger = async () => {
     if (!selectedAccountId) return;
-    setIsTriggering("rebuild_meta_ledger");
+
+    setIsTriggering("refresh_meta_datacenter_ledger");
     setInfoMessage(null);
+  
     try {
-      const response = await fetch("/api/sync/rebuild-meta-ledger", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accountId: selectedAccountId,
-          startDate: rebuildStartDate,
-          endDate: rebuildEndDate
-        })
+      const data = await triggerSyncTask({
+        taskType: "refresh_meta_datacenter_ledger",
+        accountId: selectedAccountId,
+        startDate: rebuildStartDate,
+        endDate: rebuildEndDate,
+        includeUnmapped: false
       });
-      const data = await response.json();
-      if (response.ok) {
-        setInfoMessage({ text: "Meta 广告消耗账目强制清洗、API重拉与级联数据对齐完成！", type: "success" });
-        fetchStatusAndData();
-      } else {
-        setInfoMessage({ text: data.error || data.details || "重构 Meta 账目失败", type: "error" });
-      }
+
+      setInfoMessage({
+        text: formatSyncReceipt(data),
+        type: "success"
+      });
+
+      await fetchStatusAndData();
     } catch (err: any) {
-      setInfoMessage({ text: err.message || "请求异常", type: "error" });
+      setInfoMessage({
+        text: getSyncErrorMessage(err),
+        type: "error"
+      });
     } finally {
       setIsTriggering(null);
     }
@@ -174,55 +184,70 @@ export function SyncCenterPage() {
     return () => clearInterval(timer);
   }, []);
 
-  const handleTriggerTask = async (taskType: string, storeIdStr?: string) => {
+  const handleTriggerTask = async (
+    taskType: string,
+    options: {
+      storeId?: string | number | null;
+      accountId?: string | null;
+      startDate?: string;
+      endDate?: string;
+      days?: number;
+      limit?: number;
+      includeUnmapped?: boolean;
+    } = {}
+  ) => {
     setIsTriggering(taskType);
     setInfoMessage(null);
+
     try {
-      const response = await fetch("/api/sync/trigger", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskType, storeId: storeIdStr }),
+      const data = await triggerSyncTask({
+        taskType,
+        ...options
       });
-      const data = await response.json();
-      if (response.ok) {
-        setInfoMessage({ text: data.message || "任务已触发！", type: "success" });
-        fetchStatusAndData();
-      } else {
-        if (data.message || data.details) {
-          setInfoMessage({ text: data.message || data.details, type: "error" });
-          return;
-        }
-        setInfoMessage({ text: data.error || "触发失败", type: "error" });
-      }
+
+      setInfoMessage({
+        text: formatSyncReceipt(data),
+        type: "success"
+      });
+
+      await fetchStatusAndData();
     } catch (err: any) {
-      setInfoMessage({ text: err.message || "请求失败", type: "error" });
+      setInfoMessage({
+        text: getSyncErrorMessage(err),
+        type: "error"
+      });
     } finally {
       setIsTriggering(null);
     }
   };
 
   const handleFullRebuild = async () => {
-    setIsTriggering("rebuild");
+    setIsTriggering("rebuild_all");
     setInfoMessage(null);
     setShowConfirmRebuild(false);
+
     try {
-      const response = await fetch("/api/sync/rebuild", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
+      const days = Math.max(
+        1,
+        dayjs(rebuildEndDate).diff(dayjs(rebuildStartDate), "day") + 1
+      );
+
+      const data = await triggerSyncTask({
+        taskType: "rebuild_all",
+        days
       });
-      const data = await response.json();
-      if (response.ok) {
-        setInfoMessage({ text: data.message, type: "success" });
-        fetchStatusAndData();
-      } else {
-        if (data.message || data.details) {
-          setInfoMessage({ text: data.message || data.details, type: "error" });
-          return;
-        }
-        setInfoMessage({ text: data.error || "运行历史重建失败", type: "error" });
-      }
+
+      setInfoMessage({
+        text: formatSyncReceipt(data),
+        type: "success"
+      });
+
+      await fetchStatusAndData();
     } catch (err: any) {
-      setInfoMessage({ text: err.message || "网络请求异常", type: "error" });
+      setInfoMessage({
+        text: getSyncErrorMessage(err),
+        type: "error"
+      });
     } finally {
       setIsTriggering(null);
     }
@@ -486,7 +511,11 @@ export function SyncCenterPage() {
                     {stores.length === 0 && <option value="">暂无店铺</option>}
                   </select>
                   <button
-                    onClick={() => handleTriggerTask("sync_store_orders", selectedStoreId)}
+                    onClick={() =>
+                      handleTriggerTask("sync_store_orders", {
+                        storeId: selectedStoreId
+                      })
+                    }
                     disabled={!!isTriggering || !selectedStoreId}
                     className="truncate flex items-center gap-1 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition disabled:opacity-50"
                   >
