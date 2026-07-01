@@ -16,7 +16,6 @@ async function runSmokeMenuDataChain() {
   let createdCreativeId: string | null = null;
   let createdFactIds: number[] = [];
   let createdAudienceIds: number[] = [];
-  let createdCreativePerfIds: number[] = [];
   let createdAccountDailyId: string | null = null;
   let createdStoreDailyId: string | null = null;
 
@@ -172,6 +171,7 @@ async function runSmokeMenuDataChain() {
         campaign_id: "camp_smoke_123",
         adset_id: "adset_smoke_456",
         ad_id: "ad_smoke_789",
+        creative_id: "creative_smoke_999",
         entity_id: "ad_smoke_789",
         spend: 250.00,
         impressions: 10000,
