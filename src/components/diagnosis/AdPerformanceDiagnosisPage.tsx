@@ -174,9 +174,9 @@ export function AdPerformanceDiagnosisPage() {
                        <div className="flex items-center justify-between">
                          <span className="text-[10px] font-mono text-slate-420 font-bold uppercase">{iss.issueId}</span>
                          <span className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase ${
-                           {getSeverityLabel(iss.severity)} ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"
+                          iss.severity === "critical" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"
                          }`}>
-                           {iss.severity}
+                           {getSeverityLabel(iss.severity)}
                          </span>
                        </div>
                        <h4 className="text-xs font-bold text-slate-905">{iss.title}</h4>
@@ -209,7 +209,7 @@ export function AdPerformanceDiagnosisPage() {
                        <div className="flex items-center justify-between">
                          <span className="text-[10px] font-mono text-slate-420 font-bold uppercase">{iss.issueId}</span>
                          <span className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase bg-purple-100 text-purple-800`}>
-                           {iss.severity}
+                           {getSeverityLabel(iss.severity)}
                          </span>
                        </div>
                        <h4 className="text-xs font-bold text-slate-905">{iss.title}</h4>
