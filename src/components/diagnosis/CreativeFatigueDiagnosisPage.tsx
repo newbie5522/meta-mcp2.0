@@ -170,13 +170,13 @@ export function CreativeFatigueDiagnosisPage() {
                 <h4 className="text-xs font-bold text-slate-500 uppercase">检测到素材异动总数</h4>
               </div>
               <div className="text-2xl font-extrabold text-slate-900 mt-2">{relevantIssues.length} 项</div>
-              <p className="text-[10px] text-slate-400 mt-2 font-medium">全量已被引擎标识需要调整或疲劳度激增的物料</p>
+              <p className="text-[10px] text-slate-400 mt-2 font-medium">当前需要关注的素材异动数量</p>
             </div>
 
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
               <div className="flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-amber-500" />
-                <h4 className="text-xs font-bold text-slate-500 uppercase">创意吸引阶段 (creative_attraction)</h4>
+                <h4 className="text-xs font-bold text-slate-500 uppercase">素材吸引力阶段</h4>
               </div>
               <div className="text-2xl font-extrabold text-amber-600 mt-2">{creativeAttractionCount} 项</div>
               <p className="text-[10px] text-slate-400 mt-2 font-medium">在展现、频次压迫和初期点击率维度流失预警</p>
@@ -185,7 +185,7 @@ export function CreativeFatigueDiagnosisPage() {
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
               <div className="flex items-center gap-2">
                 <Activity className="w-4 h-4 text-orange-500" />
-                <h4 className="text-xs font-bold text-slate-500 uppercase">文案/创意定位领域 (creative)</h4>
+                <h4 className="text-xs font-bold text-slate-500 uppercase">文案与创意定位</h4>
               </div>
               <div className="text-2xl font-extrabold text-orange-600 mt-2">{creativeOptimizationCount} 项</div>
               <p className="text-[10px] text-slate-400 mt-2 font-medium font-sans">素材多维度交叉归因导致点击漏洞的领域专项数</p>
@@ -194,7 +194,7 @@ export function CreativeFatigueDiagnosisPage() {
 
           {/* Issues list */}
           <div className="space-y-6">
-            <h3 className="font-bold text-slate-900 text-sm">疲劳与转化异动素材列表 (最高 PriorityScore 前 5 条)</h3>
+            <h3 className="font-bold text-slate-900 text-sm">优先处理的素材问题</h3>
             
             <div className="space-y-4">
               {topIssues.map((iss) => (
@@ -202,12 +202,12 @@ export function CreativeFatigueDiagnosisPage() {
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 pb-3">
                     <div>
                       <span className="px-2 py-0.5 bg-slate-100 text-slate-705 text-[10px] font-bold rounded mr-2">
-                        ID: {iss.issueId}
+                        编号：{iss.issueId}
                       </span>
                       <span className="font-bold text-slate-900 text-sm">{iss.title}</span>
                     </div>
                     <span className="text-[11px] font-mono font-bold text-white bg-blue-600 px-2.5 py-1 rounded-full">
-                      Priority Score: {iss.priorityScore ?? "--"}
+                      优先级：{iss.priorityScore ?? "--"}
                     </span>
                   </div>
 
@@ -234,14 +234,14 @@ export function CreativeFatigueDiagnosisPage() {
                   {/* indicators threshold */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-2 text-[10px] text-slate-505 border-t border-slate-100 border-dashed">
                     <div>
-                      <span className="font-bold text-slate-750">限制级别(limitations):</span>{" "}
+                      <span className="font-bold text-slate-750">数据限制：</span>{" "}
                       <span className="font-mono text-slate-800">
                         {Array.isArray(iss.limitations) ? iss.limitations.join(", ") : String(iss.limitations || "无")}
                       </span>
                     </div>
 
                     <div>
-                      <span className="font-bold text-slate-750">基准转化校验(validationMetrics):</span>{" "}
+                      <span className="font-bold text-slate-750">校验指标：</span>{" "}
                       <span className="font-mono text-slate-800 bg-slate-100 px-1 py-0.5 rounded">
                         {Array.isArray(iss.validationMetrics) ? iss.validationMetrics.join("; ") : String(iss.validationMetrics || "未配置")}
                       </span>
