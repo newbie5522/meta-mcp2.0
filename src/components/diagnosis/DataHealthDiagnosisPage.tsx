@@ -123,7 +123,7 @@ export function DataHealthDiagnosisPage() {
           <div className="flex items-start gap-3">
             <AlertTriangle className="w-6 h-6 text-red-650 shrink-0 mt-0.5" />
             <div>
-              <h4 className="text-sm font-bold text-red-900">诊断结果加载失败 (API Connections Failed)</h4>
+              <h4 className="text-sm font-bold text-red-900">诊断结果加载失败</h4>
               <p className="text-xs text-red-700 mt-1">{error.message}</p>
             </div>
           </div>
