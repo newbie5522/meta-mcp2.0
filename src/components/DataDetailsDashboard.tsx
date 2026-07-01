@@ -22,6 +22,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import {
+  triggerSyncTask,
+  formatSyncReceipt,
+  getSyncErrorMessage
+} from "@/lib/sync-trigger";
 
 import { useNavigate } from "react-router-dom";
 
@@ -63,30 +68,36 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
 
   const handleMetaRealtimeSync = async () => {
     setMetaSyncing(true);
-    const toastId = toast.loading("正在触发 DataCenter 广告主链记账刷新和投流对齐...");
+
+    const toastId = toast.loading(
+      "正在触发 Meta DataCenter 账本刷新..."
+    );
+
     try {
       const startStr = format(startDate, "yyyy-MM-dd");
       const endStr = format(endDate, "yyyy-MM-dd");
-
-      const response = await axios.post("/api/sync/data-center/refresh-meta", {
+  
+      const data = await triggerSyncTask({
+        taskType: "refresh_meta_datacenter_ledger",
         startDate: startStr,
         endDate: endStr,
         storeId: storeFilter === "all" ? null : Number(storeFilter),
         includeUnmapped: true
       });
 
-      if (response.data?.success) {
-        toast.success(
-          `DataCenter Meta 记账快照刷新成功！广告投放花费及多维转化指标重新对齐。`,
-          { id: toastId, duration: 5000 }
-        );
-      } else {
-        toast.error("Meta 记账快照刷新未成功", { id: toastId });
-      }
+      toast.success(formatSyncReceipt(data), {
+        id: toastId,
+        duration: 7000
+      });
+
       await loadData();
     } catch (error: any) {
       console.error("Meta realtime sync error:", error);
-      toast.error(`实时刷新失败: ${getApiErrorMessage(error)}`, { id: toastId });
+
+      toast.error(`实时刷新失败: ${getSyncErrorMessage(error)}`, {
+        id: toastId,
+        duration: 8000
+      });
     } finally {
       setMetaSyncing(false);
     }
@@ -179,26 +190,34 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
 
   const handleSyncAccounts = async () => {
     setSyncing(true);
-    const toastId = toast.loading("开始为全局广告账户重构 DataCenter 记账快照...");
+
+    const toastId = toast.loading(
+      "开始刷新 Meta 广告账户 DataCenter 快照..."
+    );
+
     try {
       const startStr = format(startDate, "yyyy-MM-dd");
       const endStr = format(endDate, "yyyy-MM-dd");
 
-      const response = await axios.post("/api/sync/data-center/refresh-meta", {
+      const data = await triggerSyncTask({
+        taskType: "refresh_meta_datacenter_ledger",
         startDate: startStr,
         endDate: endStr,
         storeId: storeFilter === "all" ? null : Number(storeFilter),
         includeUnmapped: true
       });
 
-      if (response.data?.success) {
-        toast.success("Meta 广告账户 DataCenter 快照刷新及降维指标核实完成！", { id: toastId });
-      } else {
-        toast.success("Meta 广告表现同步完成。", { id: toastId });
-      }
+      toast.success(formatSyncReceipt(data), {
+        id: toastId,
+        duration: 7000
+      });
+
       await loadData();
     } catch (error: any) {
-      toast.error(`Meta 同步失败: ${getApiErrorMessage(error)}`, { id: toastId });
+      toast.error(`Meta 同步失败: ${getSyncErrorMessage(error)}`, {
+        id: toastId,
+        duration: 8000
+      });
     } finally {
       setSyncing(false);
     }
