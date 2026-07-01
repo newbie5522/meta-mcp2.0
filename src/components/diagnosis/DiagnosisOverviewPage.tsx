@@ -111,7 +111,7 @@ export function DiagnosisOverviewPage() {
           </div>
           <div className="ml-3">
             <p className="text-xs text-amber-800 font-bold">
-              当前页面已接入离线规则诊断引擎。若数据库为空或所选日期范围内没有可诊断记录，将显示空状态，不会展示演示数据。
+              当前页面仅展示真实诊断结果；如果所选时间内没有异常，会显示为空状态。
             </p>
           </div>
         </div>
@@ -124,11 +124,11 @@ export function DiagnosisOverviewPage() {
         
         <div className="relative z-10 max-w-2xl space-y-3">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md text-xs font-semibold uppercase tracking-wider text-blue-200">
-            <Compass className="w-3.5 h-3.5" /> AI Engine Core
+            <Compass className="w-3.5 h-3.5" />经营诊断
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">AI 诊断中心</h1>
           <p className="text-indigo-105 text-sm sm:text-base leading-relaxed">
-            基于 Meta 广告数据与店铺订单数据，跑离线规则流并配合负责人制，提现全闭环解决策略。
+            基于广告数据与店铺订单，帮助团队发现异常、定位问题并给出处理建议。
           </p>
         </div>
 
@@ -180,7 +180,7 @@ export function DiagnosisOverviewPage() {
           <div className="flex items-start gap-3">
             <AlertCircle className="w-6 h-6 text-red-600 shrink-0 mt-0.5" />
             <div>
-              <h4 className="text-sm font-bold text-red-900">接口诊断加载失败 (API Connection Error)</h4>
+              <h4 className="text-sm font-bold text-red-900">诊断结果加载失败</h4>
               <p className="text-xs text-red-700 mt-1">{error.message}</p>
             </div>
           </div>
@@ -189,7 +189,7 @@ export function DiagnosisOverviewPage() {
               onClick={refetch}
               className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
             >
-              <RefreshCw className="w-3.5 h-3.5" /> 重新连接并刷新
+              <RefreshCw className="w-3.5 h-3.5" /> 重新加载
             </button>
           </div>
         </div>
