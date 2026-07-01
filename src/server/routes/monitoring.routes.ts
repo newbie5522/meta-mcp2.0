@@ -174,8 +174,8 @@ router.get("/accounts", async (req, res) => {
       },
       dataSourceExplain: {
         primarySource: "FactMetaPerformance",
-        legacySource: "AdInsight",
-        legacyUsed: false
+        fallbackSource: null,
+        fallbackUsed: false
       }
     });
   } catch (error: any) {
