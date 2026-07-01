@@ -18,7 +18,7 @@ export interface AggregatedCreative {
   link_url: string;
   previewUrl: string;
   imageUrl: string;
-  type: "image" | "video" | "carousel" | "unknown";
+  type: "IMAGE" | "VIDEO" | "CAROUSEL" | "UNKNOWN";
   
   // Aggregated performance metrics
   spend: number;
@@ -201,6 +201,11 @@ export async function getAggregatedCreativeInsights(params: {
       return "video";
     }
     return "unknown";
+  };
+
+  const formatCreativeTypeForClient = (typeValue: string | null | undefined): AggregatedCreative["type"] => {
+    const parsed = parseCreativeType(typeValue);
+    return parsed.toUpperCase() as AggregatedCreative["type"];
   };
 
   // Grouping mapping
@@ -435,7 +440,7 @@ export async function getAggregatedCreativeInsights(params: {
       link_url: item.link_url,
       previewUrl: item.previewUrl,
       imageUrl: item.imageUrl,
-      type: item.type.toUpperCase(), // Match uppercase client types (IMAGE / VIDEO / CAROUSEL)
+      type: formatCreativeTypeForClient(item.type),
       spend: parseFloat(item.spend.toFixed(2)),
       impressions: item.impressions,
       clicks: item.clicks,
@@ -482,7 +487,7 @@ export async function getAggregatedCreativeInsights(params: {
 
   // Filter by creativeType
   if (filterType) {
-    list = list.filter(item => item.type === filterType);
+    list = list.filter(item => item.type.toLowerCase() === filterType);
   }
 
   // Total count after filtration
