@@ -66,6 +66,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const [syncing, setSyncing] = useState(false);
   const [metaSyncing, setMetaSyncing] = useState(false);
   const [autoRefreshPolling, setAutoRefreshPolling] = useState(false);
+  const [showHistoricalAccounts, setShowHistoricalAccounts] = useState(false);
 
   const handleMetaRealtimeSync = async () => {
     setMetaSyncing(true);
@@ -124,6 +125,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
           startDate: startStr,
           endDate: endStr,
           storeId: storeFilter
+          includeHistoricalAccounts: showHistoricalAccounts ? "true" : "false"
         }
       });
 
@@ -143,7 +145,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
 
   useEffect(() => {
     loadData();
-  }, [startDate, endDate, storeFilter]);
+  }, [startDate, endDate, storeFilter, showHistoricalAccounts]);
 
   const shouldPollAutoRefresh = Boolean(
     data?.freshness?.refreshing ||
@@ -166,7 +168,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
     return () => {
       window.clearInterval(timer);
     };
-  }, [shouldPollAutoRefresh, startDate, endDate, storeFilter]);
+  }, [shouldPollAutoRefresh, startDate, endDate, storeFilter, showHistoricalAccounts]);
   
   // Client filtering + sorting based on requirements
   const filteredAccounts = useMemo(() => {
@@ -271,6 +273,9 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   };
 
   const allAccountsCount = data.accountsInventoryCount ?? data.summary?.totalAccounts ?? data.accounts?.length ?? 0;
+  const totalAdAccountsInventoryCount = data.totalAdAccountsInventoryCount ?? allAccountsCount;
+  const hiddenHistoricalAccountsCount = data.hiddenHistoricalAccountsCount ?? 0;
+  const accountDisplayScope = data.accountDisplayScope || data.dataSourceExplain?.accountDisplayScope || "active_only";
   const accountsWithFactsCount = data.accountsWithFactsCount ?? data.accounts?.filter(a => a.lastSyncedAt || (a.impressions || 0) > 0 || (a.clicks || 0) > 0).length ?? 0;
   const withSpendCount = data.accountsWithSpendCount ?? data.summary?.spendAccounts ?? data.accounts?.filter(a => (a.spend || 0) > 0).length ?? 0;
   const unboundWithSpendCount = data.accounts?.filter(a => !a.isBound && (a.spend || 0) > 0).length || 0;
@@ -313,9 +318,23 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
             </span>
           </div>
           <div>
-            <span>总账户数: <strong className="text-slate-800 font-mono">{allAccountsCount}</strong></span>
+            <span>
+              当前显示账户数: <strong className="text-slate-800 font-mono">{allAccountsCount}</strong>
+            </span>
             <span className="mx-2 text-slate-300">|</span>
-            <span>有消耗账户数量: <strong className="text-blue-600 font-mono">{withSpendCount}</strong></span>
+            <span>
+              有消耗账户数量: <strong className="text-blue-600 font-mono">{withSpendCount}</strong>
+            </span>
+            <span className="mx-2 text-slate-300">|</span>
+            <span>
+              展示范围:
+              <strong className={cn(
+                "ml-1 font-mono",
+                accountDisplayScope === "historical_all" ? "text-purple-700" : "text-emerald-700"
+              )}>
+                {accountDisplayScope === "historical_all" ? "全部历史账户" : "近90天活跃账户"}
+              </strong>
+            </span>
           </div>
           {data.metaFreshness?.latestFactDate && (
             <div>
@@ -507,10 +526,53 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>
+
+          <Button
+            variant="outline"
+            size="sm"
+            className={cn(
+              "h-8 text-[11px] px-3 font-semibold transition shadow-sm",
+              showHistoricalAccounts
+                ? "border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100"
+                : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+            )}
+            onClick={() => setShowHistoricalAccounts(prev => !prev)}
+            disabled={loading || syncing || metaSyncing}
+          >
+            {showHistoricalAccounts ? "切回活跃账户" : "查看全部历史账户"}
+          </Button>
+        </div>
+      </div>
+
+      </div>
+
+      <div className={cn(
+        "flex items-start gap-3 p-3 rounded-xl border text-xs shadow-sm",
+        showHistoricalAccounts
+          ? "bg-purple-50 border-purple-200 text-purple-900"
+          : "bg-emerald-50 border-emerald-200 text-emerald-900"
+      )}>
+        <Info className={cn(
+          "w-4 h-4 shrink-0 mt-0.5",
+          showHistoricalAccounts ? "text-purple-600" : "text-emerald-600"
+        )} />
+        <div className="leading-relaxed">
+          {showHistoricalAccounts ? (
+            <>
+        当前正在展示全部历史账户库存，仅用于排查绑定、命名和历史资料。系统不会因为打开此视图而同步全部账户，也不会把无消耗历史账户纳入 Data Center 默认计算。
+           </>
+          ) : (
+            <>
+              当前默认只展示近 90 天活跃账户，隐藏了
+              <strong className="mx-1 font-mono">{hiddenHistoricalAccountsCount}</strong>
+              个历史无活跃账户，以降低页面负担和 Meta API 同步压力。需要排查历史账户时，可点击“查看全部历史账户”。
+            </>
+          )}
         </div>
       </div>
 
       {loading ? (
+            
         <div className="flex flex-col items-center justify-center p-20 text-slate-400 bg-white rounded-2xl border border-slate-200 min-h-[300px] shadow-sm">
           <RefreshCcw className="w-8 h-8 animate-spin text-blue-500 mb-3" />
           <p className="text-xs font-semibold">正在调阅数据库核心账户指标表...</p>
