@@ -67,7 +67,7 @@ export function DataHealthDiagnosisPage() {
           </div>
           <div className="ml-3">
             <p className="text-xs text-amber-800 font-bold">
-              数据健康诊断已接入规则诊断引擎。所有诊断结论仅作为策略决策参考，不进行任何非人工二次授权的操作。
+              当前页面仅展示数据健康检查结果；所有处理动作仍需人工确认。
             </p>
           </div>
         </div>
