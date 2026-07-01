@@ -1604,12 +1604,37 @@ router.get("/accounts-performance", async (req, res) => {
       }
     };
 
+    const rows = await prisma.dataCenterMetaAccountDaily.findMany({ where });
+
+    const activeRowAccountIds = new Set(
+      rows
+        .filter(row =>
+          Number(row.spend || 0) > 0 ||
+          Number(row.impressions || 0) > 0 ||
+          Number(row.clicks || 0) > 0 ||
+          Number(row.purchases || 0) > 0 ||
+          Number(row.purchaseValue || 0) > 0
+        )
+        .map(row => normalizeMetaAccountId(row.accountId))
+    );
+
+    const activeRowAccountIdsList = Array.from(activeRowAccountIds);
+
     const [adAccounts, mappings] = await Promise.all([
-      prisma.adAccount.findMany({ include: { store: true }, orderBy: { updatedAt: "desc" } }),
+      prisma.adAccount.findMany({
+        where: {
+          OR: [
+            { recentActivity90d: true },
+            ...(activeRowAccountIdsList.length > 0
+              ? [{ fb_account_id: { in: activeRowAccountIdsList } }]
+              : [])
+          ]
+        },
+        include: { store: true },
+        orderBy: { updatedAt: "desc" }
+      }),
       prisma.accountMapping.findMany({ include: { store: true } })
     ]);
-
-    const rows = await prisma.dataCenterMetaAccountDaily.findMany({ where });
 
     const rowsByAccount = new Map<string, any[]>();
     for (const row of rows) {
@@ -1629,12 +1654,18 @@ router.get("/accounts-performance", async (req, res) => {
         storeName: acc.store?.name || null,
         timezone: acc.timezone,
         currency: acc.currency || "USD",
+        recentActivity90d: Boolean(acc.recentActivity90d),
         sourceInventory: "AdAccount"
       });
     }
 
     for (const m of mappings) {
       const id = normalizeMetaAccountId(m.fbAccountId);
+
+      if (!inventoryMap.has(id) && !activeRowAccountIds.has(id)) {
+        continue;
+      }
+
       if (!inventoryMap.has(id)) {
         inventoryMap.set(id, {
           fb_account_id: id,
@@ -1643,6 +1674,7 @@ router.get("/accounts-performance", async (req, res) => {
           storeName: m.store?.name || null,
           timezone: null,
           currency: "USD",
+          recentActivity90d: false,
           sourceInventory: "AccountMapping"
         });
       } else {
@@ -1698,6 +1730,16 @@ router.get("/accounts-performance", async (req, res) => {
     if (storeIdParam !== "all" && storeIdParam !== "undefined" && storeIdParam !== "null") {
       results = results.filter(a => Number(a.storeId) === Number(storeIdParam));
     }
+
+    results = results.filter(a =>
+      Boolean(a.recentActivity90d) ||
+      Boolean(a.hasSnapshot) ||
+      Number(a.spend || 0) > 0 ||
+      Number(a.impressions || 0) > 0 ||
+      Number(a.clicks || 0) > 0 ||
+      Number(a.purchases || 0) > 0 ||
+      Number(a.purchaseValue || 0) > 0
+    );  
 
     results.sort((a, b) => b.spend - a.spend);
 
