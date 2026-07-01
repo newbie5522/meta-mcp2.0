@@ -365,14 +365,14 @@ export async function buildAiDeepDiagnosisContext(
     }
   }
 
-  // Fetch addToCart and initiateCheckout from AdInsight for exact accountId
+  // Canonical funnel currently uses FactMetaPerformance clicks and purchase facts only.
+  // AddToCart / InitiateCheckout are not available in the current fact source.
   let currentAddToCart: number | null = null;
   let currentInitiateCheckout: number | null = null;
   let prevAddToCart: number | null = null;
   let prevInitiateCheckout: number | null = null;
 
   if (adAccountIdSelected) {
-    // AdInsight querying is fully decommissioned in LOCKDOWN phase
     currentAddToCart = 0;
     currentInitiateCheckout = 0;
     prevAddToCart = 0;
@@ -563,147 +563,116 @@ export async function buildAiDeepDiagnosisContext(
     }
   }
 
-  // 9. Aggregate Creative Signals (for fatigue diagnostic)
+  // 9. Aggregate Creative Signals from FactMetaPerformance (for fatigue diagnostic)
   const creativeSignals: AiCreativeSignal[] = [];
   try {
     const startCompareDate = startDate;
     const endCompareDate = endDate;
 
-    // Filter by storeId or adAccountId if available
-    let creativeDailyRows: CreativePerformanceDailyRowLike[] = [];
-    if (storeIdParsed) {
-      const rawRows = await prisma.creativePerformanceDaily.findMany({
-        where: {
-          storeId: storeIdParsed,
-          date: { gte: startCompareDate, lte: endCompareDate }
-        }
-      });
-      creativeDailyRows = rawRows.map(r => ({
-        creativeId: r.creativeId,
-        creativeName: r.creativeName,
-        purchases: r.purchases,
-        spend: r.spend,
-        impressions: r.impressions,
-        clicks: r.clicks,
-        revenue: r.revenue,
-        type: r.type,
-        date: r.date,
-        frequency: r.frequency
-      }));
-    } else {
-      const rawRows = await prisma.creativePerformanceDaily.findMany({
-        where: {
-          date: { gte: startCompareDate, lte: endCompareDate }
-        }
-      });
-      creativeDailyRows = rawRows.map(r => ({
-        creativeId: r.creativeId,
-        creativeName: r.creativeName,
-        purchases: r.purchases,
-        spend: r.spend,
-        impressions: r.impressions,
-        clicks: r.clicks,
-        revenue: r.revenue,
-        type: r.type,
-        date: r.date,
-        frequency: r.frequency
-      }));
+    const factWhere: any = {
+      level: "ad",
+      date: { gte: startCompareDate, lte: endCompareDate }
+    };
+
+    if (adAccountIdSelected) {
+      factWhere.account_id = adAccountIdSelected;
     }
 
-    // Group by creativeId and aggregate
-    const creativeGroups: Record<string, {
-      creativeId: string;
-      name: string;
-      purchases: number;
-      spend: number;
-      impressions: number;
-      clicks: number;
-      revenue: number;
-      type: string;
-      freqs: number[];
-      firstSeen: string;
-    }> = {};
+    if (scope.campaignId) {
+      factWhere.campaign_id = scope.campaignId;
+    }
 
-    for (const row of creativeDailyRows) {
-      const cid = row.creativeId;
-      if (!cid) continue;
-      if (!creativeGroups[cid]) {
-        creativeGroups[cid] = {
-          creativeId: cid,
-          name: row.creativeName || `创意: ${cid}`,
-          purchases: 0,
+    if (scope.adSetId) {
+      factWhere.adset_id = scope.adSetId;
+    }
+
+    if (scope.adId) {
+      factWhere.ad_id = scope.adId;
+    }
+
+    const factRows = await prisma.factMetaPerformance.findMany({
+      where: factWhere,
+      take: 1000
+    });
+
+    const creativeGroups: Record<string, CreativeFactRowLike> = {};
+
+    for (const row of factRows) {
+      const creativeId = row.creative_id || row.ad_id || row.entity_id;
+      if (!creativeId) continue;
+
+      const firstSeen = String(row.date);
+
+      if (!creativeGroups[creativeId]) {
+        creativeGroups[creativeId] = {
+          creativeId,
+          creativeName: `创意: ${creativeId}`,
+          creativeType: "UNKNOWN",
+          firstSeen,
           spend: 0,
           impressions: 0,
           clicks: 0,
-          revenue: 0,
-          type: row.type || "IMAGE",
-          freqs: [],
-          firstSeen: row.date
+          purchases: 0,
+          purchaseValue: 0
         };
-      } else {
-        if (row.date < creativeGroups[cid].firstSeen) {
-          creativeGroups[cid].firstSeen = row.date;
-        }
+      } else if (firstSeen < creativeGroups[creativeId].firstSeen) {
+        creativeGroups[creativeId].firstSeen = firstSeen;
       }
-      creativeGroups[cid].purchases += row.purchases || 0;
-      creativeGroups[cid].spend += row.spend || 0;
-      creativeGroups[cid].impressions += row.impressions || 0;
-      creativeGroups[cid].clicks += row.clicks || 0;
-      creativeGroups[cid].revenue += row.revenue || 0;
-      if (typeof row.frequency === "number" && row.frequency > 0) {
-        creativeGroups[cid].freqs.push(row.frequency);
-      }
+
+      creativeGroups[creativeId].spend += row.spend || 0;
+      creativeGroups[creativeId].impressions += row.impressions || 0;
+      creativeGroups[creativeId].clicks += row.clicks || 0;
+      creativeGroups[creativeId].purchases += row.purchases || 0;
+      creativeGroups[creativeId].purchaseValue += row.purchase_value || 0;
     }
 
     const aggregatedCreativesArr = Object.values(creativeGroups);
+
     if (aggregatedCreativesArr.length > 0) {
-      // Resolve corresponding AdCreatives to fetch firstSeenAt / mediaType
-      const creativeIds = aggregatedCreativesArr.map(c => c.creativeId);
+      const creativeIds = aggregatedCreativesArr.map((item) => item.creativeId);
       const creativeRowsDb = await prisma.adCreative.findMany({
         where: { creativeId: { in: creativeIds } }
       });
 
       for (const group of aggregatedCreativesArr) {
-        const dbMeta = creativeRowsDb.find(d => d.creativeId === group.creativeId);
+        const dbMeta = creativeRowsDb.find((item) => item.creativeId === group.creativeId);
+
         const ctr = group.impressions > 0 ? (group.clicks / group.impressions) * 100 : 0;
         const cpm = group.impressions > 0 ? (group.spend / group.impressions) * 1000 : 0;
-        const roas = group.spend > 0 ? group.revenue / group.spend : 0;
-        const avgFreq = group.freqs.length > 0 ? group.freqs.reduce((sum, f) => sum + f, 0) / group.freqs.length : 1.0;
+        const roas = group.spend > 0 ? group.purchaseValue / group.spend : 0;
 
         const fatigueSignals: string[] = [];
         const performanceNotes: string[] = [];
 
-        if (avgFreq > 2.2) {
-          fatigueSignals.push(`展示频次较高 (${avgFreq.toFixed(2)})，受众重叠度已经变高。`);
-        }
         if (ctr < 0.8 && group.spend > 20) {
-          fatigueSignals.push(`素材点击率（CTR）处于异常低位 (${ctr.toFixed(2)}%)，吸引力可能枯竭。`);
+          fatigueSignals.push(`素材点击率（CTR）处于异常低位 (${ctr.toFixed(2)}%)，吸引力可能不足。`);
         }
-        if (cpm > 25.0) {
-          fatigueSignals.push(`素材CPM处于高位 ($${cpm.toFixed(2)})，竞价处于较高位，需要人工复核是否存在素材空耗风险。`);
+
+          if (cpm > 25.0) {
+        fatigueSignals.push(`素材 CPM 处于高位 ($${cpm.toFixed(2)})，需要人工复核是否存在素材空耗风险。`);
         }
 
         if (roas > 1.8) {
-          performanceNotes.push("在诊断周期内回报正常，该信号仅作为素材疲劳候选，不代表系统已建议执行操作。");
+          performanceNotes.push("在诊断周期内回报正常，该信号仅作为素材表现参考，不代表系统已建议执行操作。");
         } else if (group.spend > 50 && group.purchases === 0) {
-          performanceNotes.push("需要人工复核是否存在素材空耗风险。需要人工查看该素材在相同窗口内的转化质量。");
+          performanceNotes.push("需要人工复核该素材在相同窗口内的转化质量。");
         }
 
         creativeSignals.push(
           buildCreativeSignal(
             group.creativeId,
-            group.name,
-            dbMeta?.mediaType || group.type,
+            group.creativeName,
+            dbMeta?.mediaType || group.creativeType,
             group.firstSeen || null,
             {
-              spend: group.spend,
+              spend: Number(group.spend.toFixed(2)),
               impressions: group.impressions,
               clicks: group.clicks,
               ctr: Number(ctr.toFixed(4)),
               cpm: Number(cpm.toFixed(4)),
               purchases: group.purchases,
               roas: Number(roas.toFixed(4)),
-              frequency: Number(avgFreq.toFixed(2))
+              frequency: null
             },
             fatigueSignals,
             performanceNotes
@@ -711,10 +680,9 @@ export async function buildAiDeepDiagnosisContext(
         );
       }
     }
-
   } catch (err: unknown) {
     const errMsg = getErrorMessage(err);
-    warnings.push(`Failed to calculate creative signals: ${errMsg}`);
+    warnings.push(`Failed to calculate creative signals from FactMetaPerformance: ${errMsg}`);
   }
 
   // 10. Construct conversion funnel
