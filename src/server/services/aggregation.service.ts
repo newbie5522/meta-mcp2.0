@@ -123,7 +123,7 @@ export async function aggregateData(startDate: string, endDate: string, options:
            // Canonical creative performance now comes from FactMetaPerformance + Ad + AdCreative.
            if (options.syncCreative) {
              console.log(
-               `[Aggregation Service] Skipping legacy CreativePerformanceDaily aggregation for store ${store.id}; use FactMetaPerformance + AdCreative instead.`
+               `[Aggregation Service] Skipping legacy creative aggregation for store ${store.id}; use FactMetaPerformance + AdCreative instead.`
              );
            } else {
              console.log(`[Aggregation Service] Skipping Creative Intelligence for store ${store.id} as it is not enabled.`);
