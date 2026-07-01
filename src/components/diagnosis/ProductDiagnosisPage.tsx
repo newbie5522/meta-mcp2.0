@@ -60,6 +60,32 @@ export function ProductDiagnosisPage() {
     .slice(0, 5);
 
   const hasData = relevantIssues.length > 0;
+  const getProductFieldLabel = (value?: string | null) => {
+    const labels: Record<string, string> = {
+      product_page_intent: "产品承接",
+      product_page: "产品详情页",
+      pricing: "价格",
+      trust: "信任承接",
+      product: "产品",
+      production_suggestion: "经营建议"
+    };
+
+    return value ? labels[value] || value.replace(/_/g, " ") : "产品";
+  };
+
+  const getMetricLabel = (value: string) => {
+    const labels: Record<string, string> = {
+      linkClicks: "链接点击",
+      landingPageViews: "落地页访问",
+      addToCart: "加购",
+      initiateCheckout: "发起结账",
+      purchases: "购买",
+      purchaseValue: "成交金额",
+      roas: "广告回报"
+    };
+
+    return labels[value] || value.replace(/_/g, " ");
+  };
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
@@ -169,7 +195,7 @@ export function ProductDiagnosisPage() {
               <div className="text-2xl font-extrabold text-slate-900">{relevantIssues.length} 个</div>
             </div>
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">详情意向卡点 (intent)</span>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">详情页承接问题</span>
               <div className="text-2xl font-extrabold text-slate-900">{productPageIntentCount} 个</div>
             </div>
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
@@ -177,7 +203,7 @@ export function ProductDiagnosisPage() {
               <div className="text-2xl font-extrabold text-slate-900">{productAreaCount} 个</div>
             </div>
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">产品物理实体层</span>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">产品实体问题</span>
               <div className="text-2xl font-extrabold text-slate-900">{productEntityCount} 个</div>
             </div>
           </div>
@@ -186,7 +212,7 @@ export function ProductDiagnosisPage() {
           <div className="space-y-6">
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
               <Package className="w-4 h-4 text-blue-600" />
-              当前活跃的产品表现及溢漏异常 (最高 PriorityScore 前 5 条)
+              当前优先处理的产品问题
             </h3>
 
             <div className="space-y-4">
@@ -196,16 +222,16 @@ export function ProductDiagnosisPage() {
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-bold rounded">
-                          ID: {iss.issueId}
+                          编号：{iss.issueId}
                         </span>
                         <span className="text-xs text-slate-500 font-semibold uppercase">
-                          {iss.problemStage || iss.optimizationArea || "产品"}
+                          {getProductFieldLabel(iss.problemStage || iss.optimizationArea || "产品")}
                         </span>
                       </div>
                       <h4 className="font-bold text-slate-900 text-sm mt-1">{iss.title}</h4>
                     </div>
                     <span className="text-[11px] font-mono font-bold text-white bg-blue-600 px-2.5 py-1 rounded-full">
-                      Priority Score: {iss.priorityScore ?? "--"}
+                      优先级：{iss.priorityScore ?? "--"}
                     </span>
                   </div>
 
@@ -232,16 +258,16 @@ export function ProductDiagnosisPage() {
                   {/* indicators threshold */}
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 pt-2 text-[11px] text-slate-505 border-t border-slate-100 border-dashed">
                     <div>
-                      <span className="font-bold text-slate-700">限制级别(limitations):</span>{" "}
+                      <span className="font-bold text-slate-700">数据限制:</span>{" "}
                       <span className="font-mono text-slate-800">
                         {Array.isArray(iss.limitations) ? iss.limitations.join(", ") : String(iss.limitations || "无")}
                       </span>
                     </div>
 
                     <div>
-                      <span className="font-bold text-slate-700">基准流失校验(validationMetrics):</span>{" "}
+                      <span className="font-bold text-slate-700">校验指标：</span>{" "}
                       <span className="font-mono text-slate-800 bg-slate-100 px-1 py-0.5 rounded">
-                        {Array.isArray(iss.validationMetrics) ? iss.validationMetrics.join("; ") : String(iss.validationMetrics || "未配置")}
+                        {Array.isArray(iss.validationMetrics) ? iss.validationMetrics.map((m) => getMetricLabel(String(m))).join("; ") : String(iss.validationMetrics ? getMetricLabel(String(iss.validationMetrics)) : "未配置")}
                       </span>
                     </div>
                   </div>
