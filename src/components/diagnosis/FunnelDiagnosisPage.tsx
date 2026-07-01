@@ -254,7 +254,7 @@ export function FunnelDiagnosisPage() {
                   <p className="text-amber-800 italic">检测通过，当前没有缺失指标。</p>
                 ) : (
                   <div className="flex flex-wrap gap-1.5 mt-1">
-                    {allMissingMetrics.{getMetricLabel(String(m))} => (
+                    {allMissingMetrics.map({getMetricLabel(String(m))}) => (
                       <span key={idx} className="px-1.5 py-0.5 bg-amber-200/70 border border-amber-300 text-amber-950 rounded font-mono font-bold">
                         {m}
                       </span>
