@@ -78,7 +78,7 @@ export function DataHealthDiagnosisPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">数据健康诊断</h1>
           <p className="text-sm text-slate-500 mt-1">
-            实时查验系统与 Meta 广告链路、多级独立站 ERP、API 同步队列的数据流对账状况。
+            查看广告数据、店铺订单和系统同步状态，帮助团队发现数据缺失或对账异常。
           </p>
         </div>
 
@@ -123,7 +123,7 @@ export function DataHealthDiagnosisPage() {
           <div className="flex items-start gap-3">
             <AlertTriangle className="w-6 h-6 text-red-650 shrink-0 mt-0.5" />
             <div>
-              <h4 className="text-sm font-bold text-red-900">诊断拉取失败 (API Connections Failed)</h4>
+              <h4 className="text-sm font-bold text-red-900">诊断结果加载失败 (API Connections Failed)</h4>
               <p className="text-xs text-red-700 mt-1">{error.message}</p>
             </div>
           </div>
@@ -131,14 +131,14 @@ export function DataHealthDiagnosisPage() {
             onClick={refetch}
             className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold font-mono transition-all flex items-center gap-1.5"
           >
-            <RefreshCw className="w-3.5 h-3.5" /> 重新连接并刷新
+            <RefreshCw className="w-3.5 h-3.5" /> 重新加载
           </button>
         </div>
       ) : matchedIssues.length === 0 ? (
         <div className="bg-white/50 border border-slate-200 border-dashed rounded-2xl p-16 text-center space-y-3">
           <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
-          <h4 className="text-sm font-bold text-slate-705">暂无诊断数据。当前数据库可能为空，或所选日期范围内没有可诊断记录。</h4>
-          <p className="text-xs text-slate-400">目前没有捕获到任何针对 Tracking 追踪、对账映射、多渠道同步中断的警示记录。</p>
+          <h4 className="text-sm font-bold text-slate-705">暂无可执行数据健康建议。</h4>
+          <p className="text-xs text-slate-400">当前日期范围内没有发现明显的数据缺失、账户绑定或同步异常。</p>
         </div>
       ) : (
         <div className="space-y-6">
@@ -146,7 +146,7 @@ export function DataHealthDiagnosisPage() {
           {/* Missing metrics and limitations overall summary panel */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50 p-5 rounded-2xl border border-slate-200">
             <div className="space-y-2">
-              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">漏斗指标缺失汇总 (missingMetrics)</span>
+              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">缺失指标汇总</span>
               {allMissingMetrics.length === 0 ? (
                 <p className="text-xs text-slate-450 italic">检测通过。所有六段核心节点指标全部齐备。</p>
               ) : (
@@ -161,7 +161,7 @@ export function DataHealthDiagnosisPage() {
             </div>
 
             <div className="space-y-2">
-              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">数据限制汇总 (limitations)</span>
+              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">数据限制汇总</span>
               {allLimitations.length === 0 ? (
                 <p className="text-xs text-slate-450 italic">无历史时效性、授权失效阻碍或其他限制阻碍。</p>
               ) : (
