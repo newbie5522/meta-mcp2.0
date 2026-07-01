@@ -57,17 +57,17 @@ interface ProductRowLike {
   name: string;
 }
 
-interface CreativePerformanceDailyRowLike {
+interface CreativeFactRowLike {
   creativeId: string;
-  creativeName?: string | null;
-  purchases?: number | null;
-  spend?: number | null;
-  impressions?: number | null;
-  clicks?: number | null;
-  revenue?: number | null;
-  type?: string | null;
-  date: string;
-  frequency?: number | null;
+  creativeName: string;
+  creativeType: string;
+  firstSeen: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  purchases: number;
+  purchaseValue: number;
+}
 }
 
 interface MetaPerformanceRowLike {
