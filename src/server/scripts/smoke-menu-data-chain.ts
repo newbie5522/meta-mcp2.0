@@ -202,27 +202,8 @@ async function runSmokeMenuDataChain() {
     createdAudienceIds.push(audienceRow.id);
     console.log(`✅ Seeded FactAudienceBreakdown row.`);
 
-    // 10. Seed CreativePerformanceDaily
-    const creativePerfRow = await prisma.creativePerformanceDaily.create({
-      data: {
-        creativeId: "creative_smoke_999",
-        date: TEST_DATE,
-        spend: 250.00,
-        impressions: 10000,
-        clicks: 250,
-        revenue: 750.00,
-        creativeName: "Smoke Creative",
-        type: "IMAGE",
-        purchases: 5,
-        roas: 3.0,
-        ctr: 2.5,
-        cpc: 1.0,
-        cpm: 25.0,
-        storeId: store.id
-      }
-    });
-    createdCreativePerfIds.push(creativePerfRow.id);
-    console.log(`✅ Seeded CreativePerformanceDaily row.`);
+        // 10. Creative insights are covered by FactMetaPerformance ad-level row + AdCreative metadata.
+        console.log(`✅ Creative insights covered by FactMetaPerformance + AdCreative.`);
 
     // 11. Seed DataCenterMetaAccountDaily & DataCenterStoreDaily to pass Overview/Details/Store pages
     const accDaily = await prisma.dataCenterMetaAccountDaily.create({
@@ -477,9 +458,6 @@ async function runSmokeMenuDataChain() {
       }
       if (createdAccountDailyId) {
         await prisma.dataCenterMetaAccountDaily.delete({ where: { id: createdAccountDailyId } });
-      }
-      for (const id of createdCreativePerfIds) {
-        await prisma.creativePerformanceDaily.delete({ where: { id } });
       }
       for (const id of createdAudienceIds) {
         await prisma.factAudienceBreakdown.delete({ where: { id } });
