@@ -22,7 +22,7 @@ export interface CountryAnalyticsResult {
     unmappedSpendRate: number;
     warnings: string[];
   };
-    dataSourceExplain: {
+  dataSourceExplain: {
     orderPrimarySource: string;
     metaPrimarySource: string;
     legacyInsightUsed: boolean;
@@ -234,7 +234,7 @@ export async function getCountryAnalytics(
   // Group line items by unique orderId (or fallback to id if orderId is missing)
   const ordersGroupedById = new Map<string, any[]>();
   for (const row of dbOrders) {
-    const key = row.orderId || row.id;
+    const key = String(row.orderId || row.id);
     if (!ordersGroupedById.has(key)) {
       ordersGroupedById.set(key, []);
     }
