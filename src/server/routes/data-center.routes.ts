@@ -1575,6 +1575,7 @@ router.get("/accounts-performance", async (req, res) => {
   const startDate = String(req.query.startDate || "");
   const endDate = String(req.query.endDate || startDate);
   const storeIdParam = req.query.storeId ? String(req.query.storeId) : "all";
+  const includeHistoricalAccounts = req.query.includeHistoricalAccounts === "true";
 
   try {
     const ledgerCount = await prisma.dataCenterMetaAccountDaily.count({
@@ -1620,20 +1621,28 @@ router.get("/accounts-performance", async (req, res) => {
 
     const activeRowAccountIdsList = Array.from(activeRowAccountIds);
 
-    const [adAccounts, mappings] = await Promise.all([
-      prisma.adAccount.findMany({
-        where: {
-          OR: [
-            { recentActivity90d: true },
-            ...(activeRowAccountIdsList.length > 0
-              ? [{ fb_account_id: { in: activeRowAccountIdsList } }]
-              : [])
-          ]
-        },
-        include: { store: true },
-        orderBy: { updatedAt: "desc" }
-      }),
-      prisma.accountMapping.findMany({ include: { store: true } })
+    const [adAccounts, mappings, totalAdAccountsInventoryCount] = await Promise.all([
+      prisma.adAccount.findMany(
+        includeHistoricalAccounts
+          ? {
+              include: { store: true },
+              orderBy: { updatedAt: "desc" }
+            }
+          : {
+              where: {
+                OR: [
+                  { recentActivity90d: true },
+                  ...(activeRowAccountIdsList.length > 0
+                    ? [{ fb_account_id: { in: activeRowAccountIdsList } }]
+                    : [])
+                ]
+              },
+              include: { store: true },
+              orderBy: { updatedAt: "desc" }
+            }
+      ),
+      prisma.accountMapping.findMany({ include: { store: true } }),
+      prisma.adAccount.count()
     ]);
 
     const rowsByAccount = new Map<string, any[]>();
@@ -1662,7 +1671,11 @@ router.get("/accounts-performance", async (req, res) => {
     for (const m of mappings) {
       const id = normalizeMetaAccountId(m.fbAccountId);
 
-      if (!inventoryMap.has(id) && !activeRowAccountIds.has(id)) {
+      if (
+        !includeHistoricalAccounts &&
+        !inventoryMap.has(id) &&
+        !activeRowAccountIds.has(id)
+      ) {
         continue;
       }
 
@@ -1731,15 +1744,17 @@ router.get("/accounts-performance", async (req, res) => {
       results = results.filter(a => Number(a.storeId) === Number(storeIdParam));
     }
 
-    results = results.filter(a =>
-      Boolean(a.recentActivity90d) ||
-      Boolean(a.hasSnapshot) ||
-      Number(a.spend || 0) > 0 ||
-      Number(a.impressions || 0) > 0 ||
-      Number(a.clicks || 0) > 0 ||
-      Number(a.purchases || 0) > 0 ||
-      Number(a.purchaseValue || 0) > 0
-    );  
+    if (!includeHistoricalAccounts) {
+      results = results.filter(a =>
+        Boolean(a.recentActivity90d) ||
+        Boolean(a.hasSnapshot) ||
+        Number(a.spend || 0) > 0 ||
+        Number(a.impressions || 0) > 0 ||
+        Number(a.clicks || 0) > 0 ||
+        Number(a.purchases || 0) > 0 ||
+        Number(a.purchaseValue || 0) > 0
+      );
+    }
 
     results.sort((a, b) => b.spend - a.spend);
 
@@ -1765,7 +1780,12 @@ router.get("/accounts-performance", async (req, res) => {
       endDate,
       accounts: results,
       accountsInventoryCount: results.length,
+      totalAdAccountsInventoryCount,
+      hiddenHistoricalAccountsCount: includeHistoricalAccounts
+        ? 0
+        : Math.max(0, totalAdAccountsInventoryCount - results.length),
       accountsWithSpendCount: results.filter(a => a.spend > 0).length,
+      accountDisplayScope: includeHistoricalAccounts ? "historical_all" : "active_only",
       totalSpend,
       metaReconciliation: {
         accountLevelRows: rows.length,
@@ -1804,7 +1824,10 @@ router.get("/accounts-performance", async (req, res) => {
       },
       dataSourceExplain: {
         primarySource: "DataCenterMetaAccountDaily",
-        inventorySource: "DataCenterMetaAccountDaily",
+        inventorySource: includeHistoricalAccounts
+          ? "AdAccount + AccountMapping + DataCenterMetaAccountDaily"
+          : "recentActivity90d AdAccount + active DataCenterMetaAccountDaily",
+        accountDisplayScope: includeHistoricalAccounts ? "historical_all" : "active_only",
         legacySource: "None",
         legacyUsed: false
       },
