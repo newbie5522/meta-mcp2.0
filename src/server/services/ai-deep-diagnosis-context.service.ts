@@ -68,7 +68,6 @@ interface CreativeFactRowLike {
   purchases: number;
   purchaseValue: number;
 }
-}
 
 interface MetaPerformanceRowLike {
   spend?: number | null;
