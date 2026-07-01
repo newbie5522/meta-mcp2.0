@@ -670,12 +670,14 @@ export async function runDataCenterAudit(params: {
       orderSource: "Order.store_local_date",
       storeLedgerSource: "DataCenterStoreDaily",
       audienceSource: "FactAudienceBreakdown",
+      creativeSource: "FactMetaPerformance level=ad + AdCreative",
       mappingSource: "AccountMapping + AdAccount"
     },
     endpointReaders: {
       storesEndpointPrimarySource: "DataCenterStoreDaily",
       accountsPerformancePrimarySource: "DataCenterMetaAccountDaily",
       detailEndpointPrimarySource: "FactMetaPerformance + Order",
+      creativeInsightsPrimarySource: "FactMetaPerformance level=ad + AdCreative",
       maxDatePrimarySource: "FactMetaPerformance + Order"
     },
     modelChecks: modelCheck,
