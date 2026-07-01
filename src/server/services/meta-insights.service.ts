@@ -378,16 +378,12 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
             console.log(`[Meta Insights Sync] Sandbox account filtered out from fact_meta_performance: ${actId}`);
           }
 
-          /* 
-           * GLOBLAL METRIC GOVERNANCE PROTOCOL - READINESS TRANSITION
-           * Primary single source of truth: FactMetaPerformance model
-           * Legacy fallback source of truth: AdInsight model
-           * 
-           * [LEGACY-DOUBLE-WRITE]: The block below performs double-writing ONLY to support legacy backward-compatibility.
-           * No new features or endpoints are allowed to read from AdInsight.
-           * TODO: Decommission this write block during retirement Phase 4.
+          /*
+           * METRIC GOVERNANCE PROTOCOL
+           * Primary single source of truth: FactMetaPerformance model.
+           * Legacy double-writing has been decommissioned.
+           * No secondary performance table is written from this sync path.
            */
-          // AdInsight double-writing decommissioned in phase 4/LOCKDOWN
         }
 
         console.log(`[Meta Insights Sync] Finished Level "${currentLevel}" for ${actId}. Fetched: ${sliceFetchedCount}, Saved: ${sliceSavedCount}, Updated: ${sliceUpdatedCount}`);
