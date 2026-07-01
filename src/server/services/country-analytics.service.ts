@@ -22,10 +22,10 @@ export interface CountryAnalyticsResult {
     unmappedSpendRate: number;
     warnings: string[];
   };
-  dataSourceExplain: {
+    dataSourceExplain: {
     orderPrimarySource: string;
     metaPrimarySource: string;
-    adInsightUsed: boolean;
+    legacyInsightUsed: boolean;
     dailySummaryUsed: boolean;
     storeMappingUsed: boolean;
     countryJoinKey: string;
@@ -445,7 +445,7 @@ export async function getCountryAnalytics(
     dataSourceExplain: {
       orderPrimarySource: hasCountryFieldData ? "Order.shippingCountryCode" : "none",
       metaPrimarySource: "FactAudienceBreakdown",
-      adInsightUsed: false,
+      legacyInsightUsed: false,
       dailySummaryUsed: false,
       storeMappingUsed: true,
       countryJoinKey: "countryCode",
