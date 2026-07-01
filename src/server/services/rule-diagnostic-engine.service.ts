@@ -792,12 +792,12 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
     const refundOrders = orders.filter(o => o.refunded).length;
     const refundRate = totalOrders > 0 ? (refundOrders / totalOrders) * 100 : 0;
 
-    // Fetch addToCart and initiateCheckout from AdInsight for exact boundAccountIds - DECOMMISSIONED FOR LOCKDOWN
+    // Canonical diagnostic funnel uses FactMetaPerformance clicks and Order results only.
     const addToCart = 0;
     const initiateCheckout = 0;
     const landingPageViews = null;
 
-    const funnelSnapshotNotes = "当前 linkClicks 暂使用 FactMetaPerformance.clicks 代替；若后续补充真实 link_clicks，应切换为真实 Link Click。当前缺少 Landing Page View 字段，暂无法计算点击到落地页到达率。";
+    const funnelSnapshotNotes = "当前 linkClicks 暂使用 FactMetaPerformance.clicks 代替；当前缺少 Landing Page View、Add To Cart 与 Initiate Checkout 字段，暂无法计算完整点击到落地页到达率和加购结账漏斗。";
     const funnelSnapshot = buildFunnelSnapshot(
       impressions || null,
       clicks || null,
@@ -813,12 +813,12 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
 
     const baseEvidence = {
       primarySource: "Order",
-      supportingSources: ["Store", "AccountMapping", "FactMetaPerformance", "AdInsight"],
+      supportingSources: ["Store", "AccountMapping", "FactMetaPerformance"],
       dateRange: `${startDate} 至 ${endDate}`,
       limitations: [
-        "当前 linkClicks 暂使用 FactMetaPerformance.clicks 代替；若后续补充真实 link_clicks，应切换为真实 Link Click。",
-        "当前缺少 Landing Page View 字段，暂无法计算点击到落地页到达率。",
-        "AdInsight 仅作为 ATC / IC 漏斗事件补充来源，不作为 spend / ROAS / purchases 主事实源。"
+        "当前 linkClicks 暂使用 FactMetaPerformance.clicks 代替。",
+        "当前缺少 Landing Page View、Add To Cart 与 Initiate Checkout 字段，暂无法计算完整落地页到加购结账漏斗。",
+        "Store ROAS 以 Order 与 FactMetaPerformance 的本地事实表对账结果为准。"
       ],
       funnelSnapshot,
       metrics: {
@@ -1672,74 +1672,110 @@ export async function detectDataHealthIssues(params: any): Promise<any[]> {
 export async function generateDiagnosticIssues(params: any): Promise<{
   success: boolean;
   issues: UniformIssue[];
+  message?: string;
+  diagnosticsDegraded?: boolean;
+  failedDetectors?: Array<{
+    name: string;
+    message: string;
+  }>;
   summary: {
     productionCount: number;
     noticeCount: number;
     debugInvalidCount: number;
     activeAccountCount: number;
     dataHealthNoticeCount: number;
+    failedDetectorCount?: number;
   };
 }> {
-  try {
-    const accountIssues = await detectAccountIssues(params);
-    const storeIssues = await detectStoreIssues(params);
-    const creativeIssues = await detectCreativeIssues(params);
-    const countryIssues = await detectCountryIssues(params);
-    const productIssues = await detectProductIssues(params);
-    const dataHealthIssues = await detectDataHealthIssues(params);
+  const failedDetectors: Array<{ name: string; message: string }> = [];
 
-    const rawAll = [
-      ...accountIssues,
-      ...storeIssues,
-      ...creativeIssues,
-      ...countryIssues,
-      ...productIssues,
-      ...dataHealthIssues
-    ];
-
-    const enrichedAll = rawAll.map(issue => enrichIssueFields(issue));
-    const sanitizedAll = enrichedAll.map(issue => sanitizeIssueForbiddenWords(issue));
-    const validatedAll = sanitizedAll.map(issue => validateIssueEligibility(issue));
-
-    let productionCount = 0;
-    let noticeCount = 0;
-    let debugInvalidCount = 0;
-
-    for (const issue of validatedAll) {
-      if (issue.category === "production_suggestion") {
-        productionCount++;
-      } else if (issue.category === "data_health_notice") {
-        noticeCount++;
-      } else {
-        debugInvalidCount++;
-      }
+  const runDetector = async (
+    name: string,
+    fn: (params: any) => Promise<any[]>
+  ): Promise<any[]> => {
+    try {
+      const result = await fn(params);
+      return Array.isArray(result) ? result : [];
+    } catch (error: any) {
+      console.error(`[generateDiagnosticIssues:${name} ERROR]`, error);
+      failedDetectors.push({
+        name,
+        message: error?.message || String(error)
+      });
+      return [];
     }
+  };
 
-    const activeAccounts = await getActiveAccountIds(params);
+  const [
+    accountIssues,
+    storeIssues,
+    creativeIssues,
+    countryIssues,
+    productIssues,
+    dataHealthIssues
+  ] = await Promise.all([
+    runDetector("detectAccountIssues", detectAccountIssues),
+    runDetector("detectStoreIssues", detectStoreIssues),
+    runDetector("detectCreativeIssues", detectCreativeIssues),
+    runDetector("detectCountryIssues", detectCountryIssues),
+    runDetector("detectProductIssues", detectProductIssues),
+    runDetector("detectDataHealthIssues", detectDataHealthIssues)
+  ]);
 
-    return {
-      success: true,
-      issues: validatedAll,
-      summary: {
-        productionCount,
-        noticeCount,
-        debugInvalidCount,
-        activeAccountCount: activeAccounts.length,
-        dataHealthNoticeCount: noticeCount
-      }
-    };
-  } catch (error) {
-    console.error("[generateDiagnosticIssues ERROR]", error);
-    return {
-      success: false,
-      issues: [],
-      summary: {
-        productionCount: 0,
-        noticeCount: 0,
-        debugInvalidCount: 0,
-        activeAccountCount: 0,
-        dataHealthNoticeCount: 0
-      }
-    };
+  const rawAll = [
+    ...accountIssues,
+    ...storeIssues,
+    ...creativeIssues,
+    ...countryIssues,
+    ...productIssues,
+    ...dataHealthIssues
+  ];
+
+  const enrichedAll = rawAll.map(issue => enrichIssueFields(issue));
+  const sanitizedAll = enrichedAll.map(issue => sanitizeIssueForbiddenWords(issue));
+  const validatedAll = sanitizedAll.map(issue => validateIssueEligibility(issue));
+
+  let productionCount = 0;
+  let noticeCount = 0;
+  let debugInvalidCount = 0;
+
+  for (const issue of validatedAll) {
+    if (issue.category === "production_suggestion") {
+      productionCount++;
+    } else if (issue.category === "data_health_notice") {
+      noticeCount++;
+    } else {
+      debugInvalidCount++;
+    }
   }
+
+  let activeAccounts: string[] = [];
+  try {
+    activeAccounts = await getActiveAccountIds(params);
+  } catch (error: any) {
+    console.error("[generateDiagnosticIssues:getActiveAccountIds ERROR]", error);
+    failedDetectors.push({
+      name: "getActiveAccountIds",
+      message: error?.message || String(error)
+    });
+  }
+
+  return {
+    success: true,
+    issues: validatedAll,
+    message:
+      failedDetectors.length > 0
+        ? "诊断已完成，但部分诊断模块降级跳过。"
+        : "诊断已完成。",
+    diagnosticsDegraded: failedDetectors.length > 0,
+    failedDetectors,
+    summary: {
+      productionCount,
+      noticeCount,
+      debugInvalidCount,
+      activeAccountCount: activeAccounts.length,
+      dataHealthNoticeCount: noticeCount,
+      failedDetectorCount: failedDetectors.length
+    }
+  };
 }
