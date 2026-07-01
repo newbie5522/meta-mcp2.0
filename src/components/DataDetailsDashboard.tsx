@@ -124,7 +124,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
         params: {
           startDate: startStr,
           endDate: endStr,
-          storeId: storeFilter
+          storeId: storeFilter,
           includeHistoricalAccounts: showHistoricalAccounts ? "true" : "false"
         }
       });
@@ -542,8 +542,6 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
             {showHistoricalAccounts ? "切回活跃账户" : "查看全部历史账户"}
           </Button>
         </div>
-      </div>
-
       </div>
 
       <div className={cn(
