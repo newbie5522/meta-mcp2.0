@@ -48,8 +48,8 @@ router.get("/", async (req, res) => {
       data: summary,
       dataSourceExplain: {
         primarySource: "FactMetaPerformance",
-        legacySource: "AdInsight",
-        legacyUsed: false
+        fallbackSource: null,
+        fallbackUsed: false
       },
       freshness
     });
