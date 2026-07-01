@@ -681,7 +681,7 @@ export async function runDataCenterAudit(params: {
     modelChecks: modelCheck,
     dataContractLock: {
       dataContractDefined: true,
-      adInsightDecommissioned: true,
+      legacyInsightDecommissioned: true,
       dailySummaryDecommissioned: true,
       dashboardStandardized: true,
       oldSummaryEndpointsStandardized: true,
