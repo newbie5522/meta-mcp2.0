@@ -81,7 +81,7 @@ export function ProductDiagnosisPage() {
         <div className="space-y-1">
           <h1 className="text-xl font-bold text-slate-900">产品表现诊断</h1>
           <p className="text-sm text-slate-500">
-            基于全量订单商品条目解构单品维度的物理表现。提炼产品及详情交互承接层级的经营价值。
+            基于订单和广告表现，查看产品承接、价格和信任相关问题。
           </p>
         </div>
 
@@ -122,9 +122,9 @@ export function ProductDiagnosisPage() {
       <div className="p-4 rounded-xl bg-blue-50 border border-blue-150 flex gap-3 text-xs text-blue-900 leading-relaxed">
         <AlertCircle className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
         <div className="space-y-1">
-          <span className="font-bold">产品归置限度申明：</span>
+          <span className="font-bold">说明：</span>
           <p>
-            当前产品分析基于规则诊断结论展示，不输出产品级广告 ROAS 或产品级广告预算建议，除非后续打通产品广告归因链。
+            当前页面主要用于查看产品承接问题，暂不直接给出单品广告预算调整建议。
           </p>
         </div>
       </div>
@@ -147,16 +147,16 @@ export function ProductDiagnosisPage() {
             onClick={refetch}
             className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
           >
-            <RefreshCw className="w-3.5 h-3.5" /> 重新连接并刷新
+            <RefreshCw className="w-3.5 h-3.5" /> 重新加载
           </button>
         </div>
       ) : !hasData ? (
         <div className="bg-white/50 border border-slate-200 border-dashed rounded-2xl p-16 text-center space-y-4 max-w-3xl mx-auto">
           <Inbox className="w-12 h-12 text-slate-400 mx-auto" />
           <div className="space-y-2">
-            <h4 className="text-sm font-bold text-slate-705">暂无产品表现诊断数据。当前数据库可能为空，或尚未同步产品 / 订单 / 广告归因数据。</h4>
+            <h4 className="text-sm font-bold text-slate-705">暂无可执行产品诊断建议</h4>
             <p className="text-xs text-slate-400">
-              底层的规则引擎在所选日期区间内，未捕获到任何针对产品实体 [product_page_intent / product_page / pricing / trust] 满足触发条件的诊断异常。
+              当前日期范围内没有发现明显的产品承接、价格或信任问题。
             </p>
           </div>
         </div>
