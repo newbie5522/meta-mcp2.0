@@ -40,7 +40,9 @@ export const DATA_CONTRACT = {
     creatives: {
       endpoint: "/api/data-center/creative-insights",
       source: "FactMetaPerformance + Ad + AdCreative",
-      requiredTraceSource: "FactMetaPerformance level=ad creative_id"
+      requiredTraceSource: "FactMetaPerformance level=ad creative_id",
+      metadataSource: "AdCreative",
+      forbiddenSources: ["CreativePerformanceDaily", "AdInsight"]
     }
   },
 
