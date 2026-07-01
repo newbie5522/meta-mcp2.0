@@ -25,6 +25,7 @@ export async function runDataCenterAudit(params: {
     FactAudienceBreakdown: { exists: typeof prisma.factAudienceBreakdown !== "undefined", rows: 0, message: "OK" },
     Store: { exists: typeof prisma.store !== "undefined", rows: 0, message: "OK" },
     AdAccount: { exists: typeof prisma.adAccount !== "undefined", rows: 0, message: "OK" },
+    AdCreative: { exists: typeof prisma.adCreative !== "undefined", rows: 0, message: "OK" },
     AccountMapping: { exists: typeof prisma.accountMapping !== "undefined", rows: 0, message: "OK" },
     SyncLog: { exists: typeof prisma.syncLog !== "undefined", rows: 0, message: "OK" },
   };
@@ -504,16 +505,25 @@ export async function runDataCenterAudit(params: {
     audienceStatus = "EMPTY";
   }
 
-  const creativePerformanceCount = typeof prisma.creativePerformanceDaily !== "undefined" ? await prisma.creativePerformanceDaily.count() : 0;
+  const creativeFactIds = new Set(
+    fAdRows
+      .map((row) => row.creative_id || row.ad_id || row.entity_id)
+      .filter(Boolean)
+      .map(String)
+  );
+  const adCreativeRowsCount = modelCheck.AdCreative.exists ? await prisma.adCreative.count() : 0;
+
   let creativesStatus = "PASS";
-  if (creativePerformanceCount > 0) {
+  if (creativeFactIds.size > 0) {
     creativesStatus = "PASS";
   } else if (fAccountRows.length > 0) {
     creativesStatus = "FAIL";
+  } else if (adCreativeRowsCount > 0) {
+    creativesStatus = "EMPTY";
   } else {
     creativesStatus = "EMPTY";
   }
-
+  
   const menuChain = {
     overview: (dcStoreRows.length > 0 || dcMetaRows.length > 0) ? "PASS" : "EMPTY",
     "data-details": dcMetaRows.length > 0 ? "PASS" : "EMPTY",
