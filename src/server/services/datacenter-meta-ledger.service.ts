@@ -97,13 +97,15 @@ async function resolveAccounts(params: {
 
     let accounts = await prisma.adAccount.findMany({
       where: {
+        recentActivity90d: true,
         OR: [
           { fb_account_id: { in: mappingIdsCanonical } },
           { fb_account_id: { in: mappingIdsNumeric } },
           { storeId: Number(params.storeId) }
         ]
       },
-      include: { store: true }
+      include: { store: true },
+      orderBy: { updatedAt: "desc" }
     });
 
     if (params.includeUnmapped) {
@@ -113,6 +115,7 @@ async function resolveAccounts(params: {
           recentActivity90d: true
         },
         include: { store: true },
+        orderBy: { updatedAt: "desc" },
         take: 20
       });
       accounts = [...accounts, ...unmapped];
@@ -129,12 +132,10 @@ async function resolveAccounts(params: {
 
   return prisma.adAccount.findMany({
     where: {
-      OR: [
-        { storeId: { not: null } },
-        { recentActivity90d: true }
-      ]
+      recentActivity90d: true
     },
     include: { store: true },
+    orderBy: { updatedAt: "desc" },
     take: 50
   });
 }
