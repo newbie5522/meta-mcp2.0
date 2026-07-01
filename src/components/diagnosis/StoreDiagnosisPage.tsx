@@ -64,6 +64,43 @@ export function StoreDiagnosisPage() {
 
   // Find dynamic metrics from evidence.funnelSnapshot if present
   const firstFunnelSnapshot = storeRelevantIssues.find(iss => iss.evidence?.funnelSnapshot)?.evidence?.funnelSnapshot;
+  const getStoreIssueLabel = (problemStage?: string | null, funnelStage?: string | null) => {
+    const value = problemStage || funnelStage || "";
+    const labels: Record<string, string> = {
+      outcome: "经营结果",
+      meta_to_store_reconciliation: "广告与店铺对账",
+      tracking: "追踪问题",
+      mapping: "账户映射",
+      data_sync: "数据同步",
+      data_health: "数据健康",
+      ad_delivery: "广告投放",
+      creative_attraction: "素材吸引力",
+      product_page_intent: "产品承接",
+      landing_page_arrival: "落地页到达",
+      cart_to_checkout: "加购到结账",
+      checkout_payment: "结账支付"
+    };
+
+    return value ? labels[value] || value.replace(/_/g, " ") : "店铺";
+  };
+
+  const getMetricLabel = (value: string) => {
+    const labels: Record<string, string> = {
+      linkClicks: "链接点击",
+      landingPageViews: "落地页访问",
+      addToCart: "加购",
+      initiateCheckout: "发起结账",
+      purchases: "购买",
+      purchaseValue: "成交金额",
+      roas: "广告回报",
+      storeRoas: "店铺回报",
+      storeOrders: "店铺订单",
+      storeRevenue: "店铺成交额",
+      metaStoreOrderGap: "广告与店铺订单差异"
+    };
+
+    return labels[value] || value.replace(/_/g, " ");
+  };
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
@@ -75,7 +112,7 @@ export function StoreDiagnosisPage() {
           </div>
           <div className="ml-3">
             <p className="text-xs text-amber-800 font-bold">
-              店铺经营诊断已接入规则诊断引擎。所有诊断结论仅作为策略决策参考，不进行任何非人工二次授权的操作。
+              当前页面仅展示店铺经营诊断结果；所有处理动作仍需人工确认。
             </p>
           </div>
         </div>
@@ -86,7 +123,7 @@ export function StoreDiagnosisPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">店铺经营诊断</h1>
           <p className="text-sm text-slate-500 mt-1">
-            连接真实独立站店铺数据的账面经营表现，深度评估全盘变现合理性。店铺经营诊断基于规则诊断与漏斗快照数据展示，不直接生成经营结论。
+            查看店铺订单、广告归因和经营结果，帮助团队发现店铺层面的异常问题。
           </p>
         </div>
 
@@ -133,7 +170,7 @@ export function StoreDiagnosisPage() {
           <div className="flex items-start gap-3">
             <AlertCircle className="w-6 h-6 text-red-650 shrink-0 mt-0.5" />
             <div>
-              <h4 className="text-sm font-bold text-red-900">店铺经营诊断拉取失败 (API Connections Failed)</h4>
+              <h4 className="text-sm font-bold text-red-900">店铺诊断结果加载失败</h4>
               <p className="text-xs text-red-700 mt-1">{error.message}</p>
             </div>
           </div>
@@ -141,16 +178,16 @@ export function StoreDiagnosisPage() {
             onClick={refetch}
             className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold font-mono transition-all flex items-center gap-1.5"
           >
-            <RefreshCw className="w-3.5 h-3.5" /> 重新连接并刷新
+            <RefreshCw className="w-3.5 h-3.5" /> 重新加载
           </button>
         </div>
       ) : !hasData ? (
         <div className="bg-white/50 border border-slate-200 border-dashed rounded-2xl p-16 text-center space-y-4 max-w-3xl mx-auto">
           <Inbox className="w-12 h-12 text-slate-400 mx-auto" />
           <div className="space-y-2">
-            <h4 className="text-sm font-bold text-slate-700">暂无店铺经营诊断数据。当前数据库可能为空，或尚未同步店铺订单 / Meta 账户映射数据。</h4>
+            <h4 className="text-sm font-bold text-slate-700">暂无可执行店铺诊断建议。</h4>
             <p className="text-xs text-slate-400">
-              底层的规则引擎在所选日期区间内，未捕获到任何符合 [店铺经营结果 / 归因对账 / 映射限制] 的诊断异常。
+              当前日期范围内没有发现明显的店铺经营、归因对账或账户绑定异常。
             </p>
           </div>
         </div>
@@ -159,27 +196,27 @@ export function StoreDiagnosisPage() {
           {/* Section: Category summary counters */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">店铺经营相关 (Total)</span>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">店铺经营相关</span>
               <div className="text-3xl font-extrabold text-slate-900">{storeRelevantIssues.length} 个</div>
               <p className="text-[10px] text-slate-400 mt-1 pt-2 border-t border-slate-50">汇总的所有店铺关联异常</p>
             </div>
             
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">经营结果问题 (outcome)</span>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">经营结果问题</span>
               <div className="text-3xl font-extrabold text-slate-900">{outcomeIssues.length} 个</div>
               <p className="text-[10px] text-slate-400 mt-1 pt-2 border-t border-slate-50">经营转化及宏观毛利率问题</p>
             </div>
 
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">账户对账偏离 (reconciliation)</span>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">账户对账偏离</span>
               <div className="text-3xl font-extrabold text-slate-900">{reconciliationIssues.length} 个</div>
               <p className="text-[10px] text-slate-400 mt-1 pt-2 border-t border-slate-50">物理归因与对账波动机理</p>
             </div>
 
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">追踪映射异常 (tracking/mapping)</span>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">追踪映射异常</span>
               <div className="text-3xl font-extrabold text-slate-900">{trackingIssues.length} 个</div>
-              <p className="text-[10px] text-slate-400 mt-1 pt-2 border-t border-slate-50">Pixel、映射配置或 API 链路障碍</p>
+              <p className="text-[10px] text-slate-400 mt-1 pt-2 border-t border-slate-50">像素、映射配置或同步链路异常</p>
             </div>
           </div>
 
@@ -188,7 +225,7 @@ export function StoreDiagnosisPage() {
             <div className="bg-blue-50/50 p-5 rounded-2xl border border-blue-150 space-y-4">
               <h3 className="font-bold text-blue-900 text-sm flex items-center gap-2">
                 <Scale className="w-5 h-5 text-blue-700" />
-                提取自最新诊断快照的财务和对账基本参数
+                当前店铺财务与对账参考数据
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 {firstFunnelSnapshot.storeRoas !== undefined && (
@@ -211,7 +248,7 @@ export function StoreDiagnosisPage() {
                 )}
                 {firstFunnelSnapshot.metaStoreOrderGap !== undefined && (
                   <div className="bg-white p-4 rounded-xl border border-blue-100">
-                    <span className="text-xs text-slate-500 block">未归因比例偏移 (Gap)</span>
+                    <span className="text-xs text-slate-500 block">未归因比例偏移</span>
                     <span className="text-xl font-bold text-blue-800">{firstFunnelSnapshot.metaStoreOrderGap}</span>
                   </div>
                 )}
@@ -229,9 +266,9 @@ export function StoreDiagnosisPage() {
                   <div className="space-y-1">
                     <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                       <Sparkles className="w-5 h-5 text-blue-600" />
-                      当前高优先级店铺诊断处方 (最高 PriorityScore 前 5 条)
+                      当前高优先级店铺诊断处方
                     </h3>
-                    <p className="text-xs text-slate-500">规则诊断自研引擎实时归回判定</p>
+                    <p className="text-xs text-slate-500">按优先级展示当前最需要处理的问题</p>
                   </div>
                 </div>
 
@@ -243,10 +280,10 @@ export function StoreDiagnosisPage() {
                           <span className="px-2 py-0.5 text-[10px] bg-slate-100 text-slate-700 font-bold rounded-md font-mono uppercase">
                             {iss.issueId}
                           </span>
-                          <span className="text-xs text-slate-500 font-semibold uppercase">{iss.problemStage || iss.funnelStage || "店铺实体"}</span>
+                          <span className="text-xs text-slate-500 font-semibold uppercase">{getStoreIssueLabel(iss.problemStage, iss.funnelStage)}</span>
                         </div>
                         <span className="text-[11px] font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
-                          Priority: {iss.priorityScore ?? "--"}
+                          优先级：{iss.priorityScore ?? "--"}
                         </span>
                       </div>
 
@@ -263,13 +300,13 @@ export function StoreDiagnosisPage() {
 
                       {iss.validationMetrics && (
                         <div className="text-[11px] text-indigo-700 bg-indigo-50/40 p-2 rounded">
-                          <strong>验证阈值指标:</strong> {Array.isArray(iss.validationMetrics) ? iss.validationMetrics.join(", ") : iss.validationMetrics}
+                          <strong>校验指标:</strong> {Array.isArray(iss.validationMetrics) ? iss.validationMetrics.map((m) => getMetricLabel(String(m))).join(", ") : getMetricLabel(String(iss.validationMetrics))}
                         </div>
                       )}
 
                       {iss.limitations && iss.limitations.length > 0 && (
                         <div className="text-[11px] text-red-700 bg-red-50/50 p-2 rounded">
-                          <strong>风控限制:</strong> {iss.limitations.join(", ")}
+                          <strong>数据限制:</strong> {iss.limitations.join(", ")}
                         </div>
                       )}
                     </div>
@@ -286,10 +323,10 @@ export function StoreDiagnosisPage() {
                   店铺对账说明
                 </h3>
                 <p className="text-xs text-slate-605 leading-relaxed">
-                  通过匹配 Meta 广告归因记录与第三方独立站系统，诊断 Pixel 丢失或 CAPI 缺失引起的漏斗脱节。
+                  通过匹配广告归因记录与店铺订单，帮助判断像素或转化回传缺失造成的对账偏差。
                 </p>
                 <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-400">
-                  绑定全部账户是计算准确 Store ROAS 的唯一前提。
+                  账户绑定越完整，对账结果越准确。
                 </div>
               </div>
             </div>
