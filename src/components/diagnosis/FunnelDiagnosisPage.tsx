@@ -131,9 +131,9 @@ export function FunnelDiagnosisPage() {
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="font-mono font-bold text-slate-500 uppercase">{iss.issueId}</span>
                   <span className={`px-1 rounded font-bold uppercase ${
-                    {getSeverityLabel(iss.severity)} ? "text-red-700 bg-red-50" : "text-amber-750 bg-amber-50"
+                    iss.severity === "critical" ? "text-red-700 bg-red-50" : "text-amber-750 bg-amber-50"
                   }`}>
-                    {iss.severity}
+                     {getSeverityLabel(iss.severity)}
                   </span>
                 </div>
                 <h4 className="text-xs font-bold text-slate-900">{iss.title}</h4>
@@ -254,9 +254,9 @@ export function FunnelDiagnosisPage() {
                   <p className="text-amber-800 italic">检测通过，当前没有缺失指标。</p>
                 ) : (
                   <div className="flex flex-wrap gap-1.5 mt-1">
-                    {allMissingMetrics.map({getMetricLabel(String(m))}) => (
+                    {allMissingMetrics.map((m, idx) => (
                       <span key={idx} className="px-1.5 py-0.5 bg-amber-200/70 border border-amber-300 text-amber-950 rounded font-mono font-bold">
-                        {m}
+                        {getMetricLabel(String(m))}
                       </span>
                     ))}
                   </div>
