@@ -100,7 +100,40 @@ export function DiagnosisOverviewPage() {
   const hasPartialDataNotice = Boolean(reportMeta?.diagnosticsDegraded);
   const reportMessage = reportMeta?.message || "";
   const hasNoIssues = !loading && !error && issues.length === 0;
-  
+
+  const getProblemStageLabel = (value?: string | null) => {
+    const labels: Record<string, string> = {
+      ad_delivery: "广告投放",
+      creative_attraction: "素材吸引力",
+      outcome: "转化结果",
+      product_page_intent: "产品承接",
+      landing_page_arrival: "落地页到达",
+      cart_to_checkout: "加购到结账",
+      checkout_payment: "结账支付",
+      meta_to_store_reconciliation: "广告与店铺对账",
+      data_health: "数据健康"
+    };
+
+    return value ? labels[value] || value.replace(/_/g, " ") : "";
+  };
+
+  const getOptimizationAreaLabel = (value?: string | null) => {
+    const labels: Record<string, string> = {
+      delivery: "投放效率",
+      creative: "素材创意",
+      budget: "预算控制",
+      audience: "受众定向",
+      product_page: "产品详情页",
+      pricing: "价格",
+      trust: "信任承接",
+      tracking: "追踪",
+      mapping: "账户映射",
+      data_sync: "数据同步"
+    };
+
+    return value ? labels[value] || value.replace(/_/g, " ") : "";
+  };
+   
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
       {/* Disclaimer Banner */}
@@ -244,7 +277,7 @@ export function DiagnosisOverviewPage() {
               </div>
               <div className="mt-4 flex items-baseline gap-2">
                 <span className="text-3xl font-bold text-slate-900">{summary.dataHealthNoticeCount}</span>
-                <span className="text-xs text-indigo-600 font-semibold">health 件</span>
+                <span className="text-xs text-indigo-600 font-semibold">条提醒</span>
               </div>
               <p className="text-xs text-slate-400 mt-2">数据延迟或对账异常提报</p>
             </div>
@@ -252,16 +285,16 @@ export function DiagnosisOverviewPage() {
             {/* Stat 3: Debug logs */}
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">规则命中日志</span>
+                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">过滤记录</span>
                 <div className="w-8 h-8 rounded-lg bg-slate-50 text-slate-600 flex items-center justify-center">
                   <EyeOff className="w-4 h-4" />
                 </div>
               </div>
               <div className="mt-4 flex items-baseline gap-2">
                 <span className="text-3xl font-bold text-slate-900">{summary.debugInvalidCount}</span>
-                <span className="text-xs text-slate-500 font-semibold">不合规过滤</span>
+                <span className="text-xs text-slate-500 font-semibold">已过滤</span>
               </div>
-              <p className="text-xs text-slate-400 mt-2">规则验证未达标记阈值总计</p>
+              <p className="text-xs text-slate-400 mt-2">未进入正式建议的记录数量</p>
             </div>
 
             {/* Stat 4: Store list impact */}
@@ -282,16 +315,16 @@ export function DiagnosisOverviewPage() {
             {/* Stat 5: Ad accounts impact */}
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">受波及广告组</span>
+                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">涉及广告账户</span>
                 <div className="w-8 h-8 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center">
                   <Activity className="w-4 h-4" />
                 </div>
               </div>
               <div className="mt-4 flex items-baseline gap-2">
                 <span className="text-3xl font-bold text-slate-900">{summary.adAccountCount}</span>
-                <span className="text-xs text-orange-600 font-semibold">个广告源层</span>
+                <span className="text-xs text-orange-600 font-semibold">个账户</span>
               </div>
-              <p className="text-xs text-slate-400 mt-2">底层涉及到的广告端账户数</p>
+              <p className="text-xs text-slate-400 mt-2">涉及的广告账户数量</p>
             </div>
 
           </div>
@@ -316,9 +349,9 @@ export function DiagnosisOverviewPage() {
                   <div className="space-y-1">
                     <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
                       <Sparkles className="w-5 h-5 text-blue-600" />
-                      高优先级风险/建议一览 (最高 PriorityScore 前 5 条)
+                      高优先级风险 / 建议一览
                     </h3>
-                    <p className="text-xs text-slate-500">规则诊断自研引擎实时归回判定</p>
+                    <p className="text-xs text-slate-500">按优先级展示当前最需要处理的问题</p>
                   </div>
                   <span className="px-2.5 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full">
                     建议优先
@@ -335,7 +368,7 @@ export function DiagnosisOverviewPage() {
                         <div className="flex items-center justify-between gap-1 flex-wrap">
                           <h4 className="text-sm font-bold text-slate-900 break-words">{iss.title}</h4>
                           <span className="px-2 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-700 rounded uppercase font-mono">
-                            Priority: {iss.priorityScore ?? "--"}
+                            优先级：{iss.priorityScore ?? "--"}
                           </span>
                         </div>
                         <p className="text-xs text-slate-500 leading-relaxed">
@@ -344,10 +377,10 @@ export function DiagnosisOverviewPage() {
                         
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-slate-400">
                           {iss.problemStage && (
-                            <span>阶段: <strong className="text-slate-650">{iss.problemStage}</strong></span>
+                            <span>阶段: <strong className="text-slate-650">{getProblemStageLabel(iss.problemStage)}</strong></span>
                           )}
                           {iss.optimizationArea && (
-                            <span>领域: <strong className="text-slate-650">{iss.optimizationArea}</strong></span>
+                            <span>领域: <strong className="text-slate-650">{getOptimizationAreaLabel(iss.optimizationArea)}</strong></span>
                           )}
                           {iss.ownerUserName && (
                             <span className="flex items-center gap-1 font-semibold text-slate-705">
