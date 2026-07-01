@@ -71,7 +71,7 @@ interface CountryAnalyticsData {
   dataSourceExplain: {
     orderPrimarySource: string;
     metaPrimarySource: string;
-    adInsightUsed: boolean;
+    legacyInsightUsed: boolean;
     dailySummaryUsed: boolean;
     storeMappingUsed: boolean;
     countryJoinKey: string;
