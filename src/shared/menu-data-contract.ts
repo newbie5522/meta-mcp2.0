@@ -38,6 +38,7 @@ export const MENU_DATA_CONTRACT = {
     component: "CreativeIntelligenceDashboard",
     endpoints: ["/api/data-center/creative-insights"],
     canonicalSources: ["FactMetaPerformance", "AdCreative"],
+    forbiddenSources: ["CreativePerformanceDaily", "AdInsight"],
     status: "WIRED"
   },
   "data-products": {
