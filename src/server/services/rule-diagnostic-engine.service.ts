@@ -969,48 +969,85 @@ export async function detectCreativeIssues(params: any): Promise<any[]> {
   const { startDate, endDate } = params;
   const issues: UniformIssue[] = [];
 
-  const storeIdFilter = params.storeId ? Number(params.storeId) : undefined;
-  
-  const performanceRecords = await prisma.creativePerformanceDaily.findMany({
-    where: storeIdFilter ? { storeId: storeIdFilter } : {}
+  const targetAccountIds = await getActiveAccountIds(params);
+
+  const where: any = {
+    level: "ad",
+    date: { gte: startDate, lte: endDate }
+  };
+
+  if (params.accountId) {
+    where.account_id = params.accountId;
+  } else if (targetAccountIds.length > 0) {
+    where.account_id = { in: targetAccountIds };
+  }
+
+  const performanceRecords = await prisma.factMetaPerformance.findMany({
+    where
   });
 
   const creativeMap: Record<string, any> = {};
+
   for (const rec of performanceRecords) {
-    if (PROHIBITED_ENTITIES.some(bad => rec.creativeId.toLowerCase().includes(bad))) {
+    const cid = rec.creative_id || rec.ad_id || rec.entity_id;
+
+    if (!cid || PROHIBITED_ENTITIES.some(bad => String(cid).toLowerCase().includes(bad))) {
       continue;
     }
-    const cid = rec.creativeId;
+
+    const creativeName =
+      rec.creative_name ||
+      rec.ad_name ||
+      rec.entity_name ||
+      cid;
+
     if (!creativeMap[cid]) {
       creativeMap[cid] = {
         creativeId: cid,
-        creativeName: rec.creativeName || cid,
+        creativeName,
         spend: 0,
         impressions: 0,
         clicks: 0,
-        revenue: 0,
-        purchases: 0
+        purchaseValue: 0,
+        purchases: 0,
+        accountIds: new Set<string>(),
+        factRows: 0
       };
     }
+
     creativeMap[cid].spend += rec.spend || 0;
     creativeMap[cid].impressions += rec.impressions || 0;
     creativeMap[cid].clicks += rec.clicks || 0;
-    creativeMap[cid].revenue += rec.revenue || 0;
+    creativeMap[cid].purchaseValue += rec.purchase_value || 0;
     creativeMap[cid].purchases += rec.purchases || 0;
+    creativeMap[cid].factRows += 1;
+
+    if (rec.account_id) {
+      creativeMap[cid].accountIds.add(rec.account_id);
+    }
   }
 
   for (const cid of Object.keys(creativeMap)) {
     const data = creativeMap[cid];
-    const { creativeName, spend, impressions, clicks, revenue, purchases } = data;
+    const {
+      creativeName,
+      spend,
+      impressions,
+      clicks,
+      purchaseValue,
+      purchases
+    } = data;
 
     const ctr = impressions > 0 ? clicks / impressions : 0;
     const cpc = clicks > 0 ? spend / clicks : 0;
     const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
-    const roas = spend > 0 ? revenue / spend : 0;
+    const roas = spend > 0 ? purchaseValue / spend : 0;
+
+    const accountIds = Array.from(data.accountIds || []);
 
     const baseEvidence = {
-      primarySource: "CreativePerformanceDaily",
-      supportingSources: ["FactMetaPerformance"],
+      primarySource: "FactMetaPerformance",
+      supportingSources: ["Ad", "AdCreative"],
       dateRange: `${startDate} 至 ${endDate}`,
       metrics: {
         spend,
@@ -1018,12 +1055,14 @@ export async function detectCreativeIssues(params: any): Promise<any[]> {
         impressions,
         clicks,
         purchases,
-        purchaseValue: revenue,
+        purchaseValue,
         ctr,
         cpc,
         cpm,
         roas,
         cpa: purchases > 0 ? spend / purchases : spend,
+        accountIds,
+        factRows: data.factRows,
         trend3d: { spend, purchases, roas, cpc, cpm },
         trend30d: { spend, purchases, roas, cpc, cpm }
       }
@@ -1035,7 +1074,7 @@ export async function detectCreativeIssues(params: any): Promise<any[]> {
         entityId: cid,
         entityName: creativeName,
         route: `/data-center/accounts`,
-        sourceTable: "CreativePerformanceDaily"
+        sourceTable: "FactMetaPerformance"
       }
     ];
 
@@ -1055,7 +1094,9 @@ export async function detectCreativeIssues(params: any): Promise<any[]> {
         evidence: baseEvidence,
         entityRefs,
         route: `/data-center/accounts`,
-        limitations: [],
+        limitations: [
+          "创意诊断已切换为 FactMetaPerformance 广告级事实数据；若素材结构未同步，creative_id 可能回退为 ad_id 或 entity_id。"
+        ],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
         status: "pending"
@@ -1078,7 +1119,9 @@ export async function detectCreativeIssues(params: any): Promise<any[]> {
         evidence: baseEvidence,
         entityRefs,
         route: `/data-center/accounts`,
-        limitations: [],
+        limitations: [
+          "创意诊断已切换为 FactMetaPerformance 广告级事实数据；若素材结构未同步，creative_id 可能回退为 ad_id 或 entity_id。"
+        ],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
         status: "pending"
@@ -1101,7 +1144,9 @@ export async function detectCreativeIssues(params: any): Promise<any[]> {
         evidence: baseEvidence,
         entityRefs,
         route: `/data-center/accounts`,
-        limitations: [],
+        limitations: [
+          "创意诊断已切换为 FactMetaPerformance 广告级事实数据；若素材结构未同步，creative_id 可能回退为 ad_id 或 entity_id。"
+        ],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
         status: "pending"
