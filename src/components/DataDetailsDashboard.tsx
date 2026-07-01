@@ -65,6 +65,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const [statusFilter, setStatusFilter] = useState<"spend" | "active" | "all" | "unmapped">("all");
   const [syncing, setSyncing] = useState(false);
   const [metaSyncing, setMetaSyncing] = useState(false);
+  const [autoRefreshPolling, setAutoRefreshPolling] = useState(false);
 
   const handleMetaRealtimeSync = async () => {
     setMetaSyncing(true);
@@ -107,8 +108,13 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const [sortField, setSortField] = useState<string>("spend");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = async (options: { silent?: boolean } = {}) => {
+    const silent = options.silent === true;
+
+    if (!silent) {
+      setLoading(true);
+    }
+
     try {
       const startStr = format(startDate, "yyyy-MM-dd");
       const endStr = format(endDate, "yyyy-MM-dd");
@@ -120,12 +126,18 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
           storeId: storeFilter
         }
       });
+
       setData(response.data);
     } catch (error: any) {
       console.error("Load Accounts Performance error:", error);
-      toast.error("加载账户数据明细失败: " + getApiErrorMessage(error));
+
+      if (!silent) {
+        toast.error("加载账户数据明细失败: " + getApiErrorMessage(error));
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -133,6 +145,29 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
     loadData();
   }, [startDate, endDate, storeFilter]);
 
+  const shouldPollAutoRefresh = Boolean(
+    data?.freshness?.refreshing ||
+    data?.freshness?.latestAutoRefreshStatus === "running" ||
+    data?.health?.isSyncActive
+  );
+
+  useEffect(() => {
+    if (!shouldPollAutoRefresh) {
+      setAutoRefreshPolling(false);
+      return;
+    }
+
+    setAutoRefreshPolling(true);
+
+    const timer = window.setInterval(() => {
+      loadData({ silent: true });
+    }, 8000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [shouldPollAutoRefresh, startDate, endDate, storeFilter]);
+  
   // Client filtering + sorting based on requirements
   const filteredAccounts = useMemo(() => {
     let list = [...(data.accounts || [])];
@@ -268,7 +303,14 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                 ? "bg-orange-500"
                 : "bg-blue-500"
             )}></span>
-            <span>最近同步时间: <strong className="text-slate-800 font-mono">{lastSyncTimeVal}</strong></span>
+            <span>
+              最近同步时间: <strong className="text-slate-800 font-mono">{lastSyncTimeVal}</strong>
+              {autoRefreshPolling && (
+                <span className="ml-2 text-blue-600 font-semibold">
+                  后台刷新中，页面将自动更新
+                </span>
+              )}
+            </span>
           </div>
           <div>
             <span>总账户数: <strong className="text-slate-800 font-mono">{allAccountsCount}</strong></span>
