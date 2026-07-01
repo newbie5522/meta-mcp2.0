@@ -198,57 +198,100 @@ export async function buildAnalysisContext(params: AnalysisCenterParams): Promis
       }
     }
 
-  } else if (type === "creative_analysis") {
-    title = "高消耗素材饱和与漏斗衰减诊断";
-    const rangeStats = await prisma.creativePerformanceDaily.findMany({
-      where: { date: { gte: startDate, lte: endDate } }
-    });
+    } else if (type === "creative_analysis") {
+      title = "高消耗素材饱和与漏斗衰减诊断";
 
-    const grouped: Record<string, any> = {};
-    for (const item of rangeStats) {
-      if (!grouped[item.creativeId]) {
-        grouped[item.creativeId] = {
-          creativeId: item.creativeId,
-          spend: 0,
-          impressions: 0,
-          clicks: 0,
-          purchases: 0,
-          revenue: 0,
-          mediaType: item.type || "IMAGE"
-        };
+      const factWhere: any = {
+        level: "ad",
+        date: { gte: startDate, lte: endDate }
+      };
+
+      if (params.accountId) {
+        factWhere.account_id = params.accountId;
       }
-      grouped[item.creativeId].spend += item.spend || 0;
-      grouped[item.creativeId].impressions += item.impressions || 0;
-      grouped[item.creativeId].clicks += item.clicks || 0;
-      grouped[item.creativeId].purchases += item.purchases || 0;
-      grouped[item.creativeId].revenue += item.revenue || 0;
-    }
 
-    const creativeList = Object.values(grouped).sort((a: any, b: any) => b.spend - a.spend).slice(0, 5);
-    metrics = { count: creativeList.length, topCreatives: creativeList };
+      if (entityId && entityId !== "all") {
+        factWhere.OR = [
+          { creative_id: entityId },
+          { ad_id: entityId },
+          { entity_id: entityId }
+        ];
+      }
 
-    if (creativeList.length === 0) {
-      severity = "info";
-      findings.push("此时间范围内未录得任何 Meta 广告素材的日常花费表现数据。");
-    } else {
-      const fatigued = creativeList.filter((c: any) => {
-        const ctr = c.impressions > 0 ? (c.clicks / c.impressions) * 100 : 0;
-        const roas = c.spend > 0 ? c.revenue / c.spend : 0;
-        return c.spend > 100 && (ctr < 1.0 || roas < 1.2);
+      const rangeStats = await prisma.factMetaPerformance.findMany({
+        where: factWhere,
+        take: 1000
       });
 
-      if (fatigued.length > 0) {
-        severity = "warning";
-        findings.push(`在主力消耗素材中，共诊断出 ${fatigued.length} 个素材存在明显的饱和高疲劳或低点击率现象。`);
-        fatigued.forEach((f: any) => {
-          const ctr = f.impressions > 0 ? (f.clicks / f.impressions) * 100 : 0;
-          findings.push(`- 素材 ${f.creativeId} (${f.mediaType})：花费 $${f.spend.toFixed(2)}，点击率仅 ${ctr.toFixed(2)}% ，购买转化亏损。`);
-        });
-      } else {
-        severity = "healthy";
-        findings.push("消耗排名前列的主力广告素材转化漏斗全段健康，漏斗损耗率在安全阈值内。");
+      const grouped: Record<string, any> = {};
+      for (const item of rangeStats) {
+        const creativeId = item.creative_id || item.ad_id || item.entity_id;
+        if (!creativeId) continue;
+
+        if (!grouped[creativeId]) {
+          grouped[creativeId] = {
+            creativeId,
+            creativeName: `创意: ${creativeId}`,
+            spend: 0,
+            impressions: 0,
+            clicks: 0,
+            purchases: 0,
+            purchaseValue: 0,
+            mediaType: "UNKNOWN"
+          };
       }
-    }
+
+        grouped[creativeId].spend += item.spend || 0;
+        grouped[creativeId].impressions += item.impressions || 0;
+        grouped[creativeId].clicks += item.clicks || 0;
+        grouped[creativeId].purchases += item.purchases || 0;
+        grouped[creativeId].purchaseValue += item.purchase_value || 0;
+      }
+
+      const creativeIds = Object.keys(grouped);
+      const creativeRows = creativeIds.length > 0
+        ? await prisma.adCreative.findMany({
+            where: { creativeId: { in: creativeIds } }
+          })
+        : [];
+
+      const creativeList = Object.values(grouped)
+        .map((item: any) => {
+          const meta = creativeRows.find((row) => row.creativeId === item.creativeId);
+          return {
+            ...item,
+            creativeName: meta?.name || item.creativeName,
+            mediaType: meta?.mediaType || item.mediaType
+          };
+        })
+        .sort((a: any, b: any) => b.spend - a.spend)
+        .slice(0, 5);
+
+      metrics = { count: creativeList.length, topCreatives: creativeList };
+
+      if (creativeList.length === 0) {
+        severity = "info";
+        findings.push("此时间范围内未录得任何广告级素材表现数据。");
+      } else {
+        const fatigued = creativeList.filter((c: any) => {
+          const ctr = c.impressions > 0 ? (c.clicks / c.impressions) * 100 : 0;
+          const roas = c.spend > 0 ? c.purchaseValue / c.spend : 0;
+          return c.spend > 100 && (ctr < 1.0 || roas < 1.2);
+        });
+
+        if (fatigued.length > 0) {
+          severity = "warning";
+          findings.push(`在主力消耗素材中，共诊断出 ${fatigued.length} 个素材存在明显的饱和、低点击或低转化现象。`);
+          fatigued.forEach((f: any) => {
+            const ctr = f.impressions > 0 ? (f.clicks / f.impressions) * 100 : 0;
+            const roas = f.spend > 0 ? f.purchaseValue / f.spend : 0;
+            findings.push(`- 素材 ${f.creativeId} (${f.mediaType})：花费 $${f.spend.toFixed(2)}，点击率 ${ctr.toFixed(2)}%，ROAS ${roas.toFixed(2)}x。`);
+          });
+        } else {
+          severity = "healthy";
+          findings.push("消耗排名前列的主力广告素材表现相对健康，暂未发现明显疲劳或转化异常。");
+        }
+      }
 
   } else if (type === "product_analysis") {
     title = "爆款商品退款与广告成效归因诊断";
@@ -385,7 +428,20 @@ export async function buildAnalysisContext(params: AnalysisCenterParams): Promis
     const shopOrdersCount = await prisma.order.count();
     const activeStoresCount = await prisma.store.count();
     const activeAccountsCount = await prisma.adAccount.count();
-    const creativeCount = await prisma.creativePerformanceDaily.count();
+    const creativeFactRows = await prisma.factMetaPerformance.findMany({
+      where: { level: "ad" },
+      select: {
+        creative_id: true,
+        ad_id: true,
+        entity_id: true
+      },
+      take: 5000
+    });
+    const creativeCount = new Set(
+      creativeFactRows
+        .map((row) => row.creative_id || row.ad_id || row.entity_id)
+        .filter(Boolean)
+    ).size;
 
     metrics = { factMetaCount, factAudienceCount, shopOrdersCount, activeStoresCount, activeAccountsCount, creativeCount };
 
@@ -448,7 +504,7 @@ export function buildDataSourceExplain(context: any): string {
     case "store_analysis":
       return "数据源基于 Store、动态 Order 事实流、以及 mapped 广告消耗，并跨表计算整店 ROAS 漏斗。";
     case "creative_analysis":
-      return "数据源来自 CreativePerformanceDaily 每日素材表，评估顶级消耗素材的疲劳深度。";
+      return "数据源来自 FactMetaPerformance 广告级事实表，并结合 AdCreative 素材元数据评估素材表现。";
     case "product_analysis":
       return "核心来源于真实 Order 销售明细大表聚合而得 of 商品成效上下文。";
     case "country_analysis":
