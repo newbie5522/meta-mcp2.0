@@ -123,6 +123,7 @@ export function useDiagnosticsIssues() {
     } catch (err: any) {
       console.error("[useDiagnosticsIssues FETCH ERROR]", err);
       setReportMeta({
+        message: "",
         diagnosticsDegraded: false,
         failedDetectors: [],
         backendSummary: null
@@ -196,7 +197,7 @@ export function useDiagnosticsIssues() {
     loading,
     error,
     reportMeta,
-    refetch,
+    refetch: fetchIssues,
     startDate,
     endDate,
     setStartDate,
