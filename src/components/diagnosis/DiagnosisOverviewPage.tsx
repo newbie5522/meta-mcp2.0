@@ -97,7 +97,7 @@ export function DiagnosisOverviewPage() {
     }
   };
 
-  const diagnosticsDegraded = Boolean(reportMeta?.diagnosticsDegraded);
+  const hasPartialDataNotice = Boolean(reportMeta?.diagnosticsDegraded);
   const reportMessage = reportMeta?.message || "";
   const hasNoIssues = !loading && !error && issues.length === 0;
   
