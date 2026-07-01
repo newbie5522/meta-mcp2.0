@@ -175,9 +175,9 @@ export function DataHealthDiagnosisPage() {
                 <p className="text-xs text-slate-450 italic">检测通过，当前没有缺失指标。</p>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
-                  {allMissingMetrics.map({getMetricLabel(String(m))}) => (
+                  {allMissingMetrics.map((m, i) => (
                     <span key={i} className="px-2 py-0.5 bg-red-50 border border-red-150 text-red-800 text-xs font-mono font-bold rounded">
-                      {m}
+                      {getMetricLabel(String(m))}
                     </span>
                   ))}
                 </div>
