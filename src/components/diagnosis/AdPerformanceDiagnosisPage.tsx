@@ -226,7 +226,7 @@ export function AdPerformanceDiagnosisPage() {
           {/* 转化效果 */}
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between">
             <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
-              <h3 className="font-bold text-slate-900 text-sm">购买结局与效果归因</h3>
+              <h3 className="font-bold text-slate-900 text-sm">购买结果与效果归因</h3>
               <span className="px-2 py-0.5 bg-emerald-105 text-emerald-800 text-[10px] font-bold rounded">
                 数量: {outcomeIssues.length}
               </span>
@@ -259,7 +259,7 @@ export function AdPerformanceDiagnosisPage() {
           {/* 预算与受众 */}
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between">
             <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
-              <h3 className="font-bold text-slate-900 text-sm">预算控制与定向优化</h3>
+              <h3 className="font-bold text-slate-900 text-sm">预算控制与受众优化</h3>
               <span className="px-2 py-0.5 bg-amber-105 text-amber-800 text-[10px] font-bold rounded">
                 数量: {budgetAudienceIssues.length}
               </span>
