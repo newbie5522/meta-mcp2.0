@@ -59,6 +59,15 @@ export function AdPerformanceDiagnosisPage() {
 
   // Check if we have any relevant ad performance issues at all
   const hasData = deliveryIssues.length > 0 || creativeIssues.length > 0 || outcomeIssues.length > 0 || budgetAudienceIssues.length > 0;
+  const getSeverityLabel = (value?: string | null) => {
+    const labels: Record<string, string> = {
+      critical: "严重",
+      warning: "需要关注",
+      info: "提醒"
+    };
+  
+    return value ? labels[value] || value : "提醒";
+  };
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
@@ -146,10 +155,10 @@ export function AdPerformanceDiagnosisPage() {
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           
-          {/* Section 1: ad_delivery (投放效率) */}
+          {/* 投放效率 */}
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between">
             <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
-              <h3 className="font-bold text-slate-900 text-sm">加购与投放效率 (Ad Delivery)</h3>
+              <h3 className="font-bold text-slate-900 text-sm">加购与投放效率 </h3>
               <span className="px-2 py-0.5 bg-blue-105 text-blue-800 text-[10px] font-bold rounded">
                 数量: {deliveryIssues.length}
               </span>
@@ -157,7 +166,7 @@ export function AdPerformanceDiagnosisPage() {
             
             <div className="p-5 space-y-4 flex-1">
               {deliveryIssues.length === 0 ? (
-                <p className="text-xs text-slate-400 italic">在此诊断区间内，未发现 ad_delivery 相关的效率问题。</p>
+                <p className="text-xs text-slate-400 italic">当前日期范围内未发现明显的投放效率问题。</p>
               ) : (
                 <div className="space-y-4">
                   {deliveryIssues.map((iss) => (
@@ -165,7 +174,7 @@ export function AdPerformanceDiagnosisPage() {
                        <div className="flex items-center justify-between">
                          <span className="text-[10px] font-mono text-slate-420 font-bold uppercase">{iss.issueId}</span>
                          <span className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase ${
-                           iss.severity === "critical" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"
+                           {getSeverityLabel(iss.severity)} ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"
                          }`}>
                            {iss.severity}
                          </span>
@@ -181,10 +190,10 @@ export function AdPerformanceDiagnosisPage() {
             </div>
           </div>
 
-          {/* Section 2: creative_attraction (创意吸引力) */}
+          {/* 素材吸引力 */}
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between">
             <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
-              <h3 className="font-bold text-slate-900 text-sm">创意吸引力 (Creative Attraction)</h3>
+              <h3 className="font-bold text-slate-900 text-sm">素材吸引力</h3>
               <span className="px-2 py-0.5 bg-purple-105 text-purple-800 text-[10px] font-bold rounded">
                 数量: {creativeIssues.length}
               </span>
@@ -192,7 +201,7 @@ export function AdPerformanceDiagnosisPage() {
             
             <div className="p-5 space-y-4 flex-1">
               {creativeIssues.length === 0 ? (
-                <p className="text-xs text-slate-400 italic">在此诊断区间内，未发现 creative_attraction 相关的素材疲劳或流量漏减问题。</p>
+                <p className="text-xs text-slate-400 italic">当前日期范围内未发现明显的素材吸引力问题。</p>
               ) : (
                 <div className="space-y-4">
                   {creativeIssues.map((iss) => (
@@ -214,10 +223,10 @@ export function AdPerformanceDiagnosisPage() {
             </div>
           </div>
 
-          {/* Section 3: outcome (大结局归因/低ROAS) */}
+          {/* 转化效果 */}
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between">
             <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
-              <h3 className="font-bold text-slate-900 text-sm">购买结局与效果归因 (Outcome Benchmarking)</h3>
+              <h3 className="font-bold text-slate-900 text-sm">购买结局与效果归因</h3>
               <span className="px-2 py-0.5 bg-emerald-105 text-emerald-800 text-[10px] font-bold rounded">
                 数量: {outcomeIssues.length}
               </span>
@@ -225,7 +234,7 @@ export function AdPerformanceDiagnosisPage() {
             
             <div className="p-5 space-y-4 flex-1">
               {outcomeIssues.length === 0 ? (
-                <p className="text-xs text-slate-400 italic">在此诊断区间内，未发现 outcome 相关的宏观转化预警。</p>
+                <p className="text-xs text-slate-400 italic">当前日期范围内未发现明显的转化效果预警。</p>
               ) : (
                 <div className="space-y-4">
                   {outcomeIssues.map((iss) => (
@@ -247,10 +256,10 @@ export function AdPerformanceDiagnosisPage() {
             </div>
           </div>
 
-          {/* Section 4: budget / audience (预算区域与受众定向) */}
+          {/* 预算与受众 */}
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between">
             <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
-              <h3 className="font-bold text-slate-900 text-sm">预算控制与定向优化 (Budget & Audience Direction)</h3>
+              <h3 className="font-bold text-slate-900 text-sm">预算控制与定向优化</h3>
               <span className="px-2 py-0.5 bg-amber-105 text-amber-800 text-[10px] font-bold rounded">
                 数量: {budgetAudienceIssues.length}
               </span>
@@ -258,7 +267,7 @@ export function AdPerformanceDiagnosisPage() {
             
             <div className="p-5 space-y-4 flex-1">
               {budgetAudienceIssues.length === 0 ? (
-                <p className="text-xs text-slate-400 italic">在此诊断区间内，未发现针对 budget 或 audience 相关的专项对策建议。</p>
+                <p className="text-xs text-slate-400 italic">当前日期范围内未发现明显的预算或受众问题。</p>
               ) : (
                 <div className="space-y-4">
                   {budgetAudienceIssues.map((iss) => (
