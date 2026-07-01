@@ -70,7 +70,7 @@ export function AdPerformanceDiagnosisPage() {
           </div>
           <div className="ml-3">
             <p className="text-xs text-amber-800 font-bold">
-              当前页面已接入离线规则诊断引擎。若数据库为空或所选日期范围内没有可诊断记录，将显示空状态，不会展示演示数据。
+              当前页面仅展示真实诊断结果；如果所选时间内没有异常，会显示为空状态。
             </p>
           </div>
         </div>
