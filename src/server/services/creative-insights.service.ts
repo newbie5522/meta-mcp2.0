@@ -137,6 +137,12 @@ export async function getAggregatedCreativeInsights(params: {
             noAdLevelInsightsWarning: !hasAdLevelInsights,
             adCreativeNotLinkedWarning: !hasAdCreativeLinks,
             creativeStaticMissingWarning: !hasCreativeStaticInfo
+          },
+          dataSourceExplain: {
+            performanceSource: "FactMetaPerformance level=ad",
+            creativeMetadataSource: "AdCreative",
+            adStructureSource: "Ad / AdSet / Campaign",
+            legacySourcesUsed: []
           }
         };
       }
@@ -526,6 +532,12 @@ export async function getAggregatedCreativeInsights(params: {
       noAdLevelInsightsWarning: !hasAdLevelInsights,
       adCreativeNotLinkedWarning: !hasAdCreativeLinks,
       creativeStaticMissingWarning: !hasCreativeStaticInfo
+    },
+    dataSourceExplain: {
+      performanceSource: "FactMetaPerformance level=ad",
+      creativeMetadataSource: "AdCreative",
+      adStructureSource: "Ad / AdSet / Campaign",
+      legacySourcesUsed: []
     }
   };
 }
