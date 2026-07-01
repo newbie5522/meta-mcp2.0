@@ -56,7 +56,31 @@ export function DataHealthDiagnosisPage() {
       return Array.isArray(lim) ? lim : [String(lim)];
     })
   ));
+  
+  const getCategoryLabel = (value?: string | null) => {
+    const labels: Record<string, string> = {
+      data_health_notice: "数据提醒",
+      debug_invalid: "已过滤记录",
+      production_suggestion: "经营建议"
+    };
 
+    return value ? labels[value] || value.replace(/_/g, " ") : "未分类";
+  };
+
+  const getMetricLabel = (value: string) => {
+    const labels: Record<string, string> = {
+      linkClicks: "链接点击",
+      landingPageViews: "落地页访问",
+      addToCart: "加购",
+      initiateCheckout: "发起结账",
+      purchases: "购买",
+      purchaseValue: "成交金额",
+      roas: "广告回报"
+    };
+
+    return labels[value] || value.replace(/_/g, " ");
+  };
+  
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
       {/* Disclaimer Banner */}
@@ -116,7 +140,7 @@ export function DataHealthDiagnosisPage() {
       {loading ? (
         <div className="bg-white border rounded-2xl p-16 text-center space-y-4">
           <RefreshCw className="w-8 h-8 animate-spin mx-auto text-blue-600" />
-          <h4 className="text-sm font-bold text-slate-700">正在核对全域物理链路与对账状态...</h4>
+          <h4 className="text-sm font-bold text-slate-700">正在加载数据健康检查结果...</h4>
         </div>
       ) : error ? (
         <div className="bg-red-50 border border-red-200 rounded-2xl p-8 space-y-4">
@@ -148,10 +172,10 @@ export function DataHealthDiagnosisPage() {
             <div className="space-y-2">
               <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">缺失指标汇总</span>
               {allMissingMetrics.length === 0 ? (
-                <p className="text-xs text-slate-450 italic">检测通过。所有六段核心节点指标全部齐备。</p>
+                <p className="text-xs text-slate-450 italic">检测通过，当前没有缺失指标。</p>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
-                  {allMissingMetrics.map((m, i) => (
+                  {allMissingMetrics.map({getMetricLabel(String(m))}) => (
                     <span key={i} className="px-2 py-0.5 bg-red-50 border border-red-150 text-red-800 text-xs font-mono font-bold rounded">
                       {m}
                     </span>
@@ -163,7 +187,7 @@ export function DataHealthDiagnosisPage() {
             <div className="space-y-2">
               <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">数据限制汇总</span>
               {allLimitations.length === 0 ? (
-                <p className="text-xs text-slate-450 italic">无历史时效性、授权失效阻碍或其他限制阻碍。</p>
+                <p className="text-xs text-slate-450 italic">当前没有明显的数据限制。</p>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
                   {allLimitations.map((l, i) => (
@@ -194,7 +218,7 @@ export function DataHealthDiagnosisPage() {
                         {item.issueId}
                       </span>
                       <span className="text-xs text-slate-400 capitalize">
-                        {item.category.replace(/_/g, " ")}
+                        {getCategoryLabel(item.category)}
                       </span>
                     </div>
                     
@@ -213,7 +237,7 @@ export function DataHealthDiagnosisPage() {
                   <div className="flex items-center gap-4 shrink-0 self-end md:self-auto">
                     <div className="text-right">
                       <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-slate-50 text-slate-700 border">
-                        Score: {item.priorityScore ?? "--"}
+                        优先级：{item.priorityScore ?? "--"}
                       </span>
                       <p className="text-[10px] text-slate-400 mt-1">
                         置信: {item.confidenceScore ? `${Math.round(item.confidenceScore * 100)}%` : "--"}
