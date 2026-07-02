@@ -546,6 +546,7 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
   for (const acc of accounts) {
     const accountId = acc.fb_account_id;
     const accountName = acc.fb_account_name || accountId;
+    const accountRoute = `/account/${encodeURIComponent(accountId)}`;
 
     const perfRecords = await prisma.factMetaPerformance.findMany({
       where: {
@@ -566,7 +567,7 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
     const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
     const roas = spend > 0 ? purchaseValue / spend : 0;
 
-    // Fetch addToCart and initiateCheckout from AdInsight for exact accountId - DECOMMISSIONED FOR LOCKDOWN
+    // Funnel events are not available in the current canonical fact chain.
     const addToCart = 0;
     const initiateCheckout = 0;
     const landingPageViews = null;
@@ -600,12 +601,11 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
 
     const baseEvidence = {
       primarySource: "FactMetaPerformance",
-      supportingSources: ["AdAccount", "AccountMapping", "AdInsight"],
+      supportingSources: ["AdAccount", "AccountMapping"],
       dateRange: `${startDate} 至 ${endDate}`,
       limitations: [
         "当前 linkClicks 暂使用 FactMetaPerformance.clicks 代替；若后续补充真实 link_clicks，应切换为真实 Link Click。",
-        "当前缺少 Landing Page View 字段，暂无法计算点击到落地页到达率。",
-        "AdInsight 仅作为 ATC / IC 漏斗事件补充来源，不作为 spend / ROAS / purchases 主事实源。"
+        "当前缺少 Landing Page View 字段，暂无法计算点击到落地页到达率。"
       ],
       funnelSnapshot,
       metrics: {
@@ -629,7 +629,7 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
         entityType: "account",
         entityId: accountId,
         entityName: accountName,
-        route: `/data-center/accounts?accountId=${accountId}`,
+        route: accountRoute,
         sourceTable: "AdAccount"
       }
     ];
@@ -649,7 +649,7 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
         actionTarget: `account:${accountId}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts?accountId=${accountId}`,
+        route: accountRoute,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -672,7 +672,7 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
         actionTarget: `account:${accountId}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts?accountId=${accountId}`,
+        route: accountRoute,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -695,7 +695,7 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
         actionTarget: `account:${accountId}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts?accountId=${accountId}`,
+        route: accountRoute,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -718,7 +718,7 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
         actionTarget: `account:${accountId}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts?accountId=${accountId}`,
+        route: accountRoute,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -741,7 +741,7 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
         actionTarget: `account:${accountId}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts?accountId=${accountId}`,
+        route: accountRoute,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
