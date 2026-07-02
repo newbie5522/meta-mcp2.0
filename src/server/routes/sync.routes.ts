@@ -517,16 +517,8 @@ router.post("/sync/trigger", async (req, res) => {
     }
 
     // ============================================================
-    // 需要 ENABLE_MANUAL_SYNC 的高危任务
+    // 数据中心账本刷新任务
     // ============================================================
-
-    if (!isManualSyncEnabled()) {
-      return res.status(403).json({
-        success: false,
-        error: "MANUAL_SYNC_DISABLED",
-        message: "This operation requires ENABLE_MANUAL_SYNC=true"
-      });
-    }
 
     if (taskType === SyncTaskType.REFRESH_STORE_DATACENTER_LEDGER) {
       if (!storeId || !startDate || !endDate) {
@@ -668,7 +660,7 @@ for (const endpoint of DEPRECATED_SYNC_ENDPOINTS) {
       timestamp: new Date().toISOString(),
       migratedTo: "POST /api/sync/trigger",
       migrationGuide: {
-        "/sync/rebuild": "POST /api/sync/trigger { taskType: 'rebuild_all' }",
+        "/sync/rebuild": "旧全量重建入口已移除；请按需要分别使用 sync_meta_insights、sync_store_orders、refresh_meta_datacenter_ledger 或 refresh_store_datacenter_ledger",
         "/sync": "POST /api/sync/trigger { taskType: 'sync_meta_insights' }",
         "/sync-store": "POST /api/sync/trigger { taskType: 'sync_store_orders' }",
         "/sync/stores/:storeId/orders": "POST /api/sync/trigger { taskType: 'sync_store_orders', storeId }",
