@@ -14,25 +14,13 @@ export enum SyncTaskType {
   SYNC_META_ACCOUNTS = 'sync_meta_accounts',
   SYNC_META_AUDIENCE = 'sync_meta_audience',
   SYNC_META_CREATIVES = 'sync_meta_creatives',
-  
+
   // 店铺订单数据同步
   SYNC_STORE_ORDERS = 'sync_store_orders',
-  
-  // AI 决策链路
-  RUN_AI_RULE_MONITOR = 'run_ai_rule_monitor',
-  
-  // 汇总表重建
-  REBUILD_STORE_SUMMARY = 'rebuild_store_summary',
-  REBUILD_META_SUMMARY = 'rebuild_meta_summary',
-  REBUILD_ROAS_SUMMARY = 'rebuild_roas_summary',
-  REBUILD_DASHBOARD_SUMMARY = 'rebuild_dashboard_summary',
-  
+
   // 数据中心账本刷新
   REFRESH_STORE_DATACENTER_LEDGER = 'refresh_store_datacenter_ledger',
-  REFRESH_META_DATACENTER_LEDGER = 'refresh_meta_datacenter_ledger',
-  
-  // 全量重建（组合任务）
-  REBUILD_ALL = 'rebuild_all'
+  REFRESH_META_DATACENTER_LEDGER = 'refresh_meta_datacenter_ledger'
 }
 
 /**
