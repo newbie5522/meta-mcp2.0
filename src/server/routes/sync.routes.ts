@@ -202,15 +202,10 @@ router.get("/sync/chains", async (req, res) => {
  * - sync_meta_structure
  * - sync_meta_accounts
  * - sync_meta_audience
+ * - sync_meta_creatives
  * - sync_store_orders
- * - run_ai_rule_monitor
- * - rebuild_store_summary
- * - rebuild_meta_summary
- * - rebuild_roas_summary
- * - rebuild_dashboard_summary
  * - refresh_store_datacenter_ledger
  * - refresh_meta_datacenter_ledger
- * - rebuild_all
  */
 router.post("/sync/trigger", async (req, res) => {
   const {
@@ -291,26 +286,6 @@ router.post("/sync/trigger", async (req, res) => {
         recordsSaved += log?.recordsSaved || 0;
       }
 
-      const summaryDays = range.days;
-      const metaSummaryTaskId = await SyncCenter.rebuildMetaSummary(
-        chainId,
-        "frontend_safe_sync",
-        lastTaskId,
-        summaryDays
-      );
-      const roasTaskId2 = await SyncCenter.rebuildRoasSummary(
-        chainId,
-        "frontend_safe_sync",
-        metaSummaryTaskId,
-        summaryDays
-      );
-      await SyncCenter.rebuildDashboardSummary(
-        chainId,
-        "frontend_safe_sync",
-        roasTaskId2,
-        summaryDays
-      );
-
       const status = recordsFetched === 0 && recordsSaved === 0 ? "NO_NEW_DATA" : "SUCCESS";
       return res.json({
         success: true,
@@ -366,26 +341,6 @@ router.post("/sync/trigger", async (req, res) => {
         recordsFetched += log?.recordsFetched || 0;
         recordsSaved += log?.recordsSaved || 0;
       }
-
-      const summaryDays = range.days;
-      const storeSummaryTaskId = await SyncCenter.rebuildStoreSummary(
-        chainId,
-        "frontend_safe_sync",
-        lastTaskId,
-        summaryDays
-      );
-      const roasTaskId1 = await SyncCenter.rebuildRoasSummary(
-        chainId,
-        "frontend_safe_sync",
-        storeSummaryTaskId,
-        summaryDays
-      );
-      await SyncCenter.rebuildDashboardSummary(
-        chainId,
-        "frontend_safe_sync",
-        roasTaskId1,
-        summaryDays
-      );
 
       const status = recordsFetched === 0 && recordsSaved === 0 ? "NO_NEW_DATA" : "SUCCESS";
       return res.json({
@@ -561,37 +516,6 @@ router.post("/sync/trigger", async (req, res) => {
       } as SyncTriggerResponse);
     }
 
-    if (taskType === SyncTaskType.RUN_AI_RULE_MONITOR) {
-      const taskId = await SyncCenter.runAiRuleMonitor(chainId, "frontend_safe_sync");
-      return res.json({
-        success: true,
-        status: "SUCCESS",
-        message: "AI风控系统体检扫描运行完毕，已重新计算并更新各账户的诊断卡片。",
-        chainId,
-        taskType,
-        taskIds: [taskId]
-      } as SyncTriggerResponse);
-    }
-
-    if (taskType === SyncTaskType.REBUILD_ROAS_SUMMARY) {
-      const summaryDays = days ? parseInt(String(days), 10) : 90;
-      const taskId = await SyncCenter.rebuildRoasSummary(
-        chainId,
-        "frontend_safe_sync",
-        null,
-        summaryDays
-      );
-      await SyncCenter.rebuildDashboardSummary(chainId, "frontend_safe_sync", taskId, summaryDays);
-      return res.json({
-        success: true,
-        status: "SUCCESS",
-        message: `销售额/开销 ROAS 映射汇总表重新对准成功（对齐窗口: 过去 ${summaryDays} 天）。`,
-        chainId,
-        taskType,
-        taskIds: [taskId]
-      } as SyncTriggerResponse);
-    }
-
     // ============================================================
     // 需要 ENABLE_MANUAL_SYNC 的高危任务
     // ============================================================
@@ -602,62 +526,6 @@ router.post("/sync/trigger", async (req, res) => {
         error: "MANUAL_SYNC_DISABLED",
         message: "This operation requires ENABLE_MANUAL_SYNC=true"
       });
-    }
-
-    if (taskType === SyncTaskType.REBUILD_STORE_SUMMARY) {
-      const summaryDays = days ? parseInt(String(days), 10) : 90;
-      const taskId = await SyncCenter.rebuildStoreSummary(
-        chainId,
-        "manual_trigger",
-        null,
-        summaryDays
-      );
-      await SyncCenter.rebuildDashboardSummary(chainId, "manual_trigger", taskId, summaryDays);
-      return res.json({
-        success: true,
-        status: "SUCCESS",
-        message: `店铺汇总表重新构建完毕（回溯窗口: 过去 ${summaryDays} 天）。`,
-        chainId,
-        taskType,
-        taskIds: [taskId]
-      } as SyncTriggerResponse);
-    }
-
-    if (taskType === SyncTaskType.REBUILD_META_SUMMARY) {
-      const summaryDays = days ? parseInt(String(days), 10) : 90;
-      const taskId = await SyncCenter.rebuildMetaSummary(
-        chainId,
-        "manual_trigger",
-        null,
-        summaryDays
-      );
-      await SyncCenter.rebuildDashboardSummary(chainId, "manual_trigger", taskId, summaryDays);
-      return res.json({
-        success: true,
-        status: "SUCCESS",
-        message: `Meta 广告汇总表重新构建完毕（回溯窗口: 过去 ${summaryDays} 天）。`,
-        chainId,
-        taskType,
-        taskIds: [taskId]
-      } as SyncTriggerResponse);
-    }
-
-    if (taskType === SyncTaskType.REBUILD_DASHBOARD_SUMMARY) {
-      const summaryDays = days ? parseInt(String(days), 10) : 90;
-      const taskId = await SyncCenter.rebuildDashboardSummary(
-        chainId,
-        "manual_trigger",
-        null,
-        summaryDays
-      );
-      return res.json({
-        success: true,
-        status: "SUCCESS",
-        message: `看板聚合层重新构建完毕（回溯窗口: 过去 ${summaryDays} 天）。`,
-        chainId,
-        taskType,
-        taskIds: [taskId]
-      } as SyncTriggerResponse);
     }
 
     if (taskType === SyncTaskType.REFRESH_STORE_DATACENTER_LEDGER) {
@@ -748,45 +616,6 @@ router.post("/sync/trigger", async (req, res) => {
       } as SyncTriggerResponse);
       }
 
-    if (taskType === SyncTaskType.REBUILD_ALL) {
-      const summaryDays = days ? parseInt(String(days), 10) : 90;
-
-      const id1 = await SyncCenter.rebuildStoreSummary(
-        chainId,
-        "rebuild_btn",
-        null,
-        summaryDays
-      );
-      const id2 = await SyncCenter.rebuildMetaSummary(
-        chainId,
-        "rebuild_btn",
-        id1,
-        summaryDays
-      );
-      const id3 = await SyncCenter.rebuildRoasSummary(
-        chainId,
-        "rebuild_btn",
-        id2,
-        summaryDays
-      );
-      const id4 = await SyncCenter.rebuildDashboardSummary(
-        chainId,
-        "rebuild_btn",
-        id3,
-        summaryDays
-      );
-      await SyncCenter.runAiRuleMonitor(chainId, "rebuild_btn", id4);
-
-      return res.json({
-        success: true,
-        status: "SUCCESS",
-        message: `正在后台重建过去 ${summaryDays} 天所有店铺与广告链条的每日交易数、汇总开销、以及各店铺对齐 ROAS 和 AI 风控卡片。`,
-        chainId,
-        taskType,
-        taskIds: [id1, id2, id3, id4]
-      } as SyncTriggerResponse);
-    }
-
     return res.status(400).json({
       success: false,
       error: "UNSUPPORTED_TASK_TYPE",
@@ -851,7 +680,7 @@ for (const endpoint of DEPRECATED_SYNC_ENDPOINTS) {
         "/sync/meta-realtime": "POST /api/sync/trigger { taskType: 'sync_meta_insights' }",
         "/sync/data-center/refresh-store": "POST /api/sync/trigger { taskType: 'refresh_store_datacenter_ledger' }",
         "/sync/data-center/refresh-meta": "POST /api/sync/trigger { taskType: 'refresh_meta_datacenter_ledger' }",
-        "/summary/stores/rebuild": "POST /api/sync/trigger { taskType: 'rebuild_store_summary' }",
+        "/summary/stores/rebuild": "POST /api/sync/trigger { taskType: 'refresh_store_datacenter_ledger', storeId, startDate, endDate }",
         "/sync/stores/:storeId/reconcile": "GET /api/data-center/stores/:storeId/reconciliation"
       },
       documentationUrl: "https://github.com/newbie5522/meta-mcp2.0/wiki/Sync-API-Migration"
