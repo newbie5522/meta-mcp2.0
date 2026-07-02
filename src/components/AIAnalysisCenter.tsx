@@ -222,6 +222,34 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
     }
   };
 
+  const formatEvidenceMetricValue = (key: string, value: any) => {
+    if (value === null || value === undefined || value === "") return "暂无";
+
+    const lowerKey = key.toLowerCase();
+
+    if (typeof value === "number") {
+      if (lowerKey.includes("spend") || lowerKey.includes("revenue") || lowerKey.includes("value") || lowerKey.includes("sales") || lowerKey.includes("cpa") || lowerKey.includes("cpc")) {
+        return `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+      }
+      if (lowerKey.includes("roas")) {
+        return `${value.toFixed(2)}x`;
+      }
+      if (lowerKey.includes("ctr") || lowerKey.includes("rate")) {
+        return `${value.toFixed(2)}%`;
+      }
+      return value.toLocaleString();
+    }
+
+    return String(value);
+  };
+
+  const getVisibleEvidenceMetrics = (metrics: Record<string, any> | null | undefined) => {
+    if (!metrics) return [];
+    return Object.entries(metrics)
+      .filter(([, value]) => value !== null && value !== undefined && value !== "")
+      .slice(0, 6);
+  };
+
   const activeScope = diagnosticScopes.find(s => s.type === selectedType);
 
   return (
@@ -728,18 +756,12 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
                                     <span>对账事实依据 (Evidence)</span>
                                   </div>
                                   <div className="grid grid-cols-3 gap-1 text-center font-mono text-[9px] text-slate-600">
-                                    <div className="bg-white p-1 rounded border border-indigo-100/30">
-                                      <p className="text-slate-400">SPEND</p>
-                                      <p className="font-bold">${Number(meta.evidence.metrics?.spend || 0).toLocaleString()}</p>
-                                    </div>
-                                    <div className="bg-white p-1 rounded border border-indigo-100/30">
-                                      <p className="text-slate-400">ROAS</p>
-                                      <p className="font-bold">{Number(meta.evidence.metrics?.roas || 0).toFixed(2)}x</p>
-                                    </div>
-                                    <div className="bg-white p-1 rounded border border-indigo-100/30">
-                                      <p className="text-slate-400">CPA</p>
-                                      <p className="font-bold">${Number(meta.evidence.metrics?.cpa || 0).toFixed(2)}</p>
-                                    </div>
+                                    {getVisibleEvidenceMetrics(meta.evidence.metrics).map(([key, value]) => (
+                                      <div key={key} className="bg-white p-1 rounded border border-indigo-100/30">
+                                        <p className="text-slate-400 truncate uppercase">{key}</p>
+                                        <p className="font-bold truncate">{formatEvidenceMetricValue(key, value)}</p>
+                                      </div>
+                                    ))}
                                   </div>
                                 </div>
                               )}
