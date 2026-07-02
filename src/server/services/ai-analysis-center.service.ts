@@ -560,6 +560,21 @@ async function getRealTraceableSuggestions(
       ? "暂无完整 ROAS 数据"
       : `${accountEvidenceMetrics.roas.toFixed(2)}x`;
 
+  const buildContextEvidenceMetrics = () => ({
+    spend: readMetricNumber(context.metrics?.spend, context.metrics?.adSpend),
+    impressions: readMetricNumber(context.metrics?.impressions),
+    clicks: readMetricNumber(context.metrics?.clicks),
+    purchases: readMetricNumber(context.metrics?.purchases),
+    revenue: readMetricNumber(context.metrics?.revenue, context.metrics?.sales, context.metrics?.purchaseValue),
+    roas: readMetricNumber(context.metrics?.roas, context.metrics?.realRoas),
+    ctr: readMetricNumber(context.metrics?.ctr),
+    cpc: readMetricNumber(context.metrics?.cpc),
+    cpa: readMetricNumber(context.metrics?.cpa)
+  });
+
+  const hasAnyMetricValue = (metrics: Record<string, number | null>) =>
+    Object.values(metrics).some(value => value !== null);
+
   // 1. Account Suggestion (bind_account or reduce_budget)
   if (type === "unmapped_spend_risk" || type === "data_health_summary" || type === "account_analysis" || hasUnmapped) {
     const activeAcc = await prisma.adAccount.findFirst({
@@ -847,86 +862,46 @@ async function getRealTraceableSuggestions(
     }
   }
   
-  // 5. Product Analytics Suggestion
+  // 5. Product / Store Analytics Suggestion from available context metrics
   if (type === "product_analysis" || type === "store_analysis") {
-    const store = await prisma.store.findFirst();
-    const storeIdStr = store ? String(store.id) : "1";
-    const storeNameStr = store ? store.name : "Shopline Store";
+    const storeIdFromContext = context.entityId || context.metrics?.storeId || null;
+    const store = storeIdFromContext
+      ? await prisma.store.findUnique({ where: { id: Number(storeIdFromContext) } })
+      : await prisma.store.findFirst();
 
-    suggestions.push({
-      title: `物理核对店铺 ${storeIdStr}`,
-      actionVerb: "investigate_data_gap",
-      actionTarget: `store:${storeIdStr}`,
-      rationale: `核算 Store「${storeNameStr}」的实收订单资金流与 Meta 回传转化金额具有大额差值。运营应对两张关系表做跨多渠道大对汇核，确认是否有独立站回传漏单并调整映射。`,
-      priority: 3,
-      route: `/ai/store?storeId=${storeIdStr}`,
-      entityRefs: [
-        {
-          entityType: "store",
-          entityId: storeIdStr,
-          entityName: storeNameStr,
-          route: `/ai/store?storeId=${storeIdStr}`,
-          sourceTable: "Store"
-        }
-      ],
-      evidence: {
-        primarySource: "Store",
-        supportingSources: ["Order", "FactMetaPerformance"],
-        dateRange: `${startDate} 至 ${endDate}`,
-        metrics: {
-          spend: context.metrics.spend || context.metrics.adSpend || 4500,
-          impressions: context.metrics.impressions || 150000,
-          clicks: context.metrics.clicks || 3200,
-          purchases: context.metrics.purchases || 95,
-          revenue: context.metrics.revenue || context.metrics.sales || 9500,
-          roas: context.metrics.roas || context.metrics.realRoas || 2.11,
-          ctr: 2.13,
-          cpc: 1.41,
-          cpa: 47.36
-        }
-      },
-      generationMode
-    });
+    const contextEvidenceMetrics = buildContextEvidenceMetrics();
+
+    if (store && hasAnyMetricValue(contextEvidenceMetrics)) {
+      const storeIdStr = String(store.id);
+      const storeNameStr = store.name;
+
+      suggestions.push({
+        title: `核对店铺 ${storeNameStr}`,
+        actionVerb: "investigate_data_gap",
+        actionTarget: `store:${storeIdStr}`,
+        rationale: `基于当前分析上下文，店铺「${storeNameStr}」在 ${startDate} 至 ${endDate} 存在可核对的订单、销售额或广告成效指标。请结合 Order 与 FactMetaPerformance 进行店铺级数据复核。`,
+        priority: 3,
+        route: `/ai/store?storeId=${storeIdStr}`,
+        entityRefs: [
+          {
+            entityType: "store",
+            entityId: storeIdStr,
+            entityName: storeNameStr,
+            route: `/ai/store?storeId=${storeIdStr}`,
+            sourceTable: "Store"
+          }
+        ],
+        evidence: {
+          primarySource: "Store",
+          supportingSources: ["Order", "FactMetaPerformance"],
+          dateRange: `${startDate} 至 ${endDate}`,
+          metrics: contextEvidenceMetrics
+        },
+        generationMode
+      });
+    }
   }
-
-  // Guarantee at least 1 suggestion is returned!
-  if (suggestions.length === 0) {
-    suggestions.push({
-      title: "核查多端数据差额",
-      actionVerb: "investigate_data_gap",
-      actionTarget: "global:data",
-      rationale: "全链路状态运行顺畅。建议例行下载并核对 FactMetaPerformance 与 Store 数据，从物理层面完成一致性校验复盘，确保转化没有延迟丢失漏损。",
-      priority: 3,
-      route: "/data-center/accounts?accountId=unknown",
-      entityRefs: [
-        {
-          entityType: "account",
-          entityId: "unknown",
-          entityName: "全物理广告账户组",
-          route: "/data-center/accounts?accountId=unknown",
-          sourceTable: "FactMetaPerformance"
-        }
-      ],
-      evidence: {
-        primarySource: "FactMetaPerformance",
-        supportingSources: ["Store", "Order"],
-        dateRange: `${startDate} 至 ${endDate}`,
-        metrics: {
-          spend: context.metrics.spend || context.metrics.adSpend || 0,
-          impressions: context.metrics.impressions || 0,
-          clicks: context.metrics.clicks || 0,
-          purchases: context.metrics.purchases || 0,
-          revenue: context.metrics.revenue || context.metrics.sales || 0,
-          roas: context.metrics.roas || context.metrics.realRoas || 0,
-          ctr: 0,
-          cpc: 0,
-          cpa: 0
-        }
-      },
-      generationMode
-    });
-  }
-
+  
   return suggestions;
 }
 
