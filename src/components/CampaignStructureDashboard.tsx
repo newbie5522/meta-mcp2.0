@@ -287,26 +287,25 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
     }
   };
 
-  // Sync utilities triggers
-  const handleSyncStructure = async () => {
-    const tId = toast.loading("正在为对应账户触发增量拓扑拉取与结构重构...");
+  // Sync utilities trigger
+  const handleSyncAdHierarchy = async () => {
+    const tId = toast.loading("正在同步广告结构与成效数据...");
     try {
-      await axios.post("/api/sync/trigger", { taskType: "sync_meta_structure" });
-      toast.success("广告账户物理关联重构成功！正在刷新视图...", { id: tId });
-      setTimeout(fetchData, 2000);
-    } catch (err: any) {
-      toast.error("触发结构拓扑同步拉取失败: " + err.message, { id: tId });
-    }
-  };
+      const startStr = format(startDate, "yyyy-MM-dd");
+      const endStr = format(endDate, "yyyy-MM-dd");
 
-  const handleSyncPerformance = async () => {
-    const tId = toast.loading("正在拉取 Meta Insights 投放花费与购物转化成效指标...");
-    try {
-      await axios.post("/api/sync/trigger", { taskType: "sync_meta_insights" });
-      toast.success("基础花费与转化流水提取同步后台开始作业！3秒后自动重载...", { id: tId });
+      await axios.post("/api/sync/trigger", {
+        taskType: "sync_meta_creatives",
+        accountId: selectedAccount || undefined,
+        startDate: startStr,
+        endDate: endStr,
+        days: 30
+      });
+
+      toast.success("广告结构与成效数据同步已触发，稍后自动刷新视图。", { id: tId });
       setTimeout(fetchData, 3000);
     } catch (err: any) {
-      toast.error("成效同步拉取任务后台触发失败: " + err.message, { id: tId });
+      toast.error("同步广告结构与成效失败: " + (err.response?.data?.message || err.message), { id: tId });
     }
   };
 
@@ -472,25 +471,15 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
             <RefreshCcw className={cn("w-4 h-4 mr-2", loading && "animate-spin")} />
             刷新
           </Button>
-          
-          <Button
-            id="sync-structure-btn"
-            variant="outline"
-            size="sm"
-            className="h-9 px-3 border-emerald-200 text-emerald-700 bg-emerald-50/10 hover:bg-emerald-50"
-            onClick={handleSyncStructure}
-          >
-            同步广告结构
-          </Button>
 
           <Button
-            id="sync-performance-btn"
+            id="sync-ad-hierarchy-btn"
             variant="outline"
             size="sm"
             className="h-9 px-3 border-blue-200 text-blue-700 bg-blue-50/10 hover:bg-blue-50"
-            onClick={handleSyncPerformance}
+            onClick={handleSyncAdHierarchy}
           >
-            同步广告成效
+            同步广告结构与成效
           </Button>
         </div>
       </div>
