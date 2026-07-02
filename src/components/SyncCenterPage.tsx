@@ -343,8 +343,6 @@ export function SyncCenterPage() {
           </div>
         </div>
 
-      </div>
-
       {/* Main Tabs Area: Chain Task Tracking vs Linear Log Audit */}
       <div className="bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden">
         
