@@ -37,7 +37,7 @@ let failed = false;
 // Helper to clean comments
 function isLineCommented(line: string): boolean {
   const trimmed = line.trim();
-  return trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*") || trimmed.includes("DECOMMISSIONED") || trimmed.includes("decommissioned");
+  return trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*");
 }
 
 console.log("🔍 Running Static Rule Contract Lock Assertions...\n");
@@ -112,7 +112,15 @@ for (const file of files) {
       }
     }
 
-    // C. Prohibit all-dashboard-summary anywhere in active src code (no route, axios, or endpoint)
+    // C. Prohibit any active prisma.creativePerformanceDaily query
+    if (line.includes("prisma.creativePerformanceDaily.")) {
+      if (!isLineCommented(line)) {
+        console.error(`❌ Prohibited Query Check failed in ${file}:${lineNum} - Found active prisma.creativePerformanceDaily reference: "${line.trim()}"`);
+        failed = true;
+      }
+    }
+    
+    // D. Prohibit all-dashboard-summary anywhere in active src code (no route, axios, or endpoint)
     if (line.includes("all-dashboard-summary")) {
       if (!isLineCommented(line)) {
         console.error(`❌ Prohibited Endpoint Check failed in ${file}:${lineNum} - Found active 'all-dashboard-summary': "${line.trim()}"`);
@@ -120,7 +128,7 @@ for (const file of files) {
       }
     }
 
-    // D. Prohibit dashboard-summary as route pattern, axios path, or API registration in src code
+    // E. Prohibit dashboard-summary as route pattern, axios path, or API registration in src code
     // We allow component classnames/id like ai-dashboard-summary-card
     if (line.includes("dashboard-summary") && !line.includes("ai-dashboard-summary") && !line.includes("ai_dashboard_summary")) {
       if (!isLineCommented(line)) {
@@ -132,7 +140,7 @@ for (const file of files) {
       }
     }
 
-    // E. Prohibit /api/insights in active API paths
+    // F. Prohibit /api/insights in active API paths
     if (line.includes("/api/insights")) {
       if (!isLineCommented(line)) {
         console.error(`❌ Prohibited Endpoint Check failed in ${file}:${lineNum} - Found active '/api/insights' reference: "${line.trim()}"`);
@@ -140,7 +148,7 @@ for (const file of files) {
       }
     }
 
-    // F. Prohibit frontend writing meta_token
+    // G. Prohibit frontend writing meta_token
     if (normalizedFile.includes("src/components") && line.includes(`key: "meta_token"`)) {
       if (!isLineCommented(line)) {
         console.error(`❌ Prohibited Frontend Token Write Check failed in ${file}:${lineNum} - Frontend must not write 'meta_token': "${line.trim()}"`);
@@ -148,12 +156,32 @@ for (const file of files) {
       }
     }
 
-    // G. Prohibit legacy getMetaToken findFirst call searching META_ACCESS_TOKEN and meta_token together
+    // H. Prohibit legacy getMetaToken findFirst call searching META_ACCESS_TOKEN and meta_token together
     if (normalizedFile.includes("utils.ts") && line.includes("findFirst") && line.includes("META_ACCESS_TOKEN") && line.includes("meta_token")) {
       console.error(`❌ Prohibited getMetaToken Pattern Check failed in ${file}:${lineNum} - getMetaToken must not use findFirst with list mapping: "${line.trim()}"`);
       failed = true;
     }
   });
+}
+
+// 2B. Check Prisma schema does not expose retired models through Prisma Client
+const prismaSchemaPath = "./prisma/schema.prisma";
+if (fs.existsSync(prismaSchemaPath)) {
+  const schema = fs.readFileSync(prismaSchemaPath, "utf-8");
+
+  const retiredModels = [
+    "AdInsight",
+    "CreativePerformanceDaily",
+    "DailySummary"
+  ];
+
+  for (const modelName of retiredModels) {
+    const pattern = new RegExp(`model\\s+${modelName}\\s+\\{`);
+    if (pattern.test(schema)) {
+      console.error(`❌ Prisma Model Retirement Check failed: schema.prisma still exposes retired model "${modelName}".`);
+      failed = true;
+    }
+  }
 }
 
 // 3. Check stores.routes.ts strictly to make sure it doesn't self-compute or read forbidden tables
