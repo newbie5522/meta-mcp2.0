@@ -203,25 +203,6 @@ model FactMetaPerformance {
   @@index([date])
 }
 
-model DailySummary {
-  id        String   @id @default(cuid())
-  scope     String
-  scopeId   String
-  date      String
-  metrics   String
-  spend     Float    @default(0)
-  impressions Int    @default(0)
-  clicks    Int    @default(0)
-  revenue   Float    @default(0)
-  orders    Int    @default(0)
-  roas      Float    @default(0)
-  metaRoas  Float    @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([scope, scopeId, date])
-}
-
 // ============================================================
 // SyncLog - 同步任务日志
 // 新增字段与约束（支持 sync-trigger.unified.ts 的竞态锁机制）
