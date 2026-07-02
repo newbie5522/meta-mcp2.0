@@ -547,7 +547,7 @@ router.get("/:accountId/details", async (req, res) => {
         });
       }
 
-      // Bulk fetch performance metrics from FactMetaPerformance instead of DailySummary
+      // Bulk fetch performance metrics from canonical FactMetaPerformance
       const summariesRaw = await prisma.factMetaPerformance.findMany({
         where: {
           level: "campaign",
