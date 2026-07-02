@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from "react";
-import dayjs from "dayjs";
 import {
   RefreshCw,
   Clock,
@@ -52,30 +51,16 @@ interface GroupedChain {
   tasks: ChainTask[];
 }
 
-interface StoreItem {
-  id: number;
-  name: string;
-  platform: string;
-}
-
 export function SyncCenterPage() {
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [chains, setChains] = useState<GroupedChain[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
-  const [stores, setStores] = useState<StoreItem[]>([]);
   
   // Controls
-  const [selectedStoreId, setSelectedStoreId] = useState<string>("");
   const [logSearchQuery, setLogSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<"chains" | "logs">("chains");
   const [isTriggering, setIsTriggering] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
-
-  // Ledger Rebuild states
-  const [accounts, setAccounts] = useState<any[]>([]);
-  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
-  const [rebuildStartDate, setRebuildStartDate] = useState(dayjs().subtract(7, "day").format("YYYY-MM-DD"));
-  const [rebuildEndDate, setRebuildEndDate] = useState(dayjs().format("YYYY-MM-DD"));
 
   // Load Status and Logs
   const fetchStatusAndData = async () => {
@@ -92,96 +77,10 @@ export function SyncCenterPage() {
       const logsData = await logsRes.json();
       setLogs(logsData);
 
-      const storesRes = await fetch("/api/stores");
-      const storesData = await storesRes.json();
-      setStores(storesData);
-      if (storesData.length > 0 && !selectedStoreId) {
-        setSelectedStoreId(String(storesData[0].id));
-      }
-
-      // Load available Facebook/Meta Accounts
-      const accountsRes = await fetch("/api/accounts");
-      const accountsData = await accountsRes.json();
-      if (Array.isArray(accountsData)) {
-        setAccounts(accountsData);
-        if (accountsData.length > 0 && !selectedAccountId) {
-          setSelectedAccountId(accountsData[0].id);
-        }
-      }
     } catch (err) {
       console.error("Failed to load Sync Center indices:", err);
     }
   };
-
-  const handleRebuildStoreLedger = async () => {
-    if (!selectedStoreId) return;
-
-    setIsTriggering("refresh_store_datacenter_ledger");
-    setInfoMessage(null);
-
-    try {
-      const data = await triggerSyncTask({
-        taskType: "refresh_store_datacenter_ledger",
-        storeId: selectedStoreId,
-        startDate: rebuildStartDate,
-        endDate: rebuildEndDate
-      });
-
-      setInfoMessage({
-        text: formatSyncReceipt(data),
-        type: "success"
-      });
-
-      await fetchStatusAndData();
-    } catch (err: any) {
-      setInfoMessage({
-        text: getSyncErrorMessage(err),
-        type: "error"
-      });
-    } finally {
-      setIsTriggering(null);
-    }
-  };
-
-  const handleRebuildMetaLedger = async () => {
-    if (!selectedAccountId) return;
-
-    setIsTriggering("refresh_meta_datacenter_ledger");
-    setInfoMessage(null);
-  
-    try {
-      const data = await triggerSyncTask({
-        taskType: "refresh_meta_datacenter_ledger",
-        accountId: selectedAccountId,
-        startDate: rebuildStartDate,
-        endDate: rebuildEndDate,
-        includeUnmapped: false
-      });
-
-      setInfoMessage({
-        text: formatSyncReceipt(data),
-        type: "success"
-      });
-
-      await fetchStatusAndData();
-    } catch (err: any) {
-      setInfoMessage({
-        text: getSyncErrorMessage(err),
-        type: "error"
-      });
-    } finally {
-      setIsTriggering(null);
-    }
-  };
-
-  useEffect(() => {
-    fetchStatusAndData();
-    // Poll sync status every 6 seconds if tasks are running
-    const timer = setInterval(() => {
-      fetchStatusAndData();
-    }, 6000);
-    return () => clearInterval(timer);
-  }, []);
 
   const handleTriggerTask = async (
     taskType: string,
@@ -440,42 +339,6 @@ export function SyncCenterPage() {
               </button>
             </div>
           </div>
-
-            {/* Store & Summary Control Blocks */}
-
-            {/* Ledger Rebuild Control Blocks */}
-            <div className="bg-slate-50/60 p-4 rounded-xl border border-slate-100 flex flex-col justify-between h-full space-y-4 col-span-1">
-              <div>
-                <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-2">
-                  <span className="w-1.5 h-3 bg-rose-600 rounded"></span>
-                  对账清洗与账目重构 / Ledgers
-                </div>
-                <p className="text-[11px] text-slate-500 leading-normal mb-3">
-                  抹除历史错误事实并重新拉取 API 对账入账。
-                </p>
-
-                {/* Range Filters */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">开始日期</label>
-                    <input
-                      type="date"
-                      value={rebuildStartDate}
-                      onChange={(e) => setRebuildStartDate(e.target.value)}
-                      className="w-full text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">结束日期</label>
-                    <input
-                      type="date"
-                      value={rebuildEndDate}
-                      onChange={(e) => setRebuildEndDate(e.target.value)}
-                      className="w-full text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none"
-                    />
-                  </div>
-                </div>
-              </div>
 
               <div className="border-t border-slate-200/60 pt-3 space-y-3">
                 {/* Store Rebuild Action */}
