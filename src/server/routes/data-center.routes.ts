@@ -380,7 +380,7 @@ router.get("/structure", async (req, res) => {
       missingReason = "该 Meta 账号未包含任何广告结构数据，可能从未启动同步任务，或该账户名下本身即为空账户。";
     } else if (totalSpend === 0) {
       dataStatus = "WARNING";
-      missingReason = "虽然已拉取广告系列三级树状结构，但当前日期范围内暂未捕获到任何每日成效花费数据(FactMetaPerformance为空)。请在数据同步中心点击“获取Meta广告成效”或“统一重建”进行重新装载。";
+      missingReason = "虽然已拉取广告系列三级树状结构，但当前日期范围内暂未捕获到任何每日成效花费数据。请在广告层级页面点击“同步广告结构与成效”，或在数据详情页点击“刷新 Meta 数据”。";
     }
 
     const lastSyncLog = await prisma.syncLog.findFirst({
