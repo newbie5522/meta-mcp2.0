@@ -63,7 +63,7 @@ router.get("/sync/status", async (req, res) => {
       detailMessage = "Meta 令牌缺失：请前往配置中心绑定 Meta API Token。";
     } else if (runningTasks.length > 0) {
       healthStatus = "syncing";
-      detailMessage = "数据同步中：系统正在后台拉取最新报表并重建底层汇总表。";
+      detailMessage = "数据同步中：系统正在后台拉取最新报表并刷新数据中心事实账本。";
     } else if (stores.length === 0) {
       healthStatus = "partial_data";
       detailMessage = "未配置店铺：添加至少一个电商或 ERP 来源以计算 ROAS。";
