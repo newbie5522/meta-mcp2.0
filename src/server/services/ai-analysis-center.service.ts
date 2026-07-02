@@ -698,49 +698,102 @@ async function getRealTraceableSuggestions(
     });
   }
 
-  // 4. Creative Suggestions (No CR01/CR02/CR03 mock prefixes!)
+  // 4. Creative Suggestions from canonical ad-level facts
   if (type === "creative_analysis" || type === "data_health_summary") {
-    const creative = await prisma.creativePerformanceDaily.findFirst();
-    const rawId = creative?.creativeId || "CR01";
-    const safeCreativeId = rawId.startsWith("CR0") ? `crt_${rawId.replace("CR0", "92388")}` : rawId;
-    const safeCreativeName = creative?.creativeName ? creative.creativeName.replace(/CR0\d\s*-\s*/, "Production Material ") : "Creative Standard Video A";
-
-    suggestions.push({
-      title: `关停低效素材 ${safeCreativeId}`,
-      actionVerb: "pause",
-      actionTarget: `creative:${safeCreativeId}`,
-      rationale: `对账 CreativePerformanceDaily 物理销售大表表明，素材「${safeCreativeName}」（ID: ${safeCreativeId}）累计 CPA 达到 $190.00，点击率 CTR 衰退至 0.85% 的监控红线。需前往 Meta Ads Manager 手动关投此数字创意。`,
-      priority: 2,
-      route: `/data-center/creatives?creativeId=${safeCreativeId}`,
-      entityRefs: [
-        {
-          entityType: "creative",
-          entityId: safeCreativeId,
-          entityName: safeCreativeName,
-          route: `/data-center/creatives?creativeId=${safeCreativeId}`,
-          sourceTable: "CreativePerformanceDaily"
-        }
-      ],
-      evidence: {
-        primarySource: "CreativePerformanceDaily",
-        supportingSources: ["FactMetaPerformance"],
-        dateRange: `${startDate} 至 ${endDate}`,
-        metrics: {
-          spend: 380,
-          impressions: 45000,
-          clicks: 382,
-          purchases: 2,
-          revenue: 160,
-          roas: 0.42,
-          ctr: 0.85,
-          cpc: 0.99,
-          cpa: 190.0
-        }
+    const creativeFacts = await prisma.factMetaPerformance.findMany({
+      where: {
+        level: "ad",
+        date: { gte: startDate, lte: endDate }
       },
-      generationMode
+      orderBy: { spend: "desc" },
+      take: 500
     });
-  }
 
+    const groupedCreativeFacts = new Map<string, {
+      creativeId: string;
+      spend: number;
+      impressions: number;
+      clicks: number;
+      purchases: number;
+      purchaseValue: number;
+    }>();
+
+    for (const row of creativeFacts) {
+      const creativeId = row.creative_id || row.ad_id || row.entity_id;
+      if (!creativeId) continue;
+
+      if (!groupedCreativeFacts.has(creativeId)) {
+        groupedCreativeFacts.set(creativeId, {
+          creativeId,
+          spend: 0,
+          impressions: 0,
+          clicks: 0,
+          purchases: 0,
+          purchaseValue: 0
+        });
+      }
+
+      const item = groupedCreativeFacts.get(creativeId)!;
+      item.spend += row.spend || 0;
+      item.impressions += row.impressions || 0;
+      item.clicks += row.clicks || 0;
+      item.purchases += row.purchases || 0;
+      item.purchaseValue += row.purchase_value || 0;
+    }
+
+    const topCreative = Array.from(groupedCreativeFacts.values())
+      .sort((a, b) => b.spend - a.spend)
+      .find(item => item.spend > 0);
+
+    if (topCreative) {
+      const creativeMeta = await prisma.adCreative.findFirst({
+        where: { creativeId: topCreative.creativeId }
+      });
+
+      const safeCreativeId = topCreative.creativeId;
+      const safeCreativeName = creativeMeta?.name || `Creative ${safeCreativeId}`;
+      const ctr = topCreative.impressions > 0 ? (topCreative.clicks / topCreative.impressions) * 100 : 0;
+      const roas = topCreative.spend > 0 ? topCreative.purchaseValue / topCreative.spend : 0;
+      const cpc = topCreative.clicks > 0 ? topCreative.spend / topCreative.clicks : 0;
+      const cpa = topCreative.purchases > 0 ? topCreative.spend / topCreative.purchases : 0;
+
+      suggestions.push({
+        title: `复查低效素材 ${safeCreativeId}`,
+        actionVerb: roas < 1.0 && topCreative.spend > 100 ? "pause" : "keep_observing",
+        actionTarget: `creative:${safeCreativeId}`,
+        rationale: `基于 FactMetaPerformance 广告级事实数据，素材「${safeCreativeName}」在 ${startDate} 至 ${endDate} 期间花费 $${topCreative.spend.toFixed(2)}，CTR ${ctr.toFixed(2)}%，ROAS ${roas.toFixed(2)}x。请结合素材页进一步判断是否降预算、暂停或继续观察。`,
+        priority: roas < 1.0 && topCreative.spend > 100 ? 2 : 3,
+        route: `/data-center/creatives?creativeId=${safeCreativeId}`,
+        entityRefs: [
+          {
+            entityType: "creative",
+            entityId: safeCreativeId,
+            entityName: safeCreativeName,
+            route: `/data-center/creatives?creativeId=${safeCreativeId}`,
+            sourceTable: "FactMetaPerformance"
+          }
+        ],
+        evidence: {
+          primarySource: "FactMetaPerformance",
+          supportingSources: ["AdCreative"],
+          dateRange: `${startDate} 至 ${endDate}`,
+          metrics: {
+            spend: Number(topCreative.spend.toFixed(2)),
+            impressions: topCreative.impressions,
+            clicks: topCreative.clicks,
+            purchases: topCreative.purchases,
+            revenue: Number(topCreative.purchaseValue.toFixed(2)),
+            roas: Number(roas.toFixed(4)),
+            ctr: Number(ctr.toFixed(4)),
+            cpc: Number(cpc.toFixed(4)),
+            cpa: Number(cpa.toFixed(4))
+          }
+        },
+        generationMode
+      });
+    }
+  }
+  
   // 5. Product Analytics Suggestion
   if (type === "product_analysis" || type === "store_analysis") {
     const store = await prisma.store.findFirst();
