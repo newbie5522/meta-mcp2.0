@@ -534,6 +534,32 @@ async function getRealTraceableSuggestions(
 
   const hasUnmapped = context.unmappedActiveAccountsCount > 0;
 
+  const readMetricNumber = (...values: any[]): number | null => {
+    for (const value of values) {
+      if (value === null || value === undefined || value === "") continue;
+      const numeric = typeof value === "number" ? value : Number(value);
+      if (Number.isFinite(numeric)) return numeric;
+    }
+    return null;
+  };
+
+  const accountEvidenceMetrics = {
+    spend: readMetricNumber(context.metrics?.spend, context.metrics?.adSpend),
+    impressions: readMetricNumber(context.metrics?.impressions),
+    clicks: readMetricNumber(context.metrics?.clicks),
+    purchases: readMetricNumber(context.metrics?.purchases),
+    revenue: readMetricNumber(context.metrics?.sales, context.metrics?.revenue, context.metrics?.purchaseValue),
+    roas: readMetricNumber(context.metrics?.roas, context.metrics?.realRoas),
+    ctr: readMetricNumber(context.metrics?.ctr),
+    cpc: readMetricNumber(context.metrics?.cpc),
+    cpa: readMetricNumber(context.metrics?.cpa)
+  };
+
+  const accountRoasText =
+    accountEvidenceMetrics.roas === null
+      ? "暂无完整 ROAS 数据"
+      : `${accountEvidenceMetrics.roas.toFixed(2)}x`;
+
   // 1. Account Suggestion (bind_account or reduce_budget)
   if (type === "unmapped_spend_risk" || type === "data_health_summary" || type === "account_analysis" || hasUnmapped) {
     const activeAcc = await prisma.adAccount.findFirst({
@@ -564,17 +590,7 @@ async function getRealTraceableSuggestions(
             primarySource: "AdAccount",
             supportingSources: ["FactMetaPerformance"],
             dateRange: `${startDate} 至 ${endDate}`,
-            metrics: {
-              spend: context.metrics.spend || context.metrics.adSpend || 1200,
-              impressions: context.metrics.impressions || 35000,
-              clicks: context.metrics.clicks || 820,
-              purchases: context.metrics.purchases || 12,
-              revenue: context.metrics.sales || context.metrics.revenue || 960,
-              roas: context.metrics.roas || context.metrics.realRoas || 0.8,
-              ctr: 2.34,
-              cpc: 1.46,
-              cpa: 100.0
-            }
+            metrics: accountEvidenceMetrics
           },
           generationMode
         });
@@ -583,7 +599,7 @@ async function getRealTraceableSuggestions(
           title: `降低账户 ${plainId} 预算`,
           actionVerb: "reduce_budget",
           actionTarget: `account:${activeAcc.fb_account_id}`,
-          rationale: `该广告账户在统计周期 [${startDate} ~ ${endDate}] 内产生实际消耗，但交叉对账得出的综合整店 ROAS 为 ${context.metrics.roas || context.metrics.realRoas || 0.8}，未达到目标值 1.5。应核对 FactMetaPerformance，手动将消耗最高的低效果 Campaign 预算调低 20%。`,
+          rationale: `该广告账户在统计周期 [${startDate} ~ ${endDate}] 内产生实际消耗。当前综合整店 ROAS 为 ${accountRoasText}。应核对 FactMetaPerformance 与店铺订单数据，再决定是否调低低效果 Campaign 预算。`,
           priority: 1,
           route: `/data-center/accounts?accountId=${activeAcc.fb_account_id}`,
           entityRefs: [
@@ -599,17 +615,7 @@ async function getRealTraceableSuggestions(
             primarySource: "FactMetaPerformance",
             supportingSources: ["AdAccount", "Order"],
             dateRange: `${startDate} 至 ${endDate}`,
-            metrics: {
-              spend: context.metrics.spend || context.metrics.adSpend || 800,
-              impressions: context.metrics.impressions || 22000,
-              clicks: context.metrics.clicks || 450,
-              purchases: context.metrics.purchases || 8,
-              revenue: context.metrics.sales || context.metrics.revenue || 640,
-              roas: context.metrics.roas || context.metrics.realRoas || 0.8,
-              ctr: 2.05,
-              cpc: 1.78,
-              cpa: 100.0
-            }
+            metrics: accountEvidenceMetrics
           },
           generationMode
         });
@@ -657,45 +663,92 @@ async function getRealTraceableSuggestions(
 
   // 3. Country Analytics Suggestion
   if (type === "country_analysis" || type === "data_health_summary") {
-    const audience = await prisma.factAudienceBreakdown.findFirst({
-      select: { dimension_value: true }
-    });
-    const countryVal = audience?.dimension_value || "US";
-
-    suggestions.push({
-      title: `缩减 ${countryVal} 广告预算`,
-      actionVerb: "exclude_country",
-      actionTarget: `country:${countryVal}`,
-      rationale: `受众细分表 FactAudienceBreakdown 审计发现，国家「${countryVal}」广告花费达到 $450 元，但 ROAS 水平仅有 1.1，获客成本 CPA 明显拉大。需在 Meta 对应的 AdSet 受众控制中对该国进行地域排除或调降预算。`,
-      priority: 2,
-      route: `/ai/country?countryCode=${countryVal}`,
-      entityRefs: [
-        {
-          entityType: "country",
-          entityId: countryVal,
-          entityName: `目标国 ${countryVal}`,
-          route: `/ai/country?countryCode=${countryVal}`,
-          sourceTable: "FactAudienceBreakdown"
-        }
-      ],
-      evidence: {
-        primarySource: "FactAudienceBreakdown",
-        supportingSources: ["FactMetaPerformance"],
-        dateRange: `${startDate} 至 ${endDate}`,
-        metrics: {
-          spend: 450,
-          impressions: 11000,
-          clicks: 310,
-          purchases: 4,
-          revenue: 495,
-          roas: 1.1,
-          ctr: 2.82,
-          cpc: 1.45,
-          cpa: 112.5
-        }
+    const countryFacts = await prisma.factAudienceBreakdown.findMany({
+      where: {
+        dimension_type: "country",
+        date: { gte: startDate, lte: endDate }
       },
-      generationMode
+      orderBy: { spend: "desc" },
+      take: 500
     });
+
+    const groupedCountries = new Map<string, {
+      countryCode: string;
+      spend: number;
+      impressions: number;
+      clicks: number;
+      purchases: number;
+      purchaseValue: number;
+    }>();
+
+    for (const row of countryFacts) {
+      const countryCode = row.dimension_value || "";
+      if (!countryCode) continue;
+
+      if (!groupedCountries.has(countryCode)) {
+        groupedCountries.set(countryCode, {
+          countryCode,
+          spend: 0,
+          impressions: 0,
+          clicks: 0,
+          purchases: 0,
+          purchaseValue: 0
+        });
+      }
+
+      const item = groupedCountries.get(countryCode)!;
+      item.spend += row.spend || 0;
+      item.impressions += row.impressions || 0;
+      item.clicks += row.clicks || 0;
+      item.purchases += row.purchases || 0;
+      item.purchaseValue += row.purchase_value || 0;
+    }
+
+    const topCountry = Array.from(groupedCountries.values())
+      .sort((a, b) => b.spend - a.spend)
+      .find(item => item.spend > 0);
+
+    if (topCountry) {
+      const roas = topCountry.spend > 0 ? topCountry.purchaseValue / topCountry.spend : 0;
+      const ctr = topCountry.impressions > 0 ? (topCountry.clicks / topCountry.impressions) * 100 : 0;
+      const cpc = topCountry.clicks > 0 ? topCountry.spend / topCountry.clicks : 0;
+      const cpa = topCountry.purchases > 0 ? topCountry.spend / topCountry.purchases : 0;
+
+      suggestions.push({
+        title: `${roas < 1.0 && topCountry.spend > 50 ? "复查" : "观察"} ${topCountry.countryCode} 国家投放`,
+        actionVerb: roas < 1.0 && topCountry.spend > 50 ? "exclude_country" : "keep_observing",
+        actionTarget: `country:${topCountry.countryCode}`,
+        rationale: `基于 FactAudienceBreakdown 国家维度事实数据，${topCountry.countryCode} 在 ${startDate} 至 ${endDate} 期间花费 $${topCountry.spend.toFixed(2)}，购买 ${topCountry.purchases}，ROAS ${roas.toFixed(2)}x。请结合国家分析页判断是否调低预算、排除地区或继续观察。`,
+        priority: roas < 1.0 && topCountry.spend > 50 ? 2 : 3,
+        route: `/ai/country?countryCode=${topCountry.countryCode}`,
+        entityRefs: [
+          {
+            entityType: "country",
+            entityId: topCountry.countryCode,
+            entityName: `目标国 ${topCountry.countryCode}`,
+            route: `/ai/country?countryCode=${topCountry.countryCode}`,
+            sourceTable: "FactAudienceBreakdown"
+          }
+        ],
+        evidence: {
+          primarySource: "FactAudienceBreakdown",
+          supportingSources: ["FactMetaPerformance"],
+          dateRange: `${startDate} 至 ${endDate}`,
+          metrics: {
+            spend: Number(topCountry.spend.toFixed(2)),
+            impressions: topCountry.impressions,
+            clicks: topCountry.clicks,
+            purchases: topCountry.purchases,
+            revenue: Number(topCountry.purchaseValue.toFixed(2)),
+            roas: Number(roas.toFixed(4)),
+            ctr: Number(ctr.toFixed(4)),
+            cpc: Number(cpc.toFixed(4)),
+            cpa: Number(cpa.toFixed(4))
+          }
+        },
+        generationMode
+      });
+    }
   }
 
   // 4. Creative Suggestions from canonical ad-level facts
