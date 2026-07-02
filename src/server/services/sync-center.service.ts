@@ -721,10 +721,10 @@ export class SyncCenter {
           recordsSaved: 0,
           metadata: {
             status: "DECOMMISSIONED",
-            previousTarget: "DailySummary",
+            previousTarget: "retired_summary_ledger",
             replacementTarget: "DataCenterStoreDaily",
             days,
-            reason: "DailySummary store summary rebuild has been retired. Store daily facts are maintained by DataCenterStoreDaily."
+            reason: "Legacy store summary rebuild has been retired. Store daily facts are maintained by DataCenterStoreDaily."
           }
         };
       }
@@ -752,11 +752,11 @@ export class SyncCenter {
           recordsSaved: 0,
           metadata: {
             status: "DECOMMISSIONED",
-            previousTarget: "DailySummary",
+            previousTarget: "retired_summary_ledger",
             replacementTarget: "DataCenterMetaAccountDaily",
             canonicalFactSource: "FactMetaPerformance",
             days,
-            reason: "DailySummary meta summary rebuild has been retired. Meta account daily facts are maintained by DataCenterMetaAccountDaily."
+            reason: "Legacy meta summary rebuild has been retired. Meta account daily facts are maintained by DataCenterMetaAccountDaily."
           }
         };
       }
@@ -784,10 +784,10 @@ export class SyncCenter {
           recordsSaved: 0,
           metadata: {
             status: "DECOMMISSIONED",
-            previousTarget: "DailySummary",
+            previousTarget: "retired_summary_ledger",
             replacementSources: ["Order.store_local_date", "FactMetaPerformance", "AccountMapping", "DataCenterStoreDaily", "DataCenterMetaAccountDaily"],
             days,
-            reason: "DailySummary ROAS rebuild has been retired. ROAS is now calculated from canonical store, meta, and mapping facts."
+            reason: "Legacy ROAS rebuild has been retired. ROAS is now calculated from canonical store, meta, and mapping facts."
           }
         };
       }
@@ -815,16 +815,16 @@ export class SyncCenter {
           recordsSaved: 0,
           metadata: {
             status: "DECOMMISSIONED",
-            previousTarget: "DailySummary",
+            previousTarget: "retired_summary_ledger",
             replacementSources: ["DataCenterStoreDaily", "DataCenterMetaAccountDaily", "FactMetaPerformance", "Order"],
             days,
-            reason: "DailySummary dashboard rebuild has been retired. Dashboard summaries are generated from canonical data-center ledgers and facts."
+            reason: "Legacy dashboard summary rebuild has been retired. Dashboard data is generated from canonical data-center ledgers and facts."
           }
         };
       }
     );
   }
-
+  
   // 11. run_ai_rule_monitor
   static async runAiRuleMonitor(
     taskChainId: string,
@@ -845,9 +845,9 @@ export class SyncCenter {
           recordsSaved: 0,
           metadata: {
             status: "DECOMMISSIONED",
-            previousSource: "DailySummary",
+            previousSource: "retired_summary_ledger",
             replacementSource: "rule-diagnostic-engine + diagnostics/issues",
-            reason: "Legacy AI rule monitor based on DailySummary has been retired. Diagnostics now use canonical rule engine outputs."
+            reason: "Legacy AI rule monitor has been retired. Diagnostics now use canonical rule engine outputs."
           }
         };
       }
@@ -869,11 +869,8 @@ export class SyncCenter {
         const id1 = await this.syncMetaAccounts(taskChainId, triggeredBy, null);
         const id2 = await this.syncMetaActivity(taskChainId, triggeredBy, id1);
         const id3 = await this.syncMetaStructure(taskChainId, triggeredBy, id2);
-        const id4 = await this.syncMetaInsights(taskChainId, triggeredBy, id3);
-        const id5 = await this.rebuildMetaSummary(taskChainId, triggeredBy, id4);
-        const id6 = await this.rebuildDashboardSummary(taskChainId, triggeredBy, id5);
-        await this.runAiRuleMonitor(taskChainId, triggeredBy, id6);
-        console.log(`[Sync Center] Meta Init pipeline finished nicely. Chain ID: ${taskChainId}`);
+        await this.syncMetaInsights(taskChainId, triggeredBy, id3);
+        console.log(`[Sync Center] Meta Init pipeline finished with canonical Meta facts. Chain ID: ${taskChainId}`);
       } catch (err) {
         console.error(`[Sync Center] Meta Initialization chain ${taskChainId} failed to complete:`, err);
       }
@@ -892,10 +889,8 @@ export class SyncCenter {
     (async () => {
       try {
         const id1 = await this.syncStoreProfile(storeId, taskChainId, triggeredBy, null);
-        const id2 = await this.syncStoreOrders(storeId, taskChainId, triggeredBy, id1);
-        const id3 = await this.rebuildStoreSummary(taskChainId, triggeredBy, id2);
-        const id4 = await this.rebuildDashboardSummary(taskChainId, triggeredBy, id3);
-        console.log(`[Sync Center] Store Init pipeline finished nicely. Chain ID: ${taskChainId}`);
+        await this.syncStoreOrders(storeId, taskChainId, triggeredBy, id1);
+        console.log(`[Sync Center] Store Init pipeline finished with canonical store orders. Chain ID: ${taskChainId}`);
       } catch (err) {
         console.error(`[Sync Center] Store Initialization chain ${taskChainId} failed:`, err);
       }
@@ -913,10 +908,7 @@ export class SyncCenter {
 
     (async () => {
       try {
-        const id1 = await this.rebuildRoasSummary(taskChainId, triggeredBy, null);
-        const id2 = await this.rebuildDashboardSummary(taskChainId, triggeredBy, id1);
-        await this.runAiRuleMonitor(taskChainId, triggeredBy, id2);
-        console.log(`[Sync Center] Mapping change pipeline and AI rule monitor finished. Chain ID: ${taskChainId}`);
+        console.log(`[Sync Center] Mapping change acknowledged. Canonical ROAS is calculated from data-center ledgers. Chain ID: ${taskChainId}`);
       } catch (err) {
         console.error(`[Sync Center] Mapping change chain ${taskChainId} failed:`, err);
       }
