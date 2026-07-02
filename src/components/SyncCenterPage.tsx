@@ -340,64 +340,6 @@ export function SyncCenterPage() {
             </div>
           </div>
 
-              <div className="border-t border-slate-200/60 pt-3 space-y-3">
-                {/* Store Rebuild Action */}
-                <div className="space-y-1">
-                  <span className="block text-[10px] text-slate-400 font-semibold">1. 店铺级额度重组</span>
-                  <div className="flex gap-1.5">
-                    <select
-                      value={selectedStoreId}
-                      onChange={(e) => setSelectedStoreId(e.target.value)}
-                      className="flex-1 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none max-w-[110px]"
-                    >
-                      {stores.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                      {stores.length === 0 && <option value="">暂无店铺</option>}
-                    </select>
-                    <button
-                      onClick={handleRebuildStoreLedger}
-                      disabled={!!isTriggering || !selectedStoreId}
-                      className="flex-1 truncate flex items-center justify-center gap-1 px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition disabled:opacity-50"
-                    >
-                      <RefreshCw className={`w-3 h-3 ${isTriggering === "rebuild_store_ledger" ? "animate-spin" : ""}`} />
-                      重构店铺
-                    </button>
-                  </div>
-                </div>
-
-                {/* Meta Rebuild Action */}
-                <div className="space-y-1">
-                  <span className="block text-[10px] text-slate-400 font-semibold">2. Meta 消耗重组</span>
-                  <div className="flex gap-1.5">
-                    <select
-                      value={selectedAccountId}
-                      onChange={(e) => setSelectedAccountId(e.target.value)}
-                      className="flex-1 text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none max-w-[110px]"
-                    >
-                      {accounts.map((acc) => (
-                        <option key={acc.id} value={acc.id}>
-                          {acc.name || acc.id}
-                        </option>
-                      ))}
-                      {accounts.length === 0 && <option value="">暂无账户</option>}
-                    </select>
-                    <button
-                      onClick={handleRebuildMetaLedger}
-                      disabled={!!isTriggering || !selectedAccountId}
-                      className="flex-1 truncate flex items-center justify-center gap-1 px-2.5 py-1.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-xs font-bold transition disabled:opacity-50"
-                    >
-                      <RefreshCw className={`w-3 h-3 ${isTriggering === "rebuild_meta_ledger" ? "animate-spin" : ""}`} />
-                      重构广告
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-
           </div>
         </div>
 
