@@ -67,36 +67,6 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const [autoRefreshPolling, setAutoRefreshPolling] = useState(false);
   const [showHistoricalAccounts, setShowHistoricalAccounts] = useState(false);
 
-    try {
-      const startStr = format(startDate, "yyyy-MM-dd");
-      const endStr = format(endDate, "yyyy-MM-dd");
-  
-      const data = await triggerSyncTask({
-        taskType: "refresh_meta_datacenter_ledger",
-        startDate: startStr,
-        endDate: endStr,
-        storeId: storeFilter === "all" ? null : Number(storeFilter),
-        includeUnmapped: true
-      });
-
-      toast.success(formatSyncReceipt(data), {
-        id: toastId,
-        duration: 7000
-      });
-
-      await loadData();
-    } catch (error: any) {
-      console.error("Meta realtime sync error:", error);
-
-      toast.error(`实时刷新失败: ${getSyncErrorMessage(error)}`, {
-        id: toastId,
-        duration: 8000
-      });
-    } finally {
-      setMetaSyncing(false);
-    }
-  };
-
   // Sorting configurations
   const [sortField, setSortField] = useState<string>("spend");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
