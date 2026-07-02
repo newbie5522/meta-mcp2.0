@@ -765,6 +765,7 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
   for (const store of stores) {
     const storeId = store.id;
     const storeName = store.name;
+    const storeRoute = `/store/${encodeURIComponent(String(storeId))}`;
 
     const orders = await prisma.order.findMany({
       where: { storeId, createdAt: { gte: parseISO(startDate), lte: parseISO(endDate) } }
@@ -840,8 +841,8 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
         entityType: "store",
         entityId: String(storeId),
         entityName: storeName,
-        route: `/data-center/accounts?storeId=${storeId}`,
-        sourceTable: "Store"
+        route: storeRoute,
+       
       }
     ];
 
@@ -860,7 +861,7 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
         actionTarget: `store:${storeId}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts?storeId=${storeId}`,
+        route: storeRoute,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -883,7 +884,7 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
         actionTarget: `store:${storeId}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts?storeId=${storeId}`,
+        route: storeRoute,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -907,7 +908,7 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
         actionTarget: `store:${storeId}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts?storeId=${storeId}`,
+        route: storeRoute,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -930,7 +931,7 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
         actionTarget: `store:${storeId}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts?storeId=${storeId}`,
+        route: storeRoute,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -953,7 +954,7 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
         actionTarget: `store:${storeId}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts?storeId=${storeId}`,
+        route: storeRoute,
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -1040,6 +1041,7 @@ export async function detectCreativeIssues(params: any): Promise<any[]> {
     const roas = spend > 0 ? purchaseValue / spend : 0;
 
     const accountIds = Array.from(data.accountIds || []);
+    const creativeRoute = `/?tab=data-creatives&creativeId=${encodeURIComponent(cid)}`;
 
     const baseEvidence = {
       primarySource: "FactMetaPerformance",
@@ -1069,7 +1071,7 @@ export async function detectCreativeIssues(params: any): Promise<any[]> {
         entityType: "creative",
         entityId: cid,
         entityName: creativeName,
-        route: `/data-center/accounts`,
+        route: creativeRoute,
         sourceTable: "FactMetaPerformance"
       }
     ];
@@ -1089,7 +1091,7 @@ export async function detectCreativeIssues(params: any): Promise<any[]> {
         actionTarget: `creative:${cid}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts`,
+        route: creativeRoute,
         limitations: [
           "创意诊断已切换为 FactMetaPerformance 广告级事实数据；若素材结构未同步，creative_id 可能回退为 ad_id 或 entity_id。"
         ],
@@ -1114,7 +1116,7 @@ export async function detectCreativeIssues(params: any): Promise<any[]> {
         actionTarget: `creative:${cid}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts`,
+        route: creativeRoute,
         limitations: [
           "创意诊断已切换为 FactMetaPerformance 广告级事实数据；若素材结构未同步，creative_id 可能回退为 ad_id 或 entity_id。"
         ],
@@ -1139,7 +1141,7 @@ export async function detectCreativeIssues(params: any): Promise<any[]> {
         actionTarget: `creative:${cid}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts`,
+        route: creativeRoute,
         limitations: [
           "创意诊断已切换为 FactMetaPerformance 广告级事实数据；若素材结构未同步，creative_id 可能回退为 ad_id 或 entity_id。"
         ],
@@ -1198,6 +1200,7 @@ export async function detectCountryIssues(params: any): Promise<any[]> {
     const cpc = clicks > 0 ? spend / clicks : 0;
     const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
     const roas = spend > 0 ? purchaseValue / spend : 0;
+    const countryRoute = `/?tab=data-audiences&countryCode=${encodeURIComponent(code)}`;
 
     const baseEvidence = {
       primarySource: "FactAudienceBreakdown",
@@ -1210,7 +1213,7 @@ export async function detectCountryIssues(params: any): Promise<any[]> {
         entityType: "country",
         entityId: code,
         entityName: `国家/地区 ${code}`,
-        route: `/data-center/accounts`,
+        route: countryRoute,
         sourceTable: "FactAudienceBreakdown"
       }
     ];
@@ -1230,7 +1233,7 @@ export async function detectCountryIssues(params: any): Promise<any[]> {
         actionTarget: `country:${code}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts`,
+        route: countryRoute,
         limitations,
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -1253,7 +1256,7 @@ export async function detectCountryIssues(params: any): Promise<any[]> {
         actionTarget: `country:${code}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts`,
+        route: countryRoute,
         limitations,
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -1281,11 +1284,11 @@ export async function detectCountryIssues(params: any): Promise<any[]> {
           entityType: "country",
           entityId: "country_all",
           entityName: "全量国家明细",
-          route: `/data-center/accounts`,
+          route: "/?tab=data-audiences",
           sourceTable: "FactAudienceBreakdown"
         }
       ],
-      route: `/data-center/accounts`,
+      route: "/?tab=data-audiences",
       limitations,
       generationMode: "offline_rule_engine",
       humanConfirmationRequired: true,
@@ -1342,6 +1345,7 @@ export async function detectProductIssues(params: any): Promise<any[]> {
     const agg = productAggMap[pid];
     const { productName, ordersCount, revenue, refundOrders } = agg;
     const refundRate = ordersCount > 0 ? (refundOrders / ordersCount) * 100 : 0;
+    const productRoute = `/?tab=data-products&productId=${encodeURIComponent(pid)}`;
 
     const baseEvidence = {
       primarySource: "Order",
@@ -1354,7 +1358,7 @@ export async function detectProductIssues(params: any): Promise<any[]> {
         entityType: "product",
         entityId: pid,
         entityName: productName,
-        route: `/data-center/accounts`,
+        route: productRoute,
         sourceTable: "Product"
       }
     ];
@@ -1374,7 +1378,7 @@ export async function detectProductIssues(params: any): Promise<any[]> {
         actionTarget: `product:${pid}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts`,
+        route: productRoute,
         limitations,
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -1397,7 +1401,7 @@ export async function detectProductIssues(params: any): Promise<any[]> {
         actionTarget: `product:${pid}`,
         evidence: baseEvidence,
         entityRefs,
-        route: `/data-center/accounts`,
+        route: productRoute,
         limitations,
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -1425,11 +1429,11 @@ export async function detectProductIssues(params: any): Promise<any[]> {
           entityType: "product",
           entityId: "store_product_nil",
           entityName: "全量测单品群",
-          route: `/data-center/accounts`,
+          route: "/?tab=data-products",
           sourceTable: "Product"
         }
       ],
-      route: `/data-center/accounts`,
+      route: "/?tab=data-products",
       limitations,
       generationMode: "offline_rule_engine",
       humanConfirmationRequired: true,
@@ -1477,11 +1481,11 @@ export async function detectDataHealthIssues(params: any): Promise<any[]> {
           entityType: "token",
           entityId: "meta_token",
           entityName: "Meta 统一长久通信令牌",
-          route: `/data-center/accounts`,
+          route: "/?tab=meta-config",
           sourceTable: "Setting"
         }
       ],
-      route: `/data-center/accounts`,
+      route: "/?tab=meta-config",
       limitations,
       generationMode: "offline_rule_engine",
       humanConfirmationRequired: true,
@@ -1497,6 +1501,8 @@ export async function detectDataHealthIssues(params: any): Promise<any[]> {
     const subspend = perfUnmapped.reduce((sum, r) => sum + (r.spend || 0), 0);
 
     if (subspend > 0) {
+      const accountRoute = `/account/${encodeURIComponent(acc.fb_account_id)}`;
+
       issues.push({
         issueId: `data_health_unmapped_${acc.fb_account_id}`,
         issueType: "unmapped_spend_notice",
@@ -1515,11 +1521,11 @@ export async function detectDataHealthIssues(params: any): Promise<any[]> {
             entityType: "account",
             entityId: acc.fb_account_id,
             entityName: acc.fb_account_name || acc.fb_account_id,
-            route: `/data-center/accounts`,
+            route: accountRoute,
             sourceTable: "AdAccount"
           }
         ],
-        route: `/data-center/accounts`,
+        route: accountRoute,
         limitations,
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
@@ -1546,11 +1552,11 @@ export async function detectDataHealthIssues(params: any): Promise<any[]> {
         entityType: "data_pipeline",
         entityId: "order_country_pip",
         entityName: "订单全域国家对账通道",
-        route: `/data-center/accounts`,
+        route: "/?tab=diag-health",
         sourceTable: "Order"
       }
     ],
-    route: `/data-center/accounts`,
+    route: "/?tab=diag-health",
     limitations,
     generationMode: "offline_rule_engine",
     humanConfirmationRequired: true,
@@ -1575,11 +1581,11 @@ export async function detectDataHealthIssues(params: any): Promise<any[]> {
         entityType: "data_pipeline",
         entityId: "product_attr_pip",
         entityName: "单品像素归宿监听流水",
-        route: `/data-center/accounts`,
+        route: "/?tab=diag-health",
         sourceTable: "Product"
       }
     ],
-    route: `/data-center/accounts`,
+    route: "/?tab=diag-health",
     limitations,
     generationMode: "offline_rule_engine",
     humanConfirmationRequired: true,
@@ -1621,11 +1627,11 @@ export async function detectDataHealthIssues(params: any): Promise<any[]> {
           entityType: "sync_service",
           entityId: "sync_scheduler",
           entityName: "高频秒级拉取常置任务",
-          route: `/data-center/accounts`,
+          route: "/?tab=sync-center",
           sourceTable: "SyncLog"
         }
       ],
-      route: `/data-center/accounts`,
+      route: "/?tab=sync-center",
       limitations,
       generationMode: "offline_rule_engine",
       humanConfirmationRequired: true,
@@ -1651,11 +1657,11 @@ export async function detectDataHealthIssues(params: any): Promise<any[]> {
         entityType: "security_framework",
         entityId: "router_controller",
         entityName: "看盘高维大盘控制屏",
-        route: `/data-center/accounts`,
+        route: "/?tab=diag-health",
         sourceTable: "Setting"
       }
     ],
-    route: `/data-center/accounts`,
+    route: "/?tab=diag-health",
     limitations,
     generationMode: "offline_rule_engine",
     humanConfirmationRequired: true,
