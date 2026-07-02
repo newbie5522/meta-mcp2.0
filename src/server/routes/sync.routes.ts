@@ -660,7 +660,6 @@ for (const endpoint of DEPRECATED_SYNC_ENDPOINTS) {
       timestamp: new Date().toISOString(),
       migratedTo: "POST /api/sync/trigger",
       migrationGuide: {
-       "/sync/rebuild": "REMOVED",
         "/sync": "POST /api/sync/trigger { taskType: 'sync_meta_insights' }",
         "/sync-store": "POST /api/sync/trigger { taskType: 'sync_store_orders' }",
         "/sync/stores/:storeId/orders": "POST /api/sync/trigger { taskType: 'sync_store_orders', storeId }",
