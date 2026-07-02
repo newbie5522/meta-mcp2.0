@@ -701,7 +701,12 @@ export class SyncCenter {
   }
 
   // 7. rebuild_store_summary
-  static async rebuildStoreSummary(taskChainId: string, triggeredBy: string, parentTaskId: string | null = null, days: number = 90): Promise<string> {
+  static async rebuildStoreSummary(
+    taskChainId: string,
+    triggeredBy: string,
+    parentTaskId: string | null = null,
+    days: number = 90
+  ): Promise<string> {
     return this.runTask(
       "rebuild_store_summary",
       "summary",
@@ -711,102 +716,28 @@ export class SyncCenter {
       null,
       null,
       async () => {
-        const stores = await prisma.store.findMany();
-        let upsertedCount = 0;
-
-        for (const store of stores) {
-          // Loop over last N days date by date
-          for (let i = 0; i < days; i++) {
-            const dateStr = dayjs().subtract(i, "day").format("YYYY-MM-DD");
-
-            // Calculate orders for this store on this day
-            const orders = await prisma.order.findMany({
-              where: {
-                storeId: store.id,
-                store_local_date: dateStr
-              }
-            });
-
-            const filteredOrders = orders.filter(o => {
-              if (!o.paymentStatus) return true;
-              const s = o.paymentStatus.toLowerCase().trim();
-              return !["waiting", "unpaid", "pending", "cancelled", "voided"].includes(s);
-            });
-
-            const uniqueOrdersMap = new Map<string, number>();
-            for (const o of filteredOrders) {
-              const oId = o.orderId || o.id;
-              const orderAmount = (o.orderTotal != null && o.orderTotal > 0) ? o.orderTotal : (o.revenue || 0);
-
-              if (!uniqueOrdersMap.has(oId)) {
-                uniqueOrdersMap.set(oId, orderAmount);
-              } else {
-                if (o.orderTotal == null || o.orderTotal === 0) {
-                  uniqueOrdersMap.set(oId, uniqueOrdersMap.get(oId)! + (o.revenue || 0));
-                }
-              }
-            }
-
-            let revenue = 0;
-            let totalOrders = 0;
-            uniqueOrdersMap.forEach((amt) => {
-              revenue += amt;
-              totalOrders++;
-            });
-
-            const metrics = buildSummaryMetrics({
-              revenue,
-              orders: totalOrders,
-              spend: 0,
-              clicks: 0,
-              impressions: 0,
-              roas: 0,
-              metaRoas: 0,
-              source: "rebuildStoreSummary"
-            });
-
-            await prisma.dailySummary.upsert({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
-              where: {
-                scope_scopeId_date: {
-                  scope: "store",
-                  scopeId: String(store.id),
-                  date: dateStr
-                }
-              },
-              update: {
-                revenue,
-                orders: totalOrders,
-                metrics
-              },
-              create: {
-                scope: "store",
-                scopeId: String(store.id),
-                date: dateStr,
-                revenue,
-                orders: totalOrders,
-                spend: 0,
-                clicks: 0,
-                impressions: 0,
-                roas: 0,
-                metaRoas: 0,
-                metrics
-              }
-            });
-            upsertedCount++;
-          }
-        }
-
         return {
-          recordsFetched: upsertedCount,
-          recordsSaved: upsertedCount,
-          metadata: { totalDailySummariesUpserted: upsertedCount }
+          recordsFetched: 0,
+          recordsSaved: 0,
+          metadata: {
+            status: "DECOMMISSIONED",
+            previousTarget: "DailySummary",
+            replacementTarget: "DataCenterStoreDaily",
+            days,
+            reason: "DailySummary store summary rebuild has been retired. Store daily facts are maintained by DataCenterStoreDaily."
+          }
         };
       }
     );
   }
 
   // 8. rebuild_meta_summary
-  static async rebuildMetaSummary(taskChainId: string, triggeredBy: string, parentTaskId: string | null = null, days: number = 90): Promise<string> {
+  static async rebuildMetaSummary(
+    taskChainId: string,
+    triggeredBy: string,
+    parentTaskId: string | null = null,
+    days: number = 90
+  ): Promise<string> {
     return this.runTask(
       "rebuild_meta_summary",
       "summary",
@@ -816,86 +747,29 @@ export class SyncCenter {
       null,
       null,
       async () => {
-        const accounts = await prisma.adAccount.findMany();
-        let upsertedCount = 0;
-
-        for (const account of accounts) {
-          const cleanId = normalizeMetaAccountId(account.fb_account_id);
-          for (let i = 0; i < days; i++) {
-            const dateStr = dayjs().subtract(i, "day").format("YYYY-MM-DD");
-
-            const insights = await prisma.factMetaPerformance.findMany({
-              where: {
-                account_id: cleanId,
-                date: dateStr,
-                level: "account"
-              }
-            });
-
-            const spend = insights.reduce((sum, item) => sum + (item.spend || 0), 0);
-            const clicks = insights.reduce((sum, item) => sum + (item.clicks || 0), 0);
-            const impressions = insights.reduce((sum, item) => sum + (item.impressions || 0), 0);
-            const purchasesRevenue = insights.reduce((sum, item) => sum + (item.purchase_value || 0), 0);
-            const purchases = insights.reduce((sum, item) => sum + (item.purchases || 0), 0);
-            const metaRoas = spend > 0 ? (purchasesRevenue / spend) : 0;
-
-            const metrics = buildSummaryMetrics({
-              spend,
-              clicks,
-              impressions,
-              metaRoas,
-              revenue: purchasesRevenue,
-              orders: purchases,
-              roas: 0,
-              source: "rebuildMetaSummary"
-            });
-
-            await prisma.dailySummary.upsert({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
-              where: {
-                scope_scopeId_date: {
-                  scope: "ad_account",
-                  scopeId: account.fb_account_id,
-                  date: dateStr
-                }
-              },
-              update: {
-                spend,
-                clicks,
-                impressions,
-                metaRoas,
-                revenue: purchasesRevenue,
-                orders: purchases,
-                metrics
-              },
-              create: {
-                scope: "ad_account",
-                scopeId: account.fb_account_id,
-                date: dateStr,
-                spend,
-                clicks,
-                impressions,
-                metaRoas,
-                revenue: purchasesRevenue,
-                orders: purchases,
-                roas: 0,
-                metrics
-              }
-            });
-            upsertedCount++;
-          }
-        }
-
         return {
-          recordsFetched: upsertedCount,
-          recordsSaved: upsertedCount,
-          metadata: { adAccountSummariesUpserted: upsertedCount }
+          recordsFetched: 0,
+          recordsSaved: 0,
+          metadata: {
+            status: "DECOMMISSIONED",
+            previousTarget: "DailySummary",
+            replacementTarget: "DataCenterMetaAccountDaily",
+            canonicalFactSource: "FactMetaPerformance",
+            days,
+            reason: "DailySummary meta summary rebuild has been retired. Meta account daily facts are maintained by DataCenterMetaAccountDaily."
+          }
         };
       }
     );
   }
 
   // 9. rebuild_roas_summary
-  static async rebuildRoasSummary(taskChainId: string, triggeredBy: string, parentTaskId: string | null = null, days: number = 90): Promise<string> {
+  static async rebuildRoasSummary(
+    taskChainId: string,
+    triggeredBy: string,
+    parentTaskId: string | null = null,
+    days: number = 90
+  ): Promise<string> {
     return this.runTask(
       "rebuild_roas_summary",
       "summary",
@@ -905,116 +779,28 @@ export class SyncCenter {
       null,
       null,
       async () => {
-        // Rebuild genuine ROAS: store orders vs mapped fb accounts spend
-        const stores = await prisma.store.findMany();
-        let updatedCount = 0;
-
-        for (const store of stores) {
-          // Get strictly mapped ad accounts
-          const mappings = await prisma.accountMapping.findMany({
-            where: { storeId: store.id },
-            select: { fbAccountId: true }
-          });
-          const mappedFbIds = mappings.map(m => normalizeMetaAccountId(m.fbAccountId));
-
-          const hasMappings = mappedFbIds.length > 0;
-
-          for (let i = 0; i < days; i++) {
-            const dateStr = dayjs().subtract(i, "day").format("YYYY-MM-DD");
-
-            // Fetch daily Summary of store to get store revenue
-            const storeSummary = await prisma.dailySummary.findUnique({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
-              where: {
-                scope_scopeId_date: {
-                  scope: "store",
-                  scopeId: String(store.id),
-                  date: dateStr
-                }
-              }
-            });
-
-            const storeRevenue = storeSummary ? storeSummary.revenue : 0;
-            const storeOrders = storeSummary ? storeSummary.orders : 0;
-
-            let mappedSpend = 0;
-            let mappedClicks = 0;
-            let mappedImpressions = 0;
-            let mappedMetaRevenue = 0;
-
-            if (hasMappings) {
-              const insights = await prisma.factMetaPerformance.findMany({
-                where: {
-                  account_id: { in: mappedFbIds },
-                  date: dateStr,
-                  level: "account"
-                }
-              });
-
-              mappedSpend = insights.reduce((sum, idx) => sum + (idx.spend || 0), 0);
-              mappedClicks = insights.reduce((sum, idx) => sum + (idx.clicks || 0), 0);
-              mappedImpressions = insights.reduce((sum, idx) => sum + (idx.impressions || 0), 0);
-              mappedMetaRevenue = insights.reduce((sum, idx) => sum + (idx.purchase_value || 0), 0);
-            }
-
-            const realRoas = mappedSpend > 0 ? (storeRevenue / mappedSpend) : 0;
-            const metaRoas = mappedSpend > 0 ? (mappedMetaRevenue / mappedSpend) : 0;
-
-            const metrics = buildSummaryMetrics({
-              spend: mappedSpend,
-              clicks: mappedClicks,
-              impressions: mappedImpressions,
-              roas: hasMappings ? realRoas : 0,
-              metaRoas: hasMappings ? metaRoas : 0,
-              hasMapping: hasMappings,
-              mappedAccounts: mappedFbIds,
-              source: "rebuildRoasSummary"
-            });
-
-            await prisma.dailySummary.upsert({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
-              where: {
-                scope_scopeId_date: {
-                  scope: "store",
-                  scopeId: String(store.id),
-                  date: dateStr
-                }
-              },
-              update: {
-                spend: mappedSpend,
-                clicks: mappedClicks,
-                impressions: mappedImpressions,
-                roas: hasMappings ? realRoas : 0,
-                metaRoas: hasMappings ? metaRoas : 0,
-                metrics
-              },
-              create: {
-                scope: "store",
-                scopeId: String(store.id),
-                date: dateStr,
-                revenue: storeRevenue,
-                orders: storeOrders,
-                spend: mappedSpend,
-                clicks: mappedClicks,
-                impressions: mappedImpressions,
-                roas: hasMappings ? realRoas : 0,
-                metaRoas: hasMappings ? metaRoas : 0,
-                metrics
-              }
-            });
-            updatedCount++;
-          }
-        }
-
         return {
-          recordsFetched: updatedCount,
-          recordsSaved: updatedCount,
-          metadata: { updatedRoasSummaries: updatedCount }
+          recordsFetched: 0,
+          recordsSaved: 0,
+          metadata: {
+            status: "DECOMMISSIONED",
+            previousTarget: "DailySummary",
+            replacementSources: ["Order.store_local_date", "FactMetaPerformance", "AccountMapping", "DataCenterStoreDaily", "DataCenterMetaAccountDaily"],
+            days,
+            reason: "DailySummary ROAS rebuild has been retired. ROAS is now calculated from canonical store, meta, and mapping facts."
+          }
         };
       }
     );
   }
 
   // 10. rebuild_dashboard_summary
-  static async rebuildDashboardSummary(taskChainId: string, triggeredBy: string, parentTaskId: string | null = null, days: number = 90): Promise<string> {
+  static async rebuildDashboardSummary(
+    taskChainId: string,
+    triggeredBy: string,
+    parentTaskId: string | null = null,
+    days: number = 90
+  ): Promise<string> {
     return this.runTask(
       "rebuild_dashboard_summary",
       "summary",
@@ -1024,95 +810,27 @@ export class SyncCenter {
       null,
       null,
       async () => {
-        let upsertedCount = 0;
-
-        for (let i = 0; i < days; i++) {
-          const dateStr = dayjs().subtract(i, "day").format("YYYY-MM-DD");
-
-          // Pull all store daily summaries
-          const storeSummaries = await prisma.dailySummary.findMany({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
-            where: {
-              scope: "store",
-              date: dateStr
-            }
-          });
-
-          const totalRevenue = storeSummaries.reduce((sum, s) => sum + s.revenue, 0);
-          const totalOrders = storeSummaries.reduce((sum, s) => sum + s.orders, 0);
-          const totalSpend = storeSummaries.reduce((sum, s) => sum + s.spend, 0);
-          const totalClicks = storeSummaries.reduce((sum, s) => sum + s.clicks, 0);
-          const totalImpressions = storeSummaries.reduce((sum, s) => sum + s.impressions, 0);
-
-          // Combined calculations
-          const combinedRoas = totalSpend > 0 ? (totalRevenue / totalSpend) : 0;
-
-          // Combined Meta conversion value
-          const adAccountSummaries = await prisma.dailySummary.findMany({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
-            where: {
-              scope: "ad_account",
-              date: dateStr
-            }
-          });
-          const totalMetaRevenue = adAccountSummaries.reduce((sum, a) => sum + a.revenue, 0);
-          const combinedMetaRoas = totalSpend > 0 ? (totalMetaRevenue / totalSpend) : 0;
-
-          const metrics = buildSummaryMetrics({
-            revenue: totalRevenue,
-            orders: totalOrders,
-            spend: totalSpend,
-            clicks: totalClicks,
-            impressions: totalImpressions,
-            roas: combinedRoas,
-            metaRoas: combinedMetaRoas,
-            source: "rebuildDashboardSummary"
-          });
-
-          await prisma.dailySummary.upsert({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
-            where: {
-              scope_scopeId_date: {
-                scope: "dashboard",
-                scopeId: "all",
-                date: dateStr
-              }
-            },
-            update: {
-              revenue: totalRevenue,
-              orders: totalOrders,
-              spend: totalSpend,
-              clicks: totalClicks,
-              impressions: totalImpressions,
-              roas: combinedRoas,
-              metaRoas: combinedMetaRoas,
-              metrics
-            },
-            create: {
-              scope: "dashboard",
-              scopeId: "all",
-              date: dateStr,
-              revenue: totalRevenue,
-              orders: totalOrders,
-              spend: totalSpend,
-              clicks: totalClicks,
-              impressions: totalImpressions,
-              roas: combinedRoas,
-              metaRoas: combinedMetaRoas,
-              metrics
-            }
-          });
-          upsertedCount++;
-        }
-
         return {
-          recordsFetched: upsertedCount,
-          recordsSaved: upsertedCount,
-          metadata: { dashboardDaysUpserted: upsertedCount }
+          recordsFetched: 0,
+          recordsSaved: 0,
+          metadata: {
+            status: "DECOMMISSIONED",
+            previousTarget: "DailySummary",
+            replacementSources: ["DataCenterStoreDaily", "DataCenterMetaAccountDaily", "FactMetaPerformance", "Order"],
+            days,
+            reason: "DailySummary dashboard rebuild has been retired. Dashboard summaries are generated from canonical data-center ledgers and facts."
+          }
         };
       }
     );
   }
 
   // 11. run_ai_rule_monitor
-  static async runAiRuleMonitor(taskChainId: string, triggeredBy: string, parentTaskId: string | null = null): Promise<string> {
+  static async runAiRuleMonitor(
+    taskChainId: string,
+    triggeredBy: string,
+    parentTaskId: string | null = null
+  ): Promise<string> {
     return this.runTask(
       "run_ai_rule_monitor",
       "ai",
@@ -1122,110 +840,15 @@ export class SyncCenter {
       null,
       null,
       async () => {
-        // Clear any old pending and generate real alerts inside SQLite!
-        // Read recent daily summaries in aggregate of 7 days
-        const last7Days = Array.from({ length: 7 }, (_, i) => dayjs().subtract(i, "day").format("YYYY-MM-DD"));
-
-        const dashboardSummaries = await prisma.dailySummary.findMany({ // DECOMMISSIONED FOR DAILY SUMMARY LOCKDOWN
-          where: {
-            scope: "store",
-            date: { in: last7Days }
-          }
-        });
-
-        // Rules check
-        let anomaliesCreated = 0;
-
-        // Ensure we create a general container report if we find issues
-        // Rule A: Low ROAS alert
-        const storesWithLowRoas = [];
-        for (const summary of dashboardSummaries) {
-          if (summary.spend > 100 && summary.roas < 1.0) {
-            storesWithLowRoas.push(summary);
-          }
-        }
-
-        if (storesWithLowRoas.length > 0) {
-          const report = await prisma.aiAnalysisReport.create({
-            data: {
-              type: "anomaly",
-              entityType: "store",
-              entityId: storesWithLowRoas[0].scopeId,
-              dateRange: JSON.stringify({ gte: last7Days[6], lte: last7Days[0] }),
-              conclusion: `检测到店铺和广告账映射中的ROAS异常下降（最低ROAS：${storesWithLowRoas[0].roas.toFixed(2)}）。花费了大量广告费（$${storesWithLowRoas[0].spend.toFixed(2)}）。`,
-              dataBasis: JSON.stringify(storesWithLowRoas),
-              riskPoints: JSON.stringify(["ROAS低于平衡点1.0", "有流量但转化不佳"]),
-              priority: 1,
-              observationWindow: "7d",
-              model: "Gemini 3.5 Flash",
-              metadata: JSON.stringify({ storesAffected: storesWithLowRoas.map(s => s.scopeId) })
-            }
-          });
-
-          await prisma.aiActionSuggestion.create({
-            data: {
-              reportId: report.id,
-              action: `停止对该店铺（ID:${storesWithLowRoas[0].scopeId}）绑定的高成本亏损Meta广告渠道进行投放。`,
-              rationale: `当前ROAS为 ${storesWithLowRoas[0].roas.toFixed(2)} 处于亏损。继续投放将导致资金持续流失。`,
-              priority: 1,
-              status: "pending",
-              executionChecklist: JSON.stringify([
-                "审查该店铺绑定的全部 Meta 广告账户",
-                "排查最近24小时无转化的单品广告",
-                "降低预算30%或暂停转化率极低的广告组"
-              ])
-            }
-          });
-          anomaliesCreated += 2;
-        }
-
-        // Rule B: Missing Store Mapping alert
-        const stores = await prisma.store.findMany();
-        const unmappedStores = [];
-        for (const s of stores) {
-          const m = await prisma.accountMapping.findFirst({ where: { storeId: s.id } });
-          if (!m || !m.fbAccountId) {
-            unmappedStores.push(s);
-          }
-        }
-
-        if (unmappedStores.length > 0) {
-          const report = await prisma.aiAnalysisReport.create({
-            data: {
-              type: "media_buyer",
-              entityType: "store",
-              entityId: String(unmappedStores[0].id),
-              conclusion: `链路阻断：存在未绑定 Facebook 广告账户的活跃店铺，真实 ROAS 列可能被判定为缺失或无法被自动算得。`,
-              dataBasis: JSON.stringify({ unmappedStoresCount: unmappedStores.length }),
-              riskPoints: JSON.stringify(["缺少店铺与广告账户的一对一投产比映射", "数据分析和 AI 分析链路不可靠"]),
-              priority: 2,
-              observationWindow: "24h",
-              model: "Gemini 3.5 Flash",
-              metadata: JSON.stringify({ names: unmappedStores.map(u => u.name) })
-            }
-          });
-
-          await prisma.aiActionSuggestion.create({
-            data: {
-              reportId: report.id,
-              action: `在配置中心或映射设置中绑关联店铺与Facebook广告账户。`,
-              rationale: `只有打通数据链路后，系统才能正确记录并输出真实的 ROAS。`,
-              priority: 2,
-              status: "pending",
-              executionChecklist: JSON.stringify([
-                "前往配置中心 -> 绑定映射",
-                "确保每个店铺在 Meta 账户中有其对应来源",
-                "点击重建 ROAS 后刷新数据中心"
-              ])
-            }
-          });
-          anomaliesCreated += 2;
-        }
-
         return {
-          recordsFetched: anomaliesCreated,
-          recordsSaved: anomaliesCreated,
-          metadata: { anomaliesGenerated: anomaliesCreated }
+          recordsFetched: 0,
+          recordsSaved: 0,
+          metadata: {
+            status: "DECOMMISSIONED",
+            previousSource: "DailySummary",
+            replacementSource: "rule-diagnostic-engine + diagnostics/issues",
+            reason: "Legacy AI rule monitor based on DailySummary has been retired. Diagnostics now use canonical rule engine outputs."
+          }
         };
       }
     );
