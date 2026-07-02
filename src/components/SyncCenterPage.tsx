@@ -314,7 +314,7 @@ export function SyncCenterPage() {
               <span className="text-[15px] font-bold text-slate-900">同步任务执行台 / Sync Task Trigger Console</span>
             </div>
             <p className="text-slate-400 text-xs mt-1.5 leading-relaxed">
-              支持对单一渠道模块发起手动重补和同步触发。各模块的流向下游都会触达汇总计算机制。
+             支持对 Meta 数据链路发起统一同步，结果写入广告结构、素材与事实成效数据。
             </p>
           </div>
 
