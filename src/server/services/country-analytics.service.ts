@@ -26,7 +26,7 @@ export interface CountryAnalyticsResult {
     orderPrimarySource: string;
     metaPrimarySource: string;
     legacyInsightUsed: boolean;
-    dailySummaryUsed: boolean;
+    legacySummaryUsed: boolean;
     storeMappingUsed: boolean;
     countryJoinKey: string;
     storeRoasMeaning: string;
@@ -446,7 +446,7 @@ export async function getCountryAnalytics(
       orderPrimarySource: hasCountryFieldData ? "Order.shippingCountryCode" : "none",
       metaPrimarySource: "FactAudienceBreakdown",
       legacyInsightUsed: false,
-      dailySummaryUsed: false,
+      legacySummaryUsed: false,
       storeMappingUsed: true,
       countryJoinKey: "countryCode",
       storeRoasMeaning: "Total order revenue divided by Meta country spend.",
