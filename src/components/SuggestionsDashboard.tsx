@@ -135,7 +135,35 @@ export function SuggestionsDashboard() {
       [cardId]: !prev[cardId]
     }));
   };
+  
+  const formatEvidenceMetricValue = (key: string, value: any) => {
+    if (value === null || value === undefined || value === "") return "暂无";
 
+    const lowerKey = key.toLowerCase();
+
+    if (typeof value === "number") {
+      if (lowerKey.includes("spend") || lowerKey.includes("revenue") || lowerKey.includes("value") || lowerKey.includes("sales") || lowerKey.includes("cpa") || lowerKey.includes("cpc")) {
+        return `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+      }
+      if (lowerKey.includes("roas")) {
+        return `${value.toFixed(2)}x`;
+      }
+      if (lowerKey.includes("ctr") || lowerKey.includes("rate")) {
+        return `${value.toFixed(2)}%`;
+      }
+      return value.toLocaleString();
+    }
+
+    return String(value);
+  };
+
+  const getVisibleEvidenceMetrics = (metrics: Record<string, any> | null | undefined) => {
+    if (!metrics) return [];
+    return Object.entries(metrics)
+      .filter(([, value]) => value !== null && value !== undefined && value !== "")
+      .slice(0, 6);
+  };
+  
   const getPriorityLabel = (p: number) => {
     if (p <= 1) return { text: "极高 / Urgent", css: "bg-red-500/10 text-red-500 border-red-500/20 font-bold" };
     if (p === 2) return { text: "高 / High", css: "bg-amber-500/10 text-amber-500 border-amber-500/20 font-bold" };
@@ -328,34 +356,16 @@ export function SuggestionsDashboard() {
                           )}
                         </div>
 
-                        {meta.evidence.metrics && (
+                        {meta.evidence.metrics && getVisibleEvidenceMetrics(meta.evidence.metrics).length > 0 && (
                           <div className="space-y-1">
                             <span className="text-[9px] font-black text-slate-400 block uppercase">查得真实物理数据快照:</span>
                             <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-mono">
-                              <div className="bg-slate-50 p-1 rounded">
-                                <p className="text-slate-400 font-semibold leading-tight">SPEND</p>
-                                <p className="text-slate-800 font-bold">${Number(meta.evidence.metrics.spend || 0).toLocaleString()}</p>
-                              </div>
-                              <div className="bg-slate-50 p-1 rounded">
-                                <p className="text-slate-400 font-semibold leading-tight">ROAS</p>
-                                <p className="text-slate-800 font-bold">{Number(meta.evidence.metrics.roas || 0).toFixed(2)}x</p>
-                              </div>
-                              <div className="bg-slate-50 p-1 rounded">
-                                <p className="text-slate-400 font-semibold leading-tight">REVENUE</p>
-                                <p className="text-slate-800 font-bold">${Number(meta.evidence.metrics.revenue || 0).toLocaleString()}</p>
-                              </div>
-                              <div className="bg-slate-50 p-1 rounded">
-                                <p className="text-slate-400 font-semibold leading-tight">CTR</p>
-                                <p className="text-slate-800 font-bold">{Number(meta.evidence.metrics.ctr || 0).toFixed(2)}%</p>
-                              </div>
-                              <div className="bg-slate-50 p-1 rounded">
-                                <p className="text-slate-400 font-semibold leading-tight">CPA</p>
-                                <p className="text-slate-800 font-bold">${Number(meta.evidence.metrics.cpa || 0).toFixed(2)}</p>
-                              </div>
-                              <div className="bg-slate-50 p-1 rounded">
-                                <p className="text-slate-400 font-semibold leading-tight">PURCHASES</p>
-                                <p className="text-slate-800 font-bold">{Number(meta.evidence.metrics.purchases || 0)}</p>
-                              </div>
+                              {getVisibleEvidenceMetrics(meta.evidence.metrics).map(([key, value]) => (
+                                <div key={key} className="bg-slate-50 p-1 rounded">
+                                  <p className="text-slate-400 font-semibold leading-tight uppercase truncate">{key}</p>
+                                  <p className="text-slate-800 font-bold truncate">{formatEvidenceMetricValue(key, value)}</p>
+                                </div>
+                              ))}
                             </div>
                           </div>
                         )}
