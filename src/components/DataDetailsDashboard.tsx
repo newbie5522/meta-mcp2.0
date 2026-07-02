@@ -64,16 +64,8 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   // Status Filter state: "spend" | "active" | "all" | "unmapped"
   const [statusFilter, setStatusFilter] = useState<"spend" | "active" | "all" | "unmapped">("all");
   const [syncing, setSyncing] = useState(false);
-  const [metaSyncing, setMetaSyncing] = useState(false);
   const [autoRefreshPolling, setAutoRefreshPolling] = useState(false);
   const [showHistoricalAccounts, setShowHistoricalAccounts] = useState(false);
-
-  const handleMetaRealtimeSync = async () => {
-    setMetaSyncing(true);
-
-    const toastId = toast.loading(
-      "正在触发 Meta DataCenter 账本刷新..."
-    );
 
     try {
       const startStr = format(startDate, "yyyy-MM-dd");
@@ -349,7 +341,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
             size="sm"
             className="h-7 text-[11px] px-2.5 font-medium border-slate-200 bg-white hover:bg-slate-50 transition shadow-sm"
             onClick={loadData}
-            disabled={loading || syncing || metaSyncing}
+            disabled={loading || syncing}
           >
             <RefreshCcw className={cn("w-3 h-3 text-slate-500", loading && "animate-spin")} />
             刷新数据
@@ -358,23 +350,12 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
           <Button
             variant="outline"
             size="sm"
-            className="h-7 text-[11px] px-2.5 font-medium border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 transition shadow-sm"
-            onClick={handleMetaRealtimeSync}
-            disabled={loading || syncing || metaSyncing}
-          >
-            <RefreshCcw className={cn("w-3 h-3", metaSyncing && "animate-spin")} />
-            实时刷新 Meta 消耗
-          </Button>
-
-          <Button
-            variant="outline"
-            size="sm"
             className="h-7 text-[11px] px-2.5 font-medium border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition shadow-sm"
             onClick={handleSyncAccounts}
-            disabled={loading || syncing || metaSyncing}
+            disabled={loading || syncing}
           >
             <RefreshCcw className={cn("w-3 h-3", syncing && "animate-spin")} />
-            同步 Meta 表现
+            刷新 Meta 数据
           </Button>
         </div>
       </div>
@@ -537,7 +518,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                 : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
             )}
             onClick={() => setShowHistoricalAccounts(prev => !prev)}
-            disabled={loading || syncing || metaSyncing}
+            disabled={loading || syncing}
           >
             {showHistoricalAccounts ? "切回活跃账户" : "查看全部历史账户"}
           </Button>
