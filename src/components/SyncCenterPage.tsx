@@ -70,7 +70,6 @@ export function SyncCenterPage() {
   const [activeTab, setActiveTab] = useState<"chains" | "logs">("chains");
   const [isTriggering, setIsTriggering] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
-  const [showConfirmRebuild, setShowConfirmRebuild] = useState(false);
 
   // Ledger Rebuild states
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -203,38 +202,6 @@ export function SyncCenterPage() {
       const data = await triggerSyncTask({
         taskType,
         ...options
-      });
-
-      setInfoMessage({
-        text: formatSyncReceipt(data),
-        type: "success"
-      });
-
-      await fetchStatusAndData();
-    } catch (err: any) {
-      setInfoMessage({
-        text: getSyncErrorMessage(err),
-        type: "error"
-      });
-    } finally {
-      setIsTriggering(null);
-    }
-  };
-
-  const handleFullRebuild = async () => {
-    setIsTriggering("rebuild_all");
-    setInfoMessage(null);
-    setShowConfirmRebuild(false);
-
-    try {
-      const days = Math.max(
-        1,
-        dayjs(rebuildEndDate).diff(dayjs(rebuildStartDate), "day") + 1
-      );
-
-      const data = await triggerSyncTask({
-        taskType: "rebuild_all",
-        days
       });
 
       setInfoMessage({
