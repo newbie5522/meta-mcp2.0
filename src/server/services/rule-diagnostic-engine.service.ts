@@ -842,7 +842,7 @@ export async function detectStoreIssues(params: any): Promise<any[]> {
         entityId: String(storeId),
         entityName: storeName,
         route: storeRoute,
-       
+        sourceTable: "Store"
       }
     ];
 
