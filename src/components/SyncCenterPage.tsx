@@ -328,11 +328,6 @@ export function SyncCenterPage() {
       refresh_store_datacenter_ledger: "店铺账本刷新",
       refresh_meta_datacenter_ledger: "Meta 账户账本刷新",
       sync_meta_audience: "受众拆分同步",
-      rebuild_store_summary: "已退役任务：店铺旧汇总",
-      rebuild_meta_summary: "已退役任务：Meta旧汇总",
-      rebuild_roas_summary: "已退役任务：旧ROAS重算",
-      rebuild_dashboard_summary: "已退役任务：旧Dashboard汇总",
-      run_ai_rule_monitor: "已退役任务：旧AI规则扫描"
     };
     return dict[t] || t;
   };
