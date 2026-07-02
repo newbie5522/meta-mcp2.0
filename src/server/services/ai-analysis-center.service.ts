@@ -584,6 +584,8 @@ async function getRealTraceableSuggestions(
 
     if (activeAcc) {
       const plainId = activeAcc.fb_account_id.replace("act_", "");
+      const accountRoute = `/account/${encodeURIComponent(activeAcc.fb_account_id)}`;
+
       if (hasUnmapped) {
         suggestions.push({
           title: `关联账户 ${plainId}`,
@@ -591,13 +593,13 @@ async function getRealTraceableSuggestions(
           actionTarget: `account:${activeAcc.fb_account_id}`,
           rationale: `检测到广告账户「${activeAcc.fb_account_name}」（ID: ${activeAcc.fb_account_id}）有真实现金消耗，但系统内未映射关联任何具体独立站。为打通买量漏斗、实施准确的店户交叉对账，必须在 Meta 账号配置或人员与账号组中将该户映射指派至对应独立站。`,
           priority: 1,
-          route: `/data-center/accounts?accountId=${activeAcc.fb_account_id}`,
+          route: accountRoute,
           entityRefs: [
             {
               entityType: "account",
               entityId: activeAcc.fb_account_id,
               entityName: activeAcc.fb_account_name,
-              route: `/data-center/accounts?accountId=${activeAcc.fb_account_id}`,
+              route: accountRoute,
               sourceTable: "AdAccount"
             }
           ],
@@ -616,13 +618,13 @@ async function getRealTraceableSuggestions(
           actionTarget: `account:${activeAcc.fb_account_id}`,
           rationale: `该广告账户在统计周期 [${startDate} ~ ${endDate}] 内产生实际消耗。当前综合整店 ROAS 为 ${accountRoasText}。应核对 FactMetaPerformance 与店铺订单数据，再决定是否调低低效果 Campaign 预算。`,
           priority: 1,
-          route: `/data-center/accounts?accountId=${activeAcc.fb_account_id}`,
+          route: accountRoute,
           entityRefs: [
             {
               entityType: "account",
               entityId: activeAcc.fb_account_id,
               entityName: activeAcc.fb_account_name,
-              route: `/data-center/accounts?accountId=${activeAcc.fb_account_id}`,
+              route: accountRoute,
               sourceTable: "AdAccount"
             }
           ],
@@ -721,6 +723,7 @@ async function getRealTraceableSuggestions(
       const ctr = topCountry.impressions > 0 ? (topCountry.clicks / topCountry.impressions) * 100 : 0;
       const cpc = topCountry.clicks > 0 ? topCountry.spend / topCountry.clicks : 0;
       const cpa = topCountry.purchases > 0 ? topCountry.spend / topCountry.purchases : 0;
+      const countryRoute = `/?tab=ai-country&countryCode=${encodeURIComponent(topCountry.countryCode)}`;
 
       suggestions.push({
         title: `${roas < 1.0 && topCountry.spend > 50 ? "复查" : "观察"} ${topCountry.countryCode} 国家投放`,
@@ -728,13 +731,13 @@ async function getRealTraceableSuggestions(
         actionTarget: `country:${topCountry.countryCode}`,
         rationale: `基于 FactAudienceBreakdown 国家维度事实数据，${topCountry.countryCode} 在 ${startDate} 至 ${endDate} 期间花费 $${topCountry.spend.toFixed(2)}，购买 ${topCountry.purchases}，ROAS ${roas.toFixed(2)}x。请结合国家分析页判断是否调低预算、排除地区或继续观察。`,
         priority: roas < 1.0 && topCountry.spend > 50 ? 2 : 3,
-        route: `/ai/country?countryCode=${topCountry.countryCode}`,
+        route: countryRoute,
         entityRefs: [
           {
             entityType: "country",
             entityId: topCountry.countryCode,
             entityName: `目标国 ${topCountry.countryCode}`,
-            route: `/ai/country?countryCode=${topCountry.countryCode}`,
+            route: countryRoute,
             sourceTable: "FactAudienceBreakdown"
           }
         ],
@@ -817,6 +820,7 @@ async function getRealTraceableSuggestions(
       const roas = topCreative.spend > 0 ? topCreative.purchaseValue / topCreative.spend : 0;
       const cpc = topCreative.clicks > 0 ? topCreative.spend / topCreative.clicks : 0;
       const cpa = topCreative.purchases > 0 ? topCreative.spend / topCreative.purchases : 0;
+      const creativeRoute = `/?tab=data-creatives&creativeId=${encodeURIComponent(safeCreativeId)}`;
 
       suggestions.push({
         title: `复查低效素材 ${safeCreativeId}`,
@@ -824,13 +828,13 @@ async function getRealTraceableSuggestions(
         actionTarget: `creative:${safeCreativeId}`,
         rationale: `基于 FactMetaPerformance 广告级事实数据，素材「${safeCreativeName}」在 ${startDate} 至 ${endDate} 期间花费 $${topCreative.spend.toFixed(2)}，CTR ${ctr.toFixed(2)}%，ROAS ${roas.toFixed(2)}x。请结合素材页进一步判断是否降预算、暂停或继续观察。`,
         priority: roas < 1.0 && topCreative.spend > 100 ? 2 : 3,
-        route: `/data-center/creatives?creativeId=${safeCreativeId}`,
+        route: creativeRoute,
         entityRefs: [
           {
             entityType: "creative",
             entityId: safeCreativeId,
             entityName: safeCreativeName,
-            route: `/data-center/creatives?creativeId=${safeCreativeId}`,
+            route: creativeRoute,
             sourceTable: "FactMetaPerformance"
           }
         ],
