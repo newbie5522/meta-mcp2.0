@@ -646,13 +646,13 @@ async function getRealTraceableSuggestions(
       actionTarget: "token:meta",
       rationale: `系统当前 Meta Graph API 令牌不可用。请到配置中心重新绑定完整有效的 Meta Access Token。`,
       priority: 1,
-      route: "/settings",
+      route: "/?tab=meta-config",
       entityRefs: [
         {
           entityType: "system_config",
           entityId: "meta_token",
           entityName: "Meta Access Token",
-          route: "/settings",
+          route: "/?tab=meta-config",
           sourceTable: "Setting"
         }
       ],
@@ -857,9 +857,21 @@ async function getRealTraceableSuggestions(
   
   // 5. Product / Store Analytics Suggestion from available context metrics
   if (type === "product_analysis" || type === "store_analysis") {
-    const storeIdFromContext = context.entityId || context.metrics?.storeId || null;
-    const store = storeIdFromContext
-      ? await prisma.store.findUnique({ where: { id: Number(storeIdFromContext) } })
+    const rawStoreId =
+      type === "store_analysis"
+        ? (context.entityId || context.metrics?.storeId || null)
+        : (context.metrics?.storeId || null);
+
+    const parsedStoreId =
+      rawStoreId !== null &&
+      rawStoreId !== undefined &&
+      rawStoreId !== "" &&
+      Number.isFinite(Number(rawStoreId))
+        ? Number(rawStoreId)
+        : null;
+
+    const store = parsedStoreId
+      ? await prisma.store.findUnique({ where: { id: parsedStoreId } })
       : await prisma.store.findFirst();
 
     const contextEvidenceMetrics = buildContextEvidenceMetrics();
@@ -874,13 +886,13 @@ async function getRealTraceableSuggestions(
         actionTarget: `store:${storeIdStr}`,
         rationale: `基于当前分析上下文，店铺「${storeNameStr}」在 ${startDate} 至 ${endDate} 存在可核对的订单、销售额或广告成效指标。请结合 Order 与 FactMetaPerformance 进行店铺级数据复核。`,
         priority: 3,
-        route: `/ai/store?storeId=${storeIdStr}`,
+        route: `/?tab=ai-store&storeId=${storeIdStr}`,
         entityRefs: [
           {
             entityType: "store",
             entityId: storeIdStr,
             entityName: storeNameStr,
-            route: `/ai/store?storeId=${storeIdStr}`,
+            route: `/?tab=ai-store&storeId=${storeIdStr}`,
             sourceTable: "Store"
           }
         ],
