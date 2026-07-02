@@ -72,7 +72,7 @@ interface CountryAnalyticsData {
     orderPrimarySource: string;
     metaPrimarySource: string;
     legacyInsightUsed: boolean;
-    dailySummaryUsed: boolean;
+    legacySummaryUsed: boolean;
     storeMappingUsed: boolean;
     countryJoinKey: string;
     storeRoasMeaning: string;
