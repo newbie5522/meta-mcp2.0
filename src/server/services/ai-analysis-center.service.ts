@@ -644,32 +644,25 @@ async function getRealTraceableSuggestions(
       title: "重新授权 Meta 令牌",
       actionVerb: "refresh_token",
       actionTarget: "token:meta",
-      rationale: `系统当前 Meta Graph API 令牌失效或被拦截（服务接口返回 400 Access Token Expired）。必须由运营人员重新人工进行 OAuth 认证并配置最新长效令牌。`,
+      rationale: `系统当前 Meta Graph API 令牌不可用。请到配置中心重新绑定完整有效的 Meta Access Token。`,
       priority: 1,
-      route: "/data-center/accounts?accountId=unknown",
+      route: "/settings",
       entityRefs: [
         {
-          entityType: "account",
-          entityId: "unknown",
-          entityName: "Meta 接口通信长信标",
-          route: "/data-center/accounts?accountId=unknown",
-          sourceTable: "AdAccount"
+          entityType: "system_config",
+          entityId: "meta_token",
+          entityName: "Meta Access Token",
+          route: "/settings",
+          sourceTable: "Setting"
         }
       ],
       evidence: {
-        primarySource: "AdAccount",
-        supportingSources: [],
+        primarySource: "Setting",
+        supportingSources: ["SyncLog"],
         dateRange: `${startDate} 至 ${endDate}`,
         metrics: {
-          spend: 0,
-          impressions: 0,
-          clicks: 0,
-          purchases: 0,
-          revenue: 0,
-          roas: 0,
-          ctr: 0,
-          cpc: 0,
-          cpa: 0
+          apiAccessStatus: context.tokenHealth?.apiAccessStatus || null,
+          identityStatus: context.tokenHealth?.identityStatus || null
         }
       },
       generationMode
