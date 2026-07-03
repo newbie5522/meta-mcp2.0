@@ -47,7 +47,7 @@ router.post("/suggestions/:id/status", async (req, res) => {
 
   try {
     const updated = await prisma.aiActionSuggestion.update({
-      where: { id: parseInt(id, 10) },
+      where: { id },
       data: { status }
     });
 
