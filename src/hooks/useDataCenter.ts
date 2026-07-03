@@ -1,14 +1,13 @@
 // src/hooks/useDataCenter.ts
-import { useQuery } from '@tanstack/react-query';
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from "react";
 
 /**
  * ============================================================
- * P0-003 修复：统一的 Data Center 数据获取 Hook
+ * P0 部署修复：无外部 Query Provider 依赖的数据获取 Hook
  * ============================================================
- * 
- * 所有页面都必须使用这个 Hook 来读 Data Center 数据
- * 这样确保数据来源唯一且可审计
+ *
+ * 保持原有返回结构：data / isLoading / error / refetch。
+ * 当前测试版不引入 @tanstack/react-query，避免部署期依赖和 Provider 缺失。
  */
 
 interface UseDataCenterOptions {
@@ -21,39 +20,54 @@ export function useDataCenter<T = any>(
   endpoint: string,
   options: UseDataCenterOptions = {}
 ) {
-  const {
-    enabled = true,
-    staleTime = 5 * 60 * 1000, // 5 分钟
-    cacheTime = 10 * 60 * 1000  // 10 分钟
-  } = options;
+  const { enabled = true } = options;
 
-  const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['data-center', endpoint],
-    queryFn: async () => {
+  const [data, setData] = useState<T | undefined>(undefined);
+  const [isLoading, setIsLoading] = useState<boolean>(Boolean(enabled));
+  const [error, setError] = useState<Error | null>(null);
+
+  const refetch = useCallback(async () => {
+    if (!endpoint) return undefined;
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
       const response = await fetch(endpoint);
+
       if (!response.ok) {
-        throw new Error(`Failed to fetch from ${endpoint}`);
+        throw new Error(`Failed to fetch from ${endpoint}: ${response.status}`);
       }
-      return response.json();
-    },
-    enabled,
-    staleTime,
-    cacheTime,
-    // 重要：记录数据来源
-    meta: {
-      dataSource: 'data_center',
-      endpoint,
-      fetchedAt: new Date().toISOString()
+
+      const json = await response.json();
+      setData(json);
+      return json as T;
+    } catch (err: any) {
+      const normalizedError = err instanceof Error ? err : new Error(String(err));
+      setError(normalizedError);
+      throw normalizedError;
+    } finally {
+      setIsLoading(false);
     }
-  });
+  }, [endpoint]);
+
+  useEffect(() => {
+    if (!enabled) {
+      setIsLoading(false);
+      return;
+    }
+
+    refetch().catch(() => {
+      // error state is already set inside refetch
+    });
+  }, [enabled, refetch]);
 
   return {
     data,
     isLoading,
     error,
     refetch,
-    // 添加审计信息
-    dataSource: 'data_center',
+    dataSource: "data_center",
     endpoint
   };
 }
