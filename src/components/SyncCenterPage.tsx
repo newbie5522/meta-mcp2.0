@@ -513,48 +513,9 @@ export function SyncCenterPage() {
 
       </div>
 
-      {/* Extreme Historical Data Complete Rebuild Console Area (Danger Zone) */}
-      <div className="bg-white border border-red-200/80 rounded-2xl p-6 shadow-sm space-y-4">
-        <div className="flex items-center gap-2.5 text-rose-600">
-          <ShieldAlert className="w-5 h-5" />
-          <h2 className="text-[15px] font-bold tracking-tight">高级维护控制台 / Danger Zone</h2>
-        </div>
-        <p className="text-xs text-slate-500 leading-relaxed max-w-3xl">
-          用于数据失真修复：点击下面的控制按键将清空本地数据库中 
-          <code className="bg-red-50 text-red-600 border border-red-100/60 px-1 py-0.5 rounded mx-1 font-mono text-[11px]">dailySummary</code> 核心多维汇总表，
-          并根据现有的关联映射参数、店铺交易数据和广告抓取结果，全面重构过去 90 天所有汇总指标链条和 ROAS 参数。此操作不可逆，运行可能耗费15-30秒！
-        </p>
-        
-        {showConfirmRebuild ? (
-          <div className="bg-red-50 border border-red-100 rounded-xl p-4 space-y-3 max-w-xl transition-all">
-            <p className="text-xs text-red-800 font-bold">
-              你确定要清空并拉起全量 90 天多维数据重建吗？如果后台其他同步任务正在执行，可能会发生线程锁死！
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={handleFullRebuild}
-                disabled={!!isTriggering}
-                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-sm transition"
-              >
-                确定全面重建
-              </button>
-              <button
-                onClick={() => setShowConfirmRebuild(false)}
-                className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-100 transition"
-              >
-                取消
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            onClick={() => setShowConfirmRebuild(true)}
-            className="px-4 py-2 bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-700 font-bold rounded-xl text-xs shadow-sm active:scale-95 transition"
-          >
-            全面重建历史数据 / Reconstruct Historical Summaries
-          </button>
-        )}
-      </div>
+      {/* P0 deployment note: legacy historical rebuild danger zone removed.
+          Future rebuild controls must be reintroduced through a GitHub-reviewed,
+          current-data-chain-only implementation. */}
 
     </div>
   );
