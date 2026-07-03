@@ -272,7 +272,7 @@ export async function syncMetaAudienceBreakdown(options: {
 
           const existing = await prisma.factAudienceBreakdown.findUnique({
             where: {
-              date_level_account_id_dimension_type_dimension_value_dimension_value_secondary_campaign_id_adset_id_ad_id: {
+              date_level_account_id_dimension_type_dimension_value_dimensi_key: {
                 date: dateStr,
                 level: "account",
                 account_id: actId,
