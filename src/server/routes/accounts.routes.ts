@@ -6,6 +6,10 @@ import dayjs from "dayjs";
 
 const router = Router();
 
+function isDemoDataEnabled(): boolean {
+  return process.env.ENABLE_DEMO_DATA === "true";
+}
+
 function numberValue(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim()) {
