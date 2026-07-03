@@ -506,8 +506,8 @@ router.get("", async (req, res) => {
           ]
         }
       });
-      const activeStoreIds = new Set(activeStores.map(s => s.id));
-      accounts = accounts.filter(acc => acc.storeId == null || activeStoreIds.has(acc.storeId));
+      const activeStoreIds = new Set<number>(activeStores.map(s => s.id));
+      accounts = accounts.filter(acc => typeof acc.storeId !== "number" || activeStoreIds.has(acc.storeId));
     }
 
     const parsedResults = accounts.map((acc: any) => ({
