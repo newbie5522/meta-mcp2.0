@@ -74,7 +74,14 @@ export async function aggregateData(startDate: string, endDate: string, options:
             const storeSpend = ads.reduce((sum, ad) => sum + (ad.spend || 0), 0);
             const adSpend = products.length > 0 ? storeSpend / products.length : 0;
             
-            await prisma.productPerformanceDaily.upsert({
+            const productPerformanceDaily = (prisma as any).productPerformanceDaily;
+
+            if (!productPerformanceDaily) {
+              console.log("[Aggregation Service] productPerformanceDaily model is not available in current schema; skip legacy product aggregation.");
+              continue;
+            }
+
+            await productPerformanceDaily.upsert({
               where: {
                 storeId_productId_date: {
                   storeId: store.id,
