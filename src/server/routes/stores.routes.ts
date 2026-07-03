@@ -38,6 +38,32 @@ function isDangerousAdminEnabled(): boolean {
   return process.env.ENABLE_DANGEROUS_ADMIN === "true";
 }
 
+function isDemoDataEnabled(): boolean {
+  return process.env.ENABLE_DEMO_DATA === "true";
+}
+
+function isFixtureStore(store: any): boolean {
+  if (!store || typeof store !== "object") return false;
+
+  const fixtureNames = new Set([
+    "Shopline Fashion Store",
+    "Shopify Electronics Hub",
+    "Shoplazza Home Decor"
+  ]);
+
+  const fixtureDomains = new Set([
+    "fashion.shoplineapp.com",
+    "electronics.myshopify.com",
+    "decor.shoplazza.com"
+  ]);
+
+  return (
+    store.mode === "sandbox" ||
+    fixtureNames.has(String(store.name || "")) ||
+    fixtureDomains.has(String(store.domain || ""))
+  );
+}
+
 function sanitizeAdAccount(account: any) {
   if (!account || typeof account !== "object") return account;
   const { fb_access_token, ...safeAccount } = account;
@@ -204,7 +230,7 @@ router.get("/", async (req, res) => {
         });
 
         const sanitized = sanitizeStore(store);
-        const timezoneDiagnostics = buildTimezoneDiagnostics(store, lastSyncLog);
+        const timezoneDiagnostics = buildTimezoneDiagnostics(store as any, lastSyncLog as any);
 
         return {
           ...sanitized,
