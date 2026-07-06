@@ -46,6 +46,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
   const [data, setData] = useState<any[]>([]);
   const [dataHealth, setDataHealth] = useState<any>(null);
+  const [structureSummary, setStructureSummary] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
   // Manage initial load with URL parameters (deep linkage from Account Performance page or Creative Insights tab)
@@ -80,40 +81,67 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
     try {
       const startStr = format(startDate, "yyyy-MM-dd");
       const endStr = format(endDate, "yyyy-MM-dd");
-      const params: any = {
+      const structureParams: any = {
+        selectedAccount: selectedAccount || undefined,
         startDate: startStr,
-        endDate: endStr,
-        includeZeroSpend: includeZeroSpend ? "true" : "false"
+        endDate: endStr
       };
 
-      let url = "";
       if (viewLevel === "accounts") {
-        url = "/api/data-center/ad-hierarchy/accounts";
-      } else if (viewLevel === "campaigns") {
-        url = "/api/data-center/ad-hierarchy/campaigns";
-        params.accountId = selectedAccount;
-      } else if (viewLevel === "adsets") {
-        url = "/api/data-center/ad-hierarchy/adsets";
-        params.accountId = selectedAccount;
-        params.campaignId = selectedCampaignId;
-      } else if (viewLevel === "ads") {
-        url = "/api/data-center/ad-hierarchy/ads";
-        params.accountId = selectedAccount;
-        params.adsetId = selectedAdSetId;
+        const [accountsRes, structureRes] = await Promise.all([
+          axios.get("/api/data-center/ad-hierarchy/accounts", {
+            params: {
+              startDate: startStr,
+              endDate: endStr,
+              includeZeroSpend: includeZeroSpend ? "true" : "false"
+            }
+          }),
+          axios.get("/api/data-center/structure", { params: structureParams })
+        ]);
+
+        setStructureSummary(structureRes.data || null);
+        setDataHealth(structureRes.data?.health || accountsRes.data?.dataHealth || null);
+        setData(accountsRes.data?.success ? (accountsRes.data.data || []) : []);
+        return;
       }
 
-      const res = await axios.get(url, { params });
-      if (res.data && res.data.success) {
-        setData(res.data.data || []);
-        setDataHealth(res.data.dataHealth || null);
-      } else {
-        setData([]);
-        setDataHealth(null);
+      const res = await axios.get("/api/data-center/structure", { params: structureParams });
+      const payload = res.data || {};
+      const campaignNameById = new Map((payload.campaigns || []).map((campaign: any) => [campaign.id, campaign.name]));
+      const adsetNameById = new Map((payload.adsets || []).map((adset: any) => [adset.id, adset.name]));
+      let nextData: any[] = [];
+
+      if (viewLevel === "campaigns") {
+        nextData = payload.campaigns || [];
+      } else if (viewLevel === "adsets") {
+        nextData = (payload.adsets || [])
+          .filter((row: any) => !selectedCampaignId || row.campaignId === selectedCampaignId)
+          .map((row: any) => ({
+            ...row,
+            campaignName: campaignNameById.get(row.campaignId) || row.campaignId
+          }));
+      } else if (viewLevel === "ads") {
+        nextData = (payload.ads || [])
+          .filter((row: any) => !selectedAdSetId || row.adsetId === selectedAdSetId)
+          .map((row: any) => ({
+            ...row,
+            adsetName: adsetNameById.get(row.adsetId) || row.adsetId,
+            campaignName: campaignNameById.get(row.campaignId) || row.campaignId
+          }));
       }
+
+      if (!includeZeroSpend) {
+        nextData = nextData.filter((row: any) => Number(row.spend || 0) > 0);
+      }
+
+      setStructureSummary(payload);
+      setDataHealth(payload.health || null);
+      setData(nextData);
     } catch (e: any) {
       console.error("Failed to fetch ad hierarchy details:", e);
       toast.error("获取层级数据失败: " + (e.response?.data?.error || e.message));
       setData([]);
+      setStructureSummary(null);
     } finally {
       setLoading(false);
     }
@@ -289,7 +317,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
   // Sync utilities trigger
   const handleSyncAdHierarchy = async () => {
-    const tId = toast.loading("正在同步广告结构与成效数据...");
+    const tId = toast.loading("正在触发真实同步任务...");
     try {
       const startStr = format(startDate, "yyyy-MM-dd");
       const endStr = format(endDate, "yyyy-MM-dd");
@@ -302,10 +330,10 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         days: 30
       });
 
-      toast.success("广告结构与成效数据同步已触发，稍后自动刷新视图。", { id: tId });
+      toast.success("同步数据任务已触发，稍后自动刷新视图。", { id: tId });
       setTimeout(fetchData, 3000);
     } catch (err: any) {
-      toast.error("同步广告结构与成效失败: " + (err.response?.data?.message || err.message), { id: tId });
+      toast.error("同步数据失败: " + (err.response?.data?.message || err.message), { id: tId });
     }
   };
 
@@ -469,7 +497,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
             disabled={loading}
           >
             <RefreshCcw className={cn("w-4 h-4 mr-2", loading && "animate-spin")} />
-            刷新
+            刷新页面数据
           </Button>
 
           <Button
@@ -479,10 +507,36 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
             className="h-9 px-3 border-blue-200 text-blue-700 bg-blue-50/10 hover:bg-blue-50"
             onClick={handleSyncAdHierarchy}
           >
-            同步广告结构与成效
+            同步数据
           </Button>
         </div>
       </div>
+
+      {structureSummary && (
+        <div className={cn(
+          "rounded-xl border p-4 text-xs shadow-sm",
+          dataHealth?.status === "STRUCTURE_WITHOUT_FACTS"
+            ? "bg-amber-50 border-amber-200 text-amber-900"
+            : dataHealth?.status === "EMPTY_STRUCTURE"
+              ? "bg-slate-50 border-slate-200 text-slate-700"
+              : "bg-white border-slate-200 text-slate-700"
+        )}>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            <span>结构行数：<b className="font-mono">{structureSummary.structureRowsCount ?? 0}</b></span>
+            <span>成效事实行数：<b className="font-mono">{structureSummary.factRowsCount ?? 0}</b></span>
+            <span>状态：<b className="font-mono">{dataHealth?.status || "UNKNOWN"}</b></span>
+            <span>当前统计期间：<b className="font-mono">{structureSummary.appliedFilters?.startDate || format(startDate, "yyyy-MM-dd")}</b> 至 <b className="font-mono">{structureSummary.appliedFilters?.endDate || format(endDate, "yyyy-MM-dd")}</b></span>
+          </div>
+          {dataHealth?.status === "STRUCTURE_WITHOUT_FACTS" && (
+            <p className="mt-2 font-semibold">
+              结构已同步，成效未同步。当前日期范围内没有 FactMetaPerformance 成效数据，请同步广告成效数据或扩大日期范围。
+            </p>
+          )}
+          {dataHealth?.missingReason && dataHealth?.status !== "STRUCTURE_WITHOUT_FACTS" && (
+            <p className="mt-2">{dataHealth.missingReason}</p>
+          )}
+        </div>
+      )}
 
       {/* Main Data View Table */}
       <div id="ad-hierarchy-table-wrapper" className="w-full">
@@ -612,7 +666,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                           <p className="text-[11px] text-slate-400 mt-2 leading-relaxed text-left w-full">
                             提示诊断排查：<br />
                             1. <b>【时间范围无成效】</b>：在该历史区间内可能未跑量发出消耗。<br />
-                            2. <b>【有消耗隐藏】</b>：当前处于“有消耗对象”筛选，可切换到<b>“全部对象”</b>查看未发生花费的结构拓扑，或重新点击<b>“同步广告成效”</b>重新加载指标。<br />
+                            2. <b>【有消耗隐藏】</b>：当前处于“有消耗对象”筛选，可切换到<b>“全部对象”</b>查看未发生花费的结构拓扑，或点击<b>“同步数据”</b>触发真实同步任务。<br />
                             3. <b>【账户未同步】</b>：请确保该账户已通过本底同步成功重写关联。
                           </p>
                         </div>

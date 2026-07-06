@@ -254,6 +254,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   }, [data, activeTab]);
 
   const chartKey = `${activeTab}-${format(startDate, "yyyyMMdd")}-${format(endDate, "yyyyMMdd")}-${selectedStore}-${selectedAccount}-${sortBy}-${chartRows.length}`;
+  const isMetaBreakdownMissing = dataHealth?.status === "MISSING_META_BREAKDOWN" || dataHealth?.reason === "META_AUDIENCE_BREAKDOWN_MISSING";
 
   // Chart Rendering Logic according to instructions
   const renderChart = () => {
@@ -266,13 +267,13 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       );
     }
 
-    if (dataHealth?.reason === "META_AUDIENCE_BREAKDOWN_MISSING" || chartRows.length === 0) {
+    if (isMetaBreakdownMissing || chartRows.length === 0) {
       return (
         <div className="h-64 flex flex-col items-center justify-center text-slate-400 bg-slate-50/50 rounded-xl border border-dashed border-slate-200 text-xs p-6 text-center">
           <AlertTriangle className="w-8 h-8 text-amber-500 mb-2" />
           <span className="font-bold text-slate-700 text-sm mb-1">受众细分数据未同步</span>
           <p className="text-[11px] text-slate-500 max-w-sm">
-            当前日期范围内未检索到 Meta 交付受众或版位细分数据，请先运行同步。
+            当前日期范围没有 Meta 受众拆分数据，请先同步受众 breakdown。
           </p>
         </div>
       );
@@ -461,7 +462,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                 className="w-full h-10 flex items-center justify-center gap-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-indigo-600 active:scale-[0.98] transition-all duration-150 shadow-sm"
               >
                 {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                同步刷新看板
+                刷新页面数据
               </button>
             </div>
 
@@ -593,7 +594,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
             <CardTitle className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
               <SlidersHorizontal className="w-4 h-4 text-indigo-600" />
               {activeTab === "country" 
-                ? "Meta 广告物理地理受众国家分布 (Meta Audience Country Delivery)" 
+                ? "Meta 受众国家：来自 FactAudienceBreakdown"
                 : "11 维受众分析智能交叉决策底表 (Deterministic Demographic Attributes)"}
             </CardTitle>
             <p className="text-[11px] text-slate-400 mt-1">
@@ -610,12 +611,12 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
               <Loader2 className="w-6 h-6 animate-spin text-indigo-500 mb-2" />
               <p className="text-xs font-semibold">分析引擎智能计算中...</p>
             </div>
-          ) : (dataHealth?.reason === "META_AUDIENCE_BREAKDOWN_MISSING" || tableRows.length === 0) ? (
+          ) : (isMetaBreakdownMissing || tableRows.length === 0) ? (
             <div className="p-16 text-center text-slate-500 bg-slate-50/20 rounded-xl my-4 flex flex-col items-center justify-center max-w-lg mx-auto">
               <AlertTriangle className="w-8 h-8 text-amber-500 mb-2" />
               <p className="text-xs font-bold text-slate-700">受众细分数据未同步</p>
               <p className="text-[11px] text-slate-400 mt-1">
-                当前周期或店铺筛选范围内未同步 Meta 受众细分底层数据，请先在「同步管理中心」运行同步。
+                当前日期范围没有 Meta 受众拆分数据，请先同步受众 breakdown。
               </p>
             </div>
           ) : (
@@ -760,10 +761,10 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
             <div>
               <CardTitle className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
                 <MapPin className="w-4 h-4 text-emerald-600" />
-                主站真实交易订单收货国家分布 (Store Order Destination Countries)
+                订单收货国家：来自 Order shipping/billing country
               </CardTitle>
               <p className="text-[11px] text-slate-400 mt-1">
-                数据直接读取自主站真实交易订单 Shipping & Billing 地址解析。统计均已按 unique orderId 去重。
+                该区域只展示主站订单收货/账单国家，不代表 Meta 受众国家；Meta 受众国家来自上方 FactAudienceBreakdown。
               </p>
             </div>
             <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 px-3 py-1 rounded-full font-mono">

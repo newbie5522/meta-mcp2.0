@@ -139,6 +139,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
   const [stores, setStores] = useState<StoreMetric[]>([]);
   const [unmappedSummary, setUnmappedSummary] = useState<UnmappedAccountsSummary>({ count: 0, spend: 0, message: "" });
   const [dataHealth, setDataHealth] = useState<DataHealth>({ status: "EMPTY", message: "尚未获取到健康体检报告" });
+  const [appliedDateRange, setAppliedDateRange] = useState<{ startDate: string; endDate: string } | null>(null);
   
   const [loading, setLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>("");
@@ -174,6 +175,10 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
       setStores(fetchedStores || []);
       setUnmappedSummary(unmappedAccountsSummary || { count: 0, spend: 0, message: "" });
       setDataHealth(fetchedHealth || { status: "EMPTY", message: "" });
+      setAppliedDateRange(response.data.appliedFilters || response.data.dateRange || {
+        startDate: formattedStartDate,
+        endDate: formattedEndDate
+      });
 
       // Keep reconciliation in-sync if one is selected
       if (selectedStoreForRecon) {
@@ -329,6 +334,9 @@ setAiReport(reportText || "未返回分析报告");
     return result;
   }, [stores, searchTerm, sortField, sortOrder]);
 
+  const appliedStartDate = appliedDateRange?.startDate || formattedStartDate;
+  const appliedEndDate = appliedDateRange?.endDate || formattedEndDate;
+
   return (
     <div className="space-y-6">
       
@@ -337,7 +345,7 @@ setAiReport(reportText || "未返回分析报告");
         <div className="flex items-center gap-1.5 min-w-0">
           <StoreIcon className="w-5 h-5 text-indigo-500 shrink-0" />
           <h3 className="font-bold text-slate-900 truncate">店铺经营数据一览</h3>
-          <span className="text-xs text-slate-500">| 当前统计期间：{formattedStartDate} 至 {formattedEndDate}</span>
+          <span className="text-xs text-slate-500">| 当前统计期间：{appliedStartDate} 至 {appliedEndDate}</span>
         </div>
       </div>
 
@@ -417,15 +425,15 @@ setAiReport(reportText || "未返回分析报告");
       </div>
 
       {/* 📊 Main Store Data Table */}
-      {(dataHealth.status === "EMPTY_FACTS" || dataHealth.lastFailedSync?.errorMessage) && !loading && (
+      {((dataHealth.status === "EMPTY_FACTS" || dataHealth.status === "EMPTY") || dataHealth.lastFailedSync?.errorMessage) && !loading && (
         <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-slate-800 text-xs shadow-sm">
           <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <div className="space-y-1">
             <h5 className="font-bold text-amber-900">
-              {dataHealth.status === "EMPTY_FACTS" ? "店铺已配置，但当前日期范围暂无订单事实数据" : "最近一次店铺/同步任务失败"}
+              {dataHealth.status === "EMPTY_FACTS" || dataHealth.status === "EMPTY" ? "当前日期范围暂无店铺订单数据" : "最近一次店铺/同步任务失败"}
             </h5>
             <p className="text-amber-800 leading-relaxed">
-              {dataHealth.message || "已配置店铺会继续显示在下方列表中；订单数、销售额 and AOV 在事实表为空时按 0 展示。"}
+              {dataHealth.message || "已配置店铺会继续显示在下方列表中；订单数、销售额和 AOV 在事实表为空时按 0 展示。"}
             </p>
             {dataHealth.lastFailedSync?.errorMessage && (
               <p className="text-rose-700 leading-relaxed">

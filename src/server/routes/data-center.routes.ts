@@ -56,6 +56,48 @@ function toAccountInventoryDto(account: any) {
   };
 }
 
+function isValidDateString(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) return false;
+  return dayjs(value.trim(), "YYYY-MM-DD", true).isValid();
+}
+
+function getAppliedDateRange(query: any, fallbackDays = 30) {
+  const fallbackEnd = dayjs().format("YYYY-MM-DD");
+  const fallbackStart = dayjs().subtract(fallbackDays, "day").format("YYYY-MM-DD");
+  const startStr = isValidDateString(String(query.startDate || "")) ? String(query.startDate).trim() : fallbackStart;
+  const endStr = isValidDateString(String(query.endDate || "")) ? String(query.endDate).trim() : fallbackEnd;
+
+  return {
+    startStr,
+    endStr
+  };
+}
+
+function buildAppliedFilters(input: {
+  startStr: string;
+  endStr: string;
+  storeId?: any;
+  accountId?: any;
+  selectedAccount?: any;
+  dimensionType?: any;
+}) {
+  return {
+    startDate: input.startStr,
+    endDate: input.endStr,
+    storeId: input.storeId && input.storeId !== "undefined" && input.storeId !== "null" ? input.storeId : "all",
+    accountId: input.accountId || input.selectedAccount || "all",
+    dimensionType: input.dimensionType || undefined
+  };
+}
+
+function buildDateRange(startStr: string, endStr: string) {
+  return {
+    startDate: startStr,
+    endDate: endStr
+  };
+}
+
 /**
  * GET /api/data-center/detail
  * Returns raw advertising and order details, filters list, and health metrics.
@@ -65,9 +107,9 @@ router.get("/detail", async (req, res) => {
   const { startDate, endDate, storeId, accountId, includeLegacyFallback } = req.query;
 
   try {
-    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const { startStr, endStr } = getAppliedDateRange(req.query);
     const allowLegacyFallback = includeLegacyFallback === "true";
+    const appliedFilters = buildAppliedFilters({ startStr, endStr, storeId, accountId });
 
     // 1. Fetch available filters
     let [stores, adAccounts, accountMappings] = await Promise.all([
@@ -256,12 +298,17 @@ router.get("/detail", async (req, res) => {
         isSyncActive
       },
       dataSourceExplain: {
+        dateFilterApplied: true,
+        primarySource: "FactMetaPerformance + Order",
+        noMockData: true,
         orderSource: "Order.store_local_date",
         metaSource: "FactMetaPerformance",
         mappingSource: "AccountMapping + AdAccount",
         legacyCreatedAtFallbackEnabled: allowLegacyFallback,
         legacyCreatedAtFallbackUsed: orderSummary.legacyFallbackUsed
-      }
+      },
+      appliedFilters,
+      dateRange: buildDateRange(startStr, endStr)
     });
 
   } catch (error: any) {
@@ -275,18 +322,19 @@ router.get("/detail", async (req, res) => {
  * Returns Campaign/AdSet/Ad structural hierarchy levels and performance aggregates
  */
 router.get("/structure", async (req, res) => {
-  const { selectedAccount, startDate, endDate } = req.query;
+  const { selectedAccount, accountId, startDate, endDate } = req.query;
 
   try {
-    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const { startStr, endStr } = getAppliedDateRange(req.query);
+    const targetAccountParam = selectedAccount || accountId;
+    const appliedFilters = buildAppliedFilters({ startStr, endStr, selectedAccount: targetAccountParam });
 
     // Fetch accounts list for switcher
     const accounts = await prisma.adAccount.findMany({
       select: { fb_account_id: true, fb_account_name: true }
     });
 
-    const targetAccount = selectedAccount || accounts[0]?.fb_account_id;
+    const targetAccount = targetAccountParam || accounts[0]?.fb_account_id;
 
     if (!targetAccount) {
       return res.json({
@@ -294,9 +342,18 @@ router.get("/structure", async (req, res) => {
         campaigns: [],
         adsets: [],
         ads: [],
+        structureRowsCount: 0,
+        factRowsCount: 0,
         health: {
-          status: "EMPTY",
-          missingReason: "没有可供分析的广告账户，请前往配置中心绑定 Meta 账号。"
+          status: "EMPTY_STRUCTURE",
+          missingReason: "当前账户没有广告结构数据，请先同步广告结构。"
+        },
+        appliedFilters,
+        dateRange: buildDateRange(startStr, endStr),
+        dataSourceExplain: {
+          dateFilterApplied: true,
+          primarySource: "Campaign + AdSet + Ad + FactMetaPerformance",
+          noMockData: true
         }
       });
     }
@@ -339,8 +396,10 @@ router.get("/structure", async (req, res) => {
       const roas = spend > 0 ? revenue / spend : 0;
       const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
       const cpc = clicks > 0 ? spend / clicks : 0;
+      const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
+      const cpa = purchases > 0 ? spend / purchases : 0;
 
-      return { spend, impressions, clicks, orders: purchases, revenue, roas, ctr, cpc };
+      return { spend, impressions, clicks, orders: purchases, purchases, purchaseValue: revenue, purchase_value: revenue, revenue, roas, ctr, cpc, cpm, cpa };
     };
 
     const campaignsList = rawCampaigns.map(c => ({
@@ -368,19 +427,19 @@ router.get("/structure", async (req, res) => {
       ...getAggregatedMetrics("ad", a.id)
     }));
 
-    // Data health check
-    const totalSpend = campaignsList.reduce((sum, item) => sum + item.spend, 0);
-    const hasStructure = rawCampaigns.length > 0;
-    
-    let dataStatus = "EXCELLENT";
+    const structureRowsCount = rawCampaigns.length + rawAdsets.length + rawAds.length;
+    const factRowsCount = compPerformance.length;
+    const hasStructure = structureRowsCount > 0;
+
+    let dataStatus = "OK";
     let missingReason = "";
 
     if (!hasStructure) {
-      dataStatus = "EMPTY";
-      missingReason = "该 Meta 账号未包含任何广告结构数据，可能从未启动同步任务，或该账户名下本身即为空账户。";
-    } else if (totalSpend === 0) {
-      dataStatus = "WARNING";
-      missingReason = "虽然已拉取广告系列三级树状结构，但当前日期范围内暂未捕获到任何每日成效花费数据。请在广告层级页面点击“同步广告结构与成效”，或在数据详情页点击“刷新 Meta 数据”。";
+      dataStatus = "EMPTY_STRUCTURE";
+      missingReason = "当前账户没有广告结构数据，请先同步广告结构。";
+    } else if (factRowsCount === 0) {
+      dataStatus = "STRUCTURE_WITHOUT_FACTS";
+      missingReason = "结构已同步，但当前日期范围内没有成效事实数据。请同步广告成效数据，或扩大日期范围。";
     }
 
     const lastSyncLog = await prisma.syncLog.findFirst({
@@ -393,11 +452,20 @@ router.get("/structure", async (req, res) => {
       campaigns: campaignsList,
       adsets: adsetsList,
       ads: adsList,
+      structureRowsCount,
+      factRowsCount,
       health: {
         status: dataStatus,
         missingReason,
         lastSyncTime: lastSyncLog?.finishedAt || lastSyncLog?.startedAt || null,
         lastSyncStatus: lastSyncLog?.status || "none"
+      },
+      appliedFilters: buildAppliedFilters({ startStr, endStr, selectedAccount: targetAccount }),
+      dateRange: buildDateRange(startStr, endStr),
+      dataSourceExplain: {
+        dateFilterApplied: true,
+        primarySource: "Campaign + AdSet + Ad + FactMetaPerformance",
+        noMockData: true
       }
     });
 
@@ -429,11 +497,11 @@ router.get("/audience", async (req, res) => {
   } = req.query;
 
   try {
-    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const { startStr, endStr } = getAppliedDateRange(req.query);
     const requestedDimType = String(dimensionType || "country");
     const allowedDimensionTypes = ["country", "age", "gender", "publisher_platform"];
     const currentDimType = allowedDimensionTypes.includes(requestedDimType) ? requestedDimType : "country";
+    const appliedFilters = buildAppliedFilters({ startStr, endStr, storeId, accountId, dimensionType: currentDimType });
 
     // 1. Store filtering: resolve store mapped accounts
     let filterAccountIds: string[] | null = null;
@@ -485,15 +553,19 @@ router.get("/audience", async (req, res) => {
         filters: { startDate: startStr, endDate: endStr, storeId, accountId, campaignId, adsetId, adId, dimensionType: currentDimType },
         pagination: { page: Number(page || 1), pageSize: Number(pageSize || 50), totalItems: 0, totalPages: 0 },
         dataHealth: {
-          status: "EMPTY",
+          status: "MISSING_META_BREAKDOWN",
           warnings: [],
           missing: ["该店铺未绑定任何广告账户，无法加载广告受众数据。"],
           source: "FactAudienceBreakdown"
         },
         dataSourceExplain: {
+          dateFilterApplied: true,
           primarySource: "FactAudienceBreakdown",
-          legacyUsed: false
-        }
+          legacyUsed: false,
+          noMockData: true
+        },
+        appliedFilters,
+        dateRange: buildDateRange(startStr, endStr)
       });
     }
 
@@ -674,8 +746,19 @@ router.get("/audience", async (req, res) => {
           roas: 0
         },
         dataHealth: {
-          status: "EMPTY",
-          reason: "META_AUDIENCE_BREAKDOWN_MISSING"
+          status: "MISSING_META_BREAKDOWN",
+          reason: "META_AUDIENCE_BREAKDOWN_MISSING",
+          missing: ["当前日期范围没有 Meta 受众拆分数据。请在同步中心同步受众 breakdown。"],
+          warnings: [],
+          source: "FactAudienceBreakdown"
+        },
+        appliedFilters,
+        dateRange: buildDateRange(startStr, endStr),
+        dataSourceExplain: {
+          dateFilterApplied: true,
+          primarySource: "FactAudienceBreakdown",
+          legacyUsed: false,
+          noMockData: true
         }
       });
     } else if (missing.length > 0 || warnings.length > 0) {
@@ -711,9 +794,13 @@ router.get("/audience", async (req, res) => {
         missing,
         source: "FactAudienceBreakdown"
       },
+      appliedFilters,
+      dateRange: buildDateRange(startStr, endStr),
       dataSourceExplain: {
+        dateFilterApplied: true,
         primarySource: "FactAudienceBreakdown",
-        legacyUsed: false
+        legacyUsed: false,
+        noMockData: true
       }
     });
 
@@ -948,15 +1035,15 @@ router.post("/creatives/:creativeId/analyze", async (req, res) => {
  * Returns stores analytics dashboard list
  */
 router.get("/stores", async (req, res) => {
-  const startDate = String(req.query.startDate || "");
-  const endDate = String(req.query.endDate || startDate);
+  const { startStr, endStr } = getAppliedDateRange(req.query);
   const storeId = req.query.storeId ? Number(req.query.storeId) : null;
+  const appliedFilters = buildAppliedFilters({ startStr, endStr, storeId: req.query.storeId || "all" });
 
   try {
     const ledgerWhere: any = {
       date: {
-        gte: startDate,
-        lte: endDate
+        gte: startStr,
+        lte: endStr
       }
     };
 
@@ -971,16 +1058,16 @@ router.get("/stores", async (req, res) => {
 
     await ensureDataCenterFreshness({
       reason: "api_request",
-      requestedStartDate: startDate,
-      requestedEndDate: endDate,
+      requestedStartDate: startStr,
+      requestedEndDate: endStr,
       storeId,
       mode: freshnessMode
     }).catch(err => console.warn("[DataCenterAutoRefresh] stores freshness failed:", err));
 
     const where: any = {
       date: {
-        gte: startDate,
-        lte: endDate
+        gte: startStr,
+        lte: endStr
       }
     };
 
@@ -1002,8 +1089,8 @@ router.get("/stores", async (req, res) => {
     const metaRows = await prisma.dataCenterMetaAccountDaily.findMany({
       where: {
         date: {
-          gte: startDate,
-          lte: endDate
+          gte: startStr,
+          lte: endStr
         }
       }
     });
@@ -1125,8 +1212,10 @@ router.get("/stores", async (req, res) => {
     return res.json({
       source: "DataCenterStoreDaily",
       mode: "DATACENTER_LEDGER",
-      startDate,
-      endDate,
+      startDate: startStr,
+      endDate: endStr,
+      appliedFilters,
+      dateRange: buildDateRange(startStr, endStr),
       stores: storesList,
       ordersCount: totalOrders,
       revenue: totalRevenue,
@@ -1139,8 +1228,13 @@ router.get("/stores", async (req, res) => {
       },
       dataHealth: {
         status: rows.length > 0 ? "OK" : "EMPTY",
-        message: rows.length > 0 ? "所有数据来自 DataCenter Store Daily 账目表。" : "此日期范围内暂无 DataCenter 账目记录。",
+        message: rows.length > 0 ? "所有数据来自 DataCenter Store Daily 账目表。" : "当前日期范围暂无店铺订单数据。",
         source: "DataCenterStoreDaily"
+      },
+      dataSourceExplain: {
+        dateFilterApplied: true,
+        primarySource: "DataCenterStoreDaily",
+        noMockData: true
       },
       freshness
     });
@@ -1572,17 +1666,17 @@ router.get("/max-date", async (req, res) => {
  * Formatted from fact_meta_performance
  */
 router.get("/accounts-performance", async (req, res) => {
-  const startDate = String(req.query.startDate || "");
-  const endDate = String(req.query.endDate || startDate);
+  const { startStr, endStr } = getAppliedDateRange(req.query);
   const storeIdParam = req.query.storeId ? String(req.query.storeId) : "all";
   const includeHistoricalAccounts = req.query.includeHistoricalAccounts === "true";
+  const appliedFilters = buildAppliedFilters({ startStr, endStr, storeId: storeIdParam });
 
   try {
     const ledgerCount = await prisma.dataCenterMetaAccountDaily.count({
       where: {
         date: {
-          gte: startDate,
-          lte: endDate
+          gte: startStr,
+          lte: endStr
         }
       }
     });
@@ -1592,16 +1686,16 @@ router.get("/accounts-performance", async (req, res) => {
 
     await ensureDataCenterFreshness({
       reason: "api_request",
-      requestedStartDate: startDate,
-      requestedEndDate: endDate,
+      requestedStartDate: startStr,
+      requestedEndDate: endStr,
       storeId: storeIdNum,
       mode: freshnessMode
     }).catch(err => console.warn("[DataCenterAutoRefresh] accounts freshness failed:", err));
 
     const where: any = {
       date: {
-        gte: startDate,
-        lte: endDate
+        gte: startStr,
+        lte: endStr
       }
     };
 
@@ -1776,8 +1870,10 @@ router.get("/accounts-performance", async (req, res) => {
       success: true,
       source: "DataCenterMetaAccountDaily",
       mode: "DATACENTER_LEDGER",
-      startDate,
-      endDate,
+      startDate: startStr,
+      endDate: endStr,
+      appliedFilters,
+      dateRange: buildDateRange(startStr, endStr),
       accounts: results,
       accountsInventoryCount: results.length,
       totalAdAccountsInventoryCount,
@@ -1823,7 +1919,9 @@ router.get("/accounts-performance", async (req, res) => {
         unboundSpendRate
       },
       dataSourceExplain: {
+        dateFilterApplied: true,
         primarySource: "DataCenterMetaAccountDaily",
+        noMockData: true,
         inventorySource: includeHistoricalAccounts
           ? "AdAccount + AccountMapping + DataCenterMetaAccountDaily"
           : "recentActivity90d AdAccount + active DataCenterMetaAccountDaily",
@@ -2599,10 +2697,17 @@ router.get("/creative-insights", async (req, res) => {
       pageSize,
       sortBy
     } = req.query;
+    const { startStr, endStr } = getAppliedDateRange(req.query);
+    const appliedFilters = buildAppliedFilters({
+      startStr,
+      endStr,
+      storeId: storeId || storeFilter || "all",
+      accountId: accountId || "all"
+    });
 
     const result = await getAggregatedCreativeInsights({
-      startDate: startDate as string,
-      endDate: endDate as string,
+      startDate: startStr,
+      endDate: endStr,
       accountId: accountId as string,
       storeId: (storeId || storeFilter) as string,
       campaignId: campaignId as string,
@@ -2615,7 +2720,38 @@ router.get("/creative-insights", async (req, res) => {
       sortBy: sortBy as string
     });
 
-    res.json(result);
+    const rows = Array.isArray(result.data) ? result.data : [];
+    const totalSpend = rows.reduce((sum: number, row: any) => sum + Number(row.spend || 0), 0);
+    const matchingCreatives = Number(result.total || rows.length || 0);
+    const hasCreativeStructure = Boolean(result.diagnostics?.hasAdCreativeLinks || result.diagnostics?.hasCreativeStaticInfo);
+    const hasPerformanceRows = matchingCreatives > 0 && totalSpend > 0;
+    const creativeHealth = hasPerformanceRows
+      ? {
+          status: "OK",
+          message: "素材成效数据来自 FactMetaPerformance level=ad，并关联 AdCreative / Ad。"
+        }
+      : hasCreativeStructure
+        ? {
+            status: "STRUCTURE_WITHOUT_FACTS",
+            message: "素材结构已同步，成效未同步。请同步广告级成效数据后再判断素材疲劳。"
+          }
+        : {
+            status: "EMPTY",
+            message: "当前日期范围暂无素材表现数据。"
+          };
+
+    res.json({
+      ...result,
+      appliedFilters,
+      dateRange: buildDateRange(startStr, endStr),
+      dataHealth: creativeHealth,
+      dataSourceExplain: {
+        ...(result.dataSourceExplain || {}),
+        dateFilterApplied: true,
+        primarySource: "FactMetaPerformance level=ad",
+        noMockData: true
+      }
+    });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to load creative insights", details: error.message });
   }

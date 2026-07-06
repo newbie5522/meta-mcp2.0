@@ -128,6 +128,7 @@ export function CreativeIntelligenceDashboard({
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [creativeDataHealth, setCreativeDataHealth] = useState<any>(null);
 
   const handleSyncCreatives = async () => {
     setSyncing(true);
@@ -277,12 +278,17 @@ export function CreativeIntelligenceDashboard({
       setLoading(true);
       const startStr = startDate ? format(startDate, "yyyy-MM-dd") : format(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), "yyyy-MM-dd");
       const endStr = endDate ? format(endDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
+      const selectedStoreId = localStoreFilter === "all"
+        ? "all"
+        : (storesList.find(store => store.name === localStoreFilter || String(store.id) === localStoreFilter)?.id || "all");
 
       const [resGrouped, resStores] = await Promise.all([
         axios.get("/api/data-center/creative-insights", {
           params: {
             startDate: startStr,
             endDate: endStr,
+            accountId: selectedAccountFilter,
+            storeId: selectedStoreId,
             storeFilter: localStoreFilter,
             pageSize: 1000,
             includeZeroSpend: true
@@ -298,6 +304,7 @@ export function CreativeIntelligenceDashboard({
 
       setCreatives(formattedGrouped);
       setDiagnostics(resGrouped.data?.diagnostics || null);
+      setCreativeDataHealth(resGrouped.data?.dataHealth || null);
 
 
       const storesPayload = resStores.data?.stores || resStores.data?.data || resStores.data || [];
@@ -310,6 +317,7 @@ export function CreativeIntelligenceDashboard({
     } catch (err: any) {
       toast.error("加载素材分析数据失败");
       setCreatives([]);
+      setCreativeDataHealth(null);
     } finally {
       setLoading(false);
     }
@@ -320,7 +328,7 @@ export function CreativeIntelligenceDashboard({
 
   useEffect(() => {
     fetchCreatives();
-  }, [startStrKey, endStrKey, localStoreFilter]);
+  }, [startStrKey, endStrKey, localStoreFilter, selectedAccountFilter]);
 
   // Load cached or trigger canonical rule-based performance analysis report
   const handleTriggerAiAnalysis = async (creativeId: string) => {
@@ -669,6 +677,16 @@ export function CreativeIntelligenceDashboard({
   const avgROAS = totalSpend > 0 ? totalRevenue / totalSpend : 0;
   const avgCTR = filteredCreatives.length > 0 ? filteredCreatives.reduce((sum, c) => sum + (c.ctr || 0), 0) / filteredCreatives.length : 0;
   const avgCPM = filteredCreatives.length > 0 ? filteredCreatives.reduce((sum, c) => sum + (c.cpm || 0), 0) / filteredCreatives.length : 0;
+  const hasCreativePerformance = totalSpend > 0 || filteredCreatives.some(c => (c.impressions || 0) > 0 || ((c as any).clicks || 0) > 0 || (c.purchases || 0) > 0);
+  const hasCreativeStructure = creatives.length > 0 || diagnostics?.hasAdCreativeLinks || diagnostics?.hasCreativeStaticInfo;
+  const creativeHealthStatus = creativeDataHealth?.status || (hasCreativePerformance ? "OK" : hasCreativeStructure ? "STRUCTURE_WITHOUT_FACTS" : "EMPTY");
+  const creativeHealthMessage = creativeDataHealth?.message || (
+    creativeHealthStatus === "OK"
+      ? "素材成效数据来自 FactMetaPerformance level=ad，并关联 AdCreative / Ad。"
+      : creativeHealthStatus === "STRUCTURE_WITHOUT_FACTS"
+        ? "素材结构已同步，成效未同步。请同步广告级成效数据后再判断素材疲劳。"
+        : "当前日期范围暂无素材表现数据。"
+  );
 
   const handleExport = () => {
     const exportData = filteredCreatives.map(c => {
@@ -801,10 +819,12 @@ export function CreativeIntelligenceDashboard({
       <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 flex flex-wrap items-center justify-between gap-4 text-xs shadow-sm">
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-md font-semibold font-mono text-[11px]">
-            <span>数据源: Meta AdCreative 媒体库 + Performance API 分离聚合</span>
+            <span>数据源: FactMetaPerformance level=ad + AdCreative / Ad</span>
           </div>
           <p className="text-slate-500 font-medium">
-            数据健康度：<span className="text-emerald-600 font-bold">健康 (100% 账户素材指标及图片缩略缓存均已增量拉取就绪)</span>
+            <span className={creativeHealthStatus === "OK" ? "text-emerald-700 font-bold" : "text-amber-700 font-bold"}>
+              {creativeHealthMessage}
+            </span>
           </p>
         </div>
         <div className="flex items-center gap-4 text-slate-400">
@@ -814,24 +834,15 @@ export function CreativeIntelligenceDashboard({
         </div>
       </div>
 
-      {/* Diagnostics Health Warnings Alert */}
-      {diagnostics && (diagnostics.noAdLevelInsightsWarning || diagnostics.adCreativeNotLinkedWarning || diagnostics.creativeStaticMissingWarning) && (
+      {creativeHealthStatus !== "OK" && (
         <div className="bg-amber-50 border border-amber-200 text-amber-950 rounded-xl p-4 space-y-2 shadow-sm animate-in fade-in duration-200">
           <div className="flex items-center gap-2 font-bold text-amber-800 text-xs">
             <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-            <span>素材洞察诊断状态：请参照以下原因进行排查与引导</span>
+            <span>{creativeHealthStatus === "STRUCTURE_WITHOUT_FACTS" ? "素材结构已同步，成效未同步" : "当前日期范围暂无素材表现数据"}</span>
           </div>
-          <ul className="list-disc pl-5 space-y-1 text-xs text-amber-800 font-medium leading-relaxed">
-            {diagnostics.noAdLevelInsightsWarning && (
-              <li>素材表现需要 Ad Level Insights，请先同步广告级成效。</li>
-            )}
-            {diagnostics.adCreativeNotLinkedWarning && (
-              <li>Ad 与 Creative 未关联，请先同步广告结构与素材。</li>
-            )}
-            {diagnostics.creativeStaticMissingWarning && (
-              <li>Creative 静态信息未同步，但该 Ad 有真实成效。</li>
-            )}
-          </ul>
+          <p className="text-xs text-amber-800 font-medium leading-relaxed">
+            {creativeHealthMessage}
+          </p>
         </div>
       )}
 
@@ -905,16 +916,16 @@ export function CreativeIntelligenceDashboard({
             disabled={syncing}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
-            同步创意数据
+            同步数据
           </Button>
           <Button
             onClick={fetchCreatives}
             variant="outline"
-            size="icon"
-            className="w-9 h-9 border-gray-200 text-gray-600 hover:text-gray-900 shrink-0"
-            title="刷新数据"
+            className="h-9 px-3.5 text-xs font-semibold border-gray-200 text-gray-600 hover:text-gray-900 shrink-0"
+            title="刷新页面数据"
           >
-            <RefreshCcw className="w-4 h-4" />
+            <RefreshCcw className="w-3.5 h-3.5 mr-1.5" />
+            刷新页面数据
           </Button>
           <Button
             variant="outline"

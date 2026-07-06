@@ -241,7 +241,11 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const accountsWithFactsCount = data.accountsWithFactsCount ?? data.accounts?.filter(a => a.lastSyncedAt || (a.impressions || 0) > 0 || (a.clicks || 0) > 0).length ?? 0;
   const withSpendCount = data.accountsWithSpendCount ?? data.summary?.spendAccounts ?? data.accounts?.filter(a => (a.spend || 0) > 0).length ?? 0;
   const unboundWithSpendCount = data.accounts?.filter(a => !a.isBound && (a.spend || 0) > 0).length || 0;
-  const hasAccountInventoryWithoutFacts = allAccountsCount > 0 && (data.metaFactsCount ?? 0) === 0;
+  const factRowsCount = data.metaReconciliation?.canonicalFactRows ?? data.metaFactsCount ?? 0;
+  const hasAccountInventoryWithoutFacts = allAccountsCount > 0 && factRowsCount === 0;
+  const appliedStartDate = data.appliedFilters?.startDate || format(startDate, "yyyy-MM-dd");
+  const appliedEndDate = data.appliedFilters?.endDate || format(endDate, "yyyy-MM-dd");
+  const displayScopeText = accountDisplayScope === "historical_all" ? "全部历史账户" : "当前日期范围内活跃账户";
 
   // Formatting date safely
   const formatTimeStr = (rawVal: any) => {
@@ -294,8 +298,12 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                 "ml-1 font-mono",
                 accountDisplayScope === "historical_all" ? "text-purple-700" : "text-emerald-700"
               )}>
-                {accountDisplayScope === "historical_all" ? "全部历史账户" : "近90天活跃账户"}
+                {displayScopeText}
               </strong>
+            </span>
+            <span className="mx-2 text-slate-300">|</span>
+            <span>
+              当前统计期间: <strong className="text-slate-800 font-mono">{appliedStartDate}</strong> 至 <strong className="text-slate-800 font-mono">{appliedEndDate}</strong>
             </span>
           </div>
           {data.metaFreshness?.latestFactDate && (
@@ -314,7 +322,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
             disabled={loading || syncing}
           >
             <RefreshCcw className={cn("w-3 h-3 text-slate-500", loading && "animate-spin")} />
-            刷新数据
+            刷新页面数据
           </Button>
 
           <Button
@@ -325,7 +333,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
             disabled={loading || syncing}
           >
             <RefreshCcw className={cn("w-3 h-3", syncing && "animate-spin")} />
-            刷新 Meta 数据
+            同步数据
           </Button>
         </div>
       </div>
@@ -347,22 +355,14 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
         </div>
       )}
 
-      {/* Constant required prompt of mapping and ROAS constraint */}
-      <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-slate-800 text-xs shadow-sm">
-        <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-        <div className="text-left">
-          <span>⚠️ <strong>未绑定店铺但有消耗的广告账户不会计入任何店铺 ROAS，请优先完成映射。</strong></span>
-        </div>
-      </div>
-
       {/* Dynamic Critical warning panel of mSpend unmapped accounts */}
       {unboundWithSpendCount > 0 && (
         <div className="flex items-start gap-3 p-4 bg-rose-50 border border-rose-200 rounded-xl text-slate-800 text-xs shadow-sm">
           <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
           <div className="space-y-1 text-left">
-            <h5 className="font-bold text-rose-900">映射预警：检测到有未绑定店铺且有消耗的广告账户</h5>
+            <h5 className="font-bold text-rose-900">数据健康提醒：存在未绑定且有消耗账户</h5>
             <p className="text-rose-700 leading-relaxed">
-              当前有 <strong className="font-mono text-red-700">{unboundWithSpendCount}</strong> 个未映射的有花费账户，请立即完成该等账户与对应系统店铺的关联，避免该部分花费偏移不计入店铺合并 ROAS 面板。
+              当前有 <strong className="font-mono text-red-700">{unboundWithSpendCount}</strong> 个未绑定店铺但有消耗的账户。该问题只影响店铺级 ROAS 归因，不影响账户级 Meta 表现查看。请在数据健康检测中处理映射关系。
             </p>
           </div>
         </div>
@@ -380,12 +380,12 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
               {hasAccountInventoryWithoutFacts ? (
                 <>
                   配置中心已保存 <strong className="font-mono">{allAccountsCount}</strong> 个 Meta 广告账户，但所选日期范围
-                  (<strong>{format(startDate, "yyyy-MM-dd")}</strong> 至 <strong>{format(endDate, "yyyy-MM-dd")}</strong>)
+                  (<strong>{appliedStartDate}</strong> 至 <strong>{appliedEndDate}</strong>)
                   暂无 FactMetaPerformance 事实记录。下方仍展示账户库存，花费、展示、点击、购买和 ROAS 按 0 展示。
                 </>
               ) : (
                 <>
-                  系统在选定的日期范围内 (<strong>{format(startDate, "yyyy-MM-dd")}</strong> 至 <strong>{format(endDate, "yyyy-MM-dd")}</strong>)
+                  系统在选定的日期范围内 (<strong>{appliedStartDate}</strong> 至 <strong>{appliedEndDate}</strong>)
                   未发现具有广告花费的活跃账户。请前往“<strong>数据同步中心</strong>”手动对 Meta 资产成效数据执行一次强制提取与加载。
                 </>
               )}
