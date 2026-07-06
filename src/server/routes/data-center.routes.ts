@@ -817,11 +817,11 @@ router.get("/audience", async (req, res) => {
  * Order country metrics are unavailable when Order schema lacks country fields.
  */
 router.get("/countries", async (req, res) => {
-  const { startDate, endDate, storeId, minSpend, minOrders, includeUnmappedSpend } = req.query;
+  const { storeId, minSpend, minOrders, includeUnmappedSpend } = req.query;
 
   try {
-    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const { startStr, endStr } = getAppliedDateRange(req.query);
+    const appliedFilters = buildAppliedFilters({ startStr, endStr, storeId });
 
     const minSRaw = minSpend ? parseFloat(String(minSpend)) : 0;
     const minORaw = minOrders ? parseInt(String(minOrders), 10) : 0;
@@ -845,7 +845,17 @@ router.get("/countries", async (req, res) => {
       incUnmapped
     );
 
-    res.json(result);
+    res.json({
+      ...result,
+      appliedFilters,
+      dateRange: buildDateRange(startStr, endStr),
+      dataSourceExplain: {
+        ...(result.dataSourceExplain || {}),
+        dateFilterApplied: true,
+        primarySource: result.dataSourceExplain?.primarySource || "FactAudienceBreakdown + Order",
+        noMockData: true
+      }
+    });
   } catch (error: any) {
     console.error("[Data Center API] Countries error:", error);
     res.status(500).json({
@@ -861,16 +871,9 @@ router.get("/countries", async (req, res) => {
  * Source: Order + Product metadata.
  */
 router.get("/products", async (req, res) => {
-  const { startDate, endDate } = req.query;
-
   try {
-    const startStr = startDate
-      ? String(startDate)
-      : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-
-    const endStr = endDate
-      ? String(endDate)
-      : dayjs().format("YYYY-MM-DD");
+    const { startStr, endStr } = getAppliedDateRange(req.query);
+    const appliedFilters = buildAppliedFilters({ startStr, endStr });
 
     const products = await getProductIntelligence(startStr, endStr);
 
@@ -883,9 +886,13 @@ router.get("/products", async (req, res) => {
       data: products,
       products,
       count: products.length,
+      appliedFilters,
+      dateRange: buildDateRange(startStr, endStr),
       dataSourceExplain: {
         primarySource: "Order",
-        metadataSource: "Product"
+        metadataSource: "Product",
+        dateFilterApplied: true,
+        noMockData: true
       }
     });
   } catch (error: any) {
@@ -1943,10 +1950,10 @@ router.get("/accounts-performance", async (req, res) => {
  * Returns account hierarchy list aggregated from fact_meta_performance level='account'
  */
 router.get("/ad-hierarchy/accounts", async (req, res) => {
-  const { startDate, endDate, storeId, includeZeroSpend } = req.query;
+  const { storeId, includeZeroSpend } = req.query;
   try {
-    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const { startStr, endStr } = getAppliedDateRange(req.query);
+    const appliedFilters = buildAppliedFilters({ startStr, endStr, storeId });
     const showAll = includeZeroSpend === "true";
 
     // 1. Fetch performance rows from fact_meta_performance
@@ -2126,6 +2133,13 @@ router.get("/ad-hierarchy/accounts", async (req, res) => {
           endDate: endStr
         },
         accountId: ""
+      },
+      appliedFilters,
+      dateRange: buildDateRange(startStr, endStr),
+      dataSourceExplain: {
+        dateFilterApplied: true,
+        primarySource: "FactMetaPerformance + AdAccount + AccountMapping",
+        noMockData: true
       }
     });
   } catch (error: any) {
@@ -2138,13 +2152,13 @@ router.get("/ad-hierarchy/accounts", async (req, res) => {
  * Returns campaign level hierarchy aggregated from fact_meta_performance level='campaign'
  */
 router.get("/ad-hierarchy/campaigns", async (req, res) => {
-  const { accountId, startDate, endDate, includeZeroSpend } = req.query;
+  const { accountId, includeZeroSpend } = req.query;
   try {
     if (!accountId) {
       return res.status(400).json({ error: "Missing accountId parameter" });
     }
-    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const { startStr, endStr } = getAppliedDateRange(req.query);
+    const appliedFilters = buildAppliedFilters({ startStr, endStr, accountId });
     const showAll = includeZeroSpend === "true";
     const normAccountId = normalizeMetaAccountId(String(accountId));
     const numericAccountId = normAccountId.replace(/^act_/, "");
@@ -2278,6 +2292,13 @@ router.get("/ad-hierarchy/campaigns", async (req, res) => {
           endDate: endStr
         },
         accountId: normAccountId
+      },
+      appliedFilters,
+      dateRange: buildDateRange(startStr, endStr),
+      dataSourceExplain: {
+        dateFilterApplied: true,
+        primarySource: "FactMetaPerformance level=campaign + Campaign",
+        noMockData: true
       }
     });
   } catch (error: any) {
@@ -2290,13 +2311,13 @@ router.get("/ad-hierarchy/campaigns", async (req, res) => {
  * Returns adset level hierarchy aggregated from fact_meta_performance level='adset'
  */
 router.get("/ad-hierarchy/adsets", async (req, res) => {
-  const { accountId, campaignId, startDate, endDate, includeZeroSpend } = req.query;
+  const { accountId, campaignId, includeZeroSpend } = req.query;
   try {
     if (!accountId || !campaignId) {
       return res.status(400).json({ error: "Missing accountId or campaignId parameter" });
     }
-    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const { startStr, endStr } = getAppliedDateRange(req.query);
+    const appliedFilters = buildAppliedFilters({ startStr, endStr, accountId });
     const showAll = includeZeroSpend === "true";
     const normAccountId = normalizeMetaAccountId(String(accountId));
     const numericAccountId = normAccountId.replace(/^act_/, "");
@@ -2435,6 +2456,13 @@ router.get("/ad-hierarchy/adsets", async (req, res) => {
           endDate: endStr
         },
         accountId: normAccountId
+      },
+      appliedFilters,
+      dateRange: buildDateRange(startStr, endStr),
+      dataSourceExplain: {
+        dateFilterApplied: true,
+        primarySource: "FactMetaPerformance level=adset + AdSet",
+        noMockData: true
       }
     });
   } catch (error: any) {
@@ -2447,13 +2475,13 @@ router.get("/ad-hierarchy/adsets", async (req, res) => {
  * Returns ad level hierarchy aggregated from fact_meta_performance level='ad'
  */
 router.get("/ad-hierarchy/ads", async (req, res) => {
-  const { accountId, adsetId, startDate, endDate, includeZeroSpend } = req.query;
+  const { accountId, adsetId, includeZeroSpend } = req.query;
   try {
     if (!accountId || !adsetId) {
       return res.status(400).json({ error: "Missing accountId or adsetId parameter" });
     }
-    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
-    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const { startStr, endStr } = getAppliedDateRange(req.query);
+    const appliedFilters = buildAppliedFilters({ startStr, endStr, accountId });
     const showAll = includeZeroSpend === "true";
     const normAccountId = normalizeMetaAccountId(String(accountId));
     const numericAccountId = normAccountId.replace(/^act_/, "");
@@ -2601,6 +2629,13 @@ router.get("/ad-hierarchy/ads", async (req, res) => {
           endDate: endStr
         },
         accountId: normAccountId
+      },
+      appliedFilters,
+      dateRange: buildDateRange(startStr, endStr),
+      dataSourceExplain: {
+        dateFilterApplied: true,
+        primarySource: "FactMetaPerformance level=ad + Ad",
+        noMockData: true
       }
     });
   } catch (error: any) {
@@ -2748,7 +2783,7 @@ router.get("/creative-insights", async (req, res) => {
       dataSourceExplain: {
         ...(result.dataSourceExplain || {}),
         dateFilterApplied: true,
-        primarySource: "FactMetaPerformance level=ad",
+        primarySource: "FactMetaPerformance level=ad + AdCreative + Ad",
         noMockData: true
       }
     });
