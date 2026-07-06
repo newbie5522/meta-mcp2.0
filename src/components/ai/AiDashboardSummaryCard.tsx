@@ -33,7 +33,7 @@ export function AiDashboardSummaryCard({
       <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
         <Sparkles className="w-5 h-5 text-indigo-500" />
         <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-          AI 老板摘要 (Executive Dashboard Analyzer)
+          AI摘要
         </h3>
       </div>
 
@@ -85,7 +85,7 @@ export function AiDashboardSummaryCard({
         <div className="space-y-4">
           <div className="space-y-1">
             <p className="text-xs text-slate-500 leading-relaxed">
-              基于当前诊断问题生成管理层摘要，提供高级诊断指标综合提炼，辅助快速发现核心运营风险因素。
+              基于当前日期范围内的活跃账户、活跃店铺和核心诊断卡片生成摘要。
             </p>
             {disabled && (
               <p className="text-[10px] text-amber-600 font-medium">
@@ -106,7 +106,7 @@ export function AiDashboardSummaryCard({
               }`}
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>生成 AI 老板摘要</span>
+            <span>生成 AI摘要</span>
           </button>
         </div>
       )}
