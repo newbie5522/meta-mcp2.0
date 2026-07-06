@@ -408,6 +408,45 @@ async function enhanceCardsWithAi(cards: AiWorkbenchCard[]): Promise<AiWorkbench
   return enhanced;
 }
 
+async function enhanceManualCardWithAi(card: AiWorkbenchCard, question?: string): Promise<AiWorkbenchCard> {
+  if (isAiProviderRuntimeDisabled()) {
+    return card;
+  }
+
+  const completion = await completeWithConfiguredAi({
+    purpose: "analysis",
+    system: [
+      "你是跨境电商 Meta 广告投放诊断助手。请结合用户追问和卡片证据输出运营建议。",
+      "必须只返回 JSON：",
+      '{"judgment":"","action":"","budgetAction":"","observationWindow":"","riskControl":"","nextCheck":""}'
+    ].join("\n"),
+    user: JSON.stringify({
+      card,
+      question: question || "",
+      evidence: card.evidence,
+      recommendation: card.recommendation
+    })
+  });
+
+  if (!completion) {
+    return card;
+  }
+
+  const parsed = parseAiRecommendation(completion.text);
+  if (!parsed?.judgment || !parsed.action || !parsed.observationWindow || !parsed.riskControl || !parsed.nextCheck) {
+    return card;
+  }
+
+  return {
+    ...card,
+    recommendation: {
+      ...card.recommendation,
+      ...parsed
+    },
+    aiMode: "ai_model"
+  };
+}
+
 async function getAccountRows(params: AiWorkbenchOverviewParams): Promise<any[]> {
   const where: any = {
     level: "account",
@@ -627,11 +666,19 @@ async function buildManualAccountCard(params: AiManualAnalysisParams): Promise<A
   });
 
   if (metrics.spend > 50 && metrics.roas < 1.2) {
-    return { ...makeAccountCard("manual_account_roas_low", params.entityId, account?.fb_account_name || undefined, metrics, params.startDate, params.endDate), source: "manual" };
+    return {
+      ...makeAccountCard("account_roas_low", params.entityId, account?.fb_account_name || undefined, metrics, params.startDate, params.endDate),
+      source: "manual",
+      analysisType: params.analysisType
+    };
   }
 
   if (metrics.spend > 30 && metrics.purchases >= 2 && metrics.roas >= 1.6) {
-    return { ...makeAccountCard("manual_account_scale_candidate", params.entityId, account?.fb_account_name || undefined, metrics, params.startDate, params.endDate), source: "manual" };
+    return {
+      ...makeAccountCard("account_scale_candidate", params.entityId, account?.fb_account_name || undefined, metrics, params.startDate, params.endDate),
+      source: "manual",
+      analysisType: params.analysisType
+    };
   }
 
   return {
@@ -825,7 +872,7 @@ export async function runManualAiAnalysis(params: AiManualAnalysisParams): Promi
     card = await buildManualSystemCard(params);
   }
 
-  const [enhancedCard] = await enhanceCardsWithAi([card]);
+  const enhancedCard = await enhanceManualCardWithAi(card, params.question);
   const aiEnabled = !isAiProviderRuntimeDisabled();
 
   return {
