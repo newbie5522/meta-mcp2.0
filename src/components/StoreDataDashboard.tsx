@@ -347,6 +347,16 @@ setAiReport(reportText || "未返回分析报告");
           <h3 className="font-bold text-slate-900 truncate">店铺经营数据一览</h3>
           <span className="text-xs text-slate-500">| 当前统计期间：{appliedStartDate} 至 {appliedEndDate}</span>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-9 px-3 border-slate-200 text-slate-700 bg-white hover:bg-slate-50"
+          onClick={() => fetchStoresData()}
+          disabled={loading}
+        >
+          <RefreshCw className={cn("w-4 h-4 mr-2", loading && "animate-spin")} />
+          刷新页面数据
+        </Button>
       </div>
 
       {/* 📊 KPI summary banner */}

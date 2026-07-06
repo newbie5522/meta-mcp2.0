@@ -330,10 +330,11 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         days: 30
       });
 
-      toast.success("同步数据任务已触发，稍后自动刷新视图。", { id: tId });
-      setTimeout(fetchData, 3000);
+      toast.success("同步数据任务已完成，正在刷新页面数据。", { id: tId });
+      await fetchData();
     } catch (err: any) {
-      toast.error("同步数据失败: " + (err.response?.data?.message || err.message), { id: tId });
+      const data = err.response?.data;
+      toast.error("同步数据失败: " + (data?.message || data?.details || data?.error || err.message), { id: tId });
     }
   };
 

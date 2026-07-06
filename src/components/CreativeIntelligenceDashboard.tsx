@@ -132,24 +132,35 @@ export function CreativeIntelligenceDashboard({
 
   const handleSyncCreatives = async () => {
     setSyncing(true);
-    const syncToast = toast.loading("正在分离同步 Meta 创意素材数据...");
+    const syncToast = toast.loading("正在同步数据...");
     try {
       const startStr = startDate ? format(startDate, "yyyy-MM-dd") : format(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), "yyyy-MM-dd");
       const endStr = endDate ? format(endDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
+      const selectedStoreId = localStoreFilter === "all"
+        ? "all"
+        : (storesList.find(store => store.name === localStoreFilter || String(store.id) === localStoreFilter)?.id || "all");
 
-     const response = await axios.post("/api/sync/trigger", {
-       taskType: "sync_meta_creatives",
-       startDate: startStr,
-       endDate: endStr,
-       days: 30
-     });
-      toast.success(response.data.message || "创意素材数据同步成功！", {
+      const payload: Record<string, any> = {
+        taskType: "sync_meta_creatives",
+        startDate: startStr,
+        endDate: endStr,
+        days: 30
+      };
+      if (selectedAccountFilter !== "all") {
+        payload.accountId = selectedAccountFilter;
+      }
+      if (selectedStoreId !== "all") {
+        payload.storeId = selectedStoreId;
+      }
+
+      const response = await axios.post("/api/sync/trigger", payload);
+      toast.success(response.data.message || "同步数据已完成，正在刷新页面数据。", {
         id: syncToast,
       });
-      fetchCreatives();
+      await fetchCreatives();
     } catch (err: any) {
-      const respErr = err.response?.data?.error;
-      const errMsg = typeof respErr === 'string' ? respErr : (respErr?.message || "同步创意数据失败");
+      const data = err.response?.data;
+      const errMsg = data?.message || data?.details || data?.error || err.message || "同步数据失败";
       toast.error(errMsg, { id: syncToast });
     } finally {
       setSyncing(false);

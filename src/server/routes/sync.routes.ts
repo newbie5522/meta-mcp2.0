@@ -240,8 +240,8 @@ router.post("/sync/trigger", async (req, res) => {
   if (!validTaskTypes.includes(taskType)) {
     return res.status(400).json({
       success: false,
-      error: "INVALID_TASK_TYPE",
-      message: `Invalid taskType: ${taskType}`,
+      error: "UNSUPPORTED_SYNC_TASK",
+      message: `Unsupported sync task: ${taskType}`,
       validTypes: validTaskTypes
     });
   }
@@ -610,7 +610,7 @@ router.post("/sync/trigger", async (req, res) => {
 
     return res.status(400).json({
       success: false,
-      error: "UNSUPPORTED_TASK_TYPE",
+      error: "UNSUPPORTED_SYNC_TASK",
       message: `Unsupported taskType: ${taskType}`
     });
 
