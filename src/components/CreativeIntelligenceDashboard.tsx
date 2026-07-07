@@ -47,6 +47,7 @@ import * as XLSX from "xlsx";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import axios from "axios";
+import { MetaAccountDisplay, cleanAccountId, metaAccountOptionLabel } from "./common/MetaAccountDisplay";
 import { 
   ResponsiveContainer, 
   LineChart, 
@@ -1068,7 +1069,7 @@ export function CreativeIntelligenceDashboard({
                   >
                     <option value="all">所有账户</option>
                     {availableAccounts.map(id => (
-                      <option key={id} value={id}>{id}</option>
+                      <option key={id} value={id}>{metaAccountOptionLabel(null, id)}</option>
                     ))}
                   </select>
                 </div>
@@ -1186,7 +1187,11 @@ export function CreativeIntelligenceDashboard({
                               <div className="space-y-1 font-mono text-[10px]">
                                 <div className="flex items-center gap-1.5">
                                   <span className="px-1 py-0.2 text-[8px] font-extrabold bg-slate-100 text-slate-500 rounded border border-slate-200">账户</span>
-                                  <span className="text-slate-600 font-medium">{c.accountId || "N/A"}</span>
+                                  <MetaAccountDisplay
+                                    accountId={c.accountId}
+                                    nameClassName="text-slate-600 font-medium truncate"
+                                    idClassName="text-[10px] text-slate-500 font-mono truncate"
+                                  />
                                 </div>
                                 <div className="flex items-center gap-1.5">
                                   <span className="px-1 py-0.2 text-[8px] font-extrabold bg-blue-50 text-blue-600 rounded border border-blue-100">组ID</span>
@@ -1289,7 +1294,7 @@ export function CreativeIntelligenceDashboard({
               <div className="flex items-center gap-3 text-xs leading-relaxed">
                 <Info className="w-4 h-4 text-meta-blue shrink-0 animate-pulse" />
                 <p className="text-slate-600">
-                  此报表实时呈递全级别对准关联，包括 <b>广告账户 ID</b>、<b>广告组 ID</b>、<b>广告 ID</b> 及 <b>素材 ID (Creative ID)</b> 和转化数据。全表支持横向滑动。
+                  此报表实时呈递全级别对准关联，包括 <b>广告账户</b>、<b>广告组 ID</b>、<b>广告 ID</b> 及 <b>素材 ID (Creative ID)</b> 和转化数据。全表支持横向滑动。
                 </p>
               </div>
               <div className="text-xs font-semibold text-slate-500">
@@ -1315,7 +1320,7 @@ export function CreativeIntelligenceDashboard({
                           onClick={() => handleMetricsSort("accountId")}
                           className="text-xs font-bold text-slate-700 h-11 whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-all"
                         >
-                          广告账户 ID (Account ID) {renderSortIcon("accountId", metricsSortField, metricsSortOrder)}
+                          广告账户 {renderSortIcon("accountId", metricsSortField, metricsSortOrder)}
                         </TableHead>
                         <TableHead 
                           onClick={() => handleMetricsSort("adsetId")}
@@ -1391,9 +1396,13 @@ export function CreativeIntelligenceDashboard({
                         const singlePurchaseCost = c.purchases > 0 ? (c.spend / c.purchases) : 0;
                         const row = (
                           <TableRow key={c.id} className="hover:bg-slate-50/50 align-middle">
-                            {/* 1. 广告账户 ID */}
-                            <TableCell className="py-3 font-mono text-[11px] text-slate-600 font-medium whitespace-nowrap">
-                              {c.accountId || "N/A"}
+                            {/* 1. 广告账户 */}
+                            <TableCell className="py-3 whitespace-nowrap">
+                              <MetaAccountDisplay
+                                accountId={c.accountId}
+                                nameClassName="text-[11px] font-semibold text-slate-700 truncate"
+                                idClassName="text-[10px] text-slate-500 font-mono truncate"
+                              />
                             </TableCell>
                             {/* 2. 广告组 ID */}
                             <TableCell className="py-3 font-mono text-[11px] text-slate-600 font-medium whitespace-nowrap">
@@ -1707,8 +1716,13 @@ export function CreativeIntelligenceDashboard({
                 <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-none mb-1">链式归因路径 (ATTRIBUTION PATH)</p>
                 <div className="space-y-1.5 text-xs font-mono">
                   <div className="bg-white px-3 py-2 rounded border border-slate-100 flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-semibold text-slate-400">广告账户 ID:</span>
-                    <span className="font-bold text-slate-850 select-all">{selectedPreviewCreative.accountId || "N/A"}</span>
+                    <span className="text-[10px] font-semibold text-slate-400">广告账户:</span>
+                    <MetaAccountDisplay
+                      accountId={selectedPreviewCreative.accountId}
+                      className="text-right min-w-0"
+                      nameClassName="font-bold text-slate-850 truncate"
+                      idClassName="text-[10px] text-slate-500 font-mono truncate select-all"
+                    />
                   </div>
                   <div className="bg-white px-3 py-2 rounded border border-slate-100 flex items-center justify-between gap-2">
                     <span className="text-[10px] font-semibold text-slate-400">广告组 ID:</span>

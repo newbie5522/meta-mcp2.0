@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { MetaAccountDisplay } from "./common/MetaAccountDisplay";
 
 // Types matching API structure
 interface StoreMetric {
@@ -475,16 +476,21 @@ setAiReport(reportText || "未返回分析报告");
               <table className="w-full text-left border-collapse text-[11px]">
                 <thead>
                   <tr className="border-b border-rose-100 text-slate-500 font-semibold">
-                    <th className="py-1 px-2">账户名称 (Account Name)</th>
-                    <th className="py-1 px-2">账户 ID (Account ID)</th>
+                    <th className="py-1 px-2">广告账户</th>
                     <th className="py-1 px-2 text-right">消耗 (Spend)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-rose-50">
                   {unmappedSummary.accounts.map((acc) => (
                     <tr key={acc.accountId} className="hover:bg-rose-50/50">
-                      <td className="py-1 px-2 text-slate-700 font-medium">{acc.name}</td>
-                      <td className="py-1 px-2 font-mono text-slate-500">{acc.accountId}</td>
+                      <td className="py-1 px-2">
+                        <MetaAccountDisplay
+                          name={acc.name}
+                          accountId={acc.accountId}
+                          nameClassName="text-slate-700 font-medium truncate"
+                          idClassName="text-[10px] text-slate-500 font-mono truncate"
+                        />
+                      </td>
                       <td className="py-1 px-2 text-right font-mono text-rose-600 font-bold">
                         ${acc.spend.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </td>

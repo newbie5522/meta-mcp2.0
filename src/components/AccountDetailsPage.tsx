@@ -43,6 +43,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { HierarchyFilter } from "@/components/HierarchyFilter";
+import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountDisplay";
 
 interface AccountDetailsPageProps {
   onLogout: () => void;
@@ -526,8 +527,8 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
           )
         : hierarchy.ads;
 
-  const currentAccountName =
-    accounts.find((a) => a.accountId === accountId)?.accountName || accountId;
+  const currentAccount = accounts.find((a) => a.accountId === accountId);
+  const currentAccountName = currentAccount?.accountName || accountId;
 
   return (
     <div className="min-h-screen bg-[#f3f4f6]">
@@ -606,8 +607,14 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                 open={accountSelectorOpen}
                 onOpenChange={setAccountSelectorOpen}
               >
-                <PopoverTrigger className="px-3 py-1.5 bg-white border border-gray-300 rounded-md text-[13px] font-medium text-[#1c2b33] hover:bg-gray-50 hover:border-meta-blue/50 transition-all cursor-pointer flex items-center gap-1 min-w-[150px] max-w-[240px] shadow-sm">
-                  <span className="truncate">{currentAccountName}</span>
+                <PopoverTrigger className="px-3 py-1.5 bg-white border border-gray-300 rounded-md text-[13px] font-medium text-[#1c2b33] hover:bg-gray-50 hover:border-meta-blue/50 transition-all cursor-pointer flex items-center gap-2 min-w-[180px] max-w-[280px] shadow-sm">
+                  <MetaAccountDisplay
+                    name={currentAccountName}
+                    accountId={accountId}
+                    className="min-w-0 flex-1 text-left"
+                    nameClassName="text-[13px] font-semibold text-slate-900 truncate"
+                    idClassName="text-[10px] text-slate-500 font-mono truncate"
+                  />
                   <ChevronsUpDown className="w-3 h-3 text-gray-400 shrink-0" />
                 </PopoverTrigger>
                 <PopoverContent className="w-[300px] p-0" align="start">
@@ -628,10 +635,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                         {accounts
                           .filter(
                             (a) =>
-                              (a.accountName || "")
-                                .toLowerCase()
-                                .includes((accountSearch || "").toLowerCase()) ||
-                              (a.accountId || "").includes(accountSearch || ""),
+                              metaAccountSearchText(a.accountName, a.accountId).includes((accountSearch || "").toLowerCase()),
                           )
                           .map((acc) => (
                             <button
@@ -648,9 +652,13 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                                   : "text-gray-700",
                               )}
                             >
-                              <span className="truncate flex-1 pr-2">
-                                {acc.accountName || acc.accountId}
-                              </span>
+                              <MetaAccountDisplay
+                                name={acc.accountName}
+                                accountId={acc.accountId}
+                                className="min-w-0 flex-1 pr-2"
+                                nameClassName="text-sm font-semibold truncate"
+                                idClassName="text-[10px] text-slate-500 font-mono truncate"
+                              />
                               {acc.accountId === accountId && (
                                 <Check className="w-4 h-4" />
                               )}

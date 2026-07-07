@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountDisplay";
 
 export function MonitoringDashboard() {
   const navigate = useNavigate();
@@ -89,8 +90,7 @@ export function MonitoringDashboard() {
     if (searchTerm) {
       const lowerSearch = searchTerm.toLowerCase();
       result = result.filter(acc => 
-        (acc.name || "").toLowerCase().includes(lowerSearch) || 
-        (acc.accountId || "").toLowerCase().includes(lowerSearch)
+        metaAccountSearchText(acc.name, acc.accountId).includes(lowerSearch)
       );
     }
 
@@ -228,7 +228,7 @@ export function MonitoringDashboard() {
                 onClick={() => handleSort('name')}
               >
                 <div className="flex items-center">
-                  账户名称 <SortIcon columnKey="name" />
+                  账户 <SortIcon columnKey="name" />
                 </div>
               </TableHead>
               <TableHead 
@@ -239,7 +239,6 @@ export function MonitoringDashboard() {
                   活跃度 <SortIcon columnKey="activityStatus" />
                 </div>
               </TableHead>
-              <TableHead className="font-bold text-gray-500 h-14">账户 ID</TableHead>
               <TableHead 
                 className="font-bold text-gray-500 h-14 cursor-pointer hover:text-gray-900 transition-colors"
                 onClick={() => handleSort('amountSpent')}
@@ -303,9 +302,13 @@ export function MonitoringDashboard() {
                           "w-2 h-2 rounded-full shrink-0",
                           acc.accountStatus === 1 ? "bg-green-500" : "bg-red-500"
                         )} />
-                        <span className="font-bold text-gray-900 group-hover:text-meta-blue transition-colors">
-                          {acc.name}
-                        </span>
+                        <MetaAccountDisplay
+                          name={acc.name}
+                          accountId={acc.accountId}
+                          className="min-w-0"
+                          nameClassName="font-bold text-gray-900 group-hover:text-meta-blue transition-colors truncate"
+                          idClassName="text-[10px] text-gray-400 font-mono truncate"
+                        />
                       </div>
                     </TableCell>
                     <TableCell className="py-4 font-mono text-[11px] font-bold">
@@ -320,9 +323,6 @@ export function MonitoringDashboard() {
                       )}>
                         标签 {acc.activityStatus || 2}
                       </div>
-                    </TableCell>
-                    <TableCell className="py-4 font-mono text-[11px] text-gray-400 font-bold uppercase tracking-wider">
-                      {acc.accountId}
                     </TableCell>
                     <TableCell className="py-4">
                       <div className="space-y-1">

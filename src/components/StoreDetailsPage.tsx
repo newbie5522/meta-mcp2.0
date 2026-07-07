@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/table";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountDisplay";
 
 const STORE_PLATFORM_OPTIONS = [
   {
@@ -335,8 +336,10 @@ export function StoreDetailsPage({
   }
 
   const accountsFilter = availableAccounts.filter(acc => 
-    (acc.name || acc.accountName || "").toLowerCase().includes(searchAccountQuery.toLowerCase()) || 
-    String(acc.account_id || acc.accountId).includes(searchAccountQuery)
+    metaAccountSearchText(
+      acc.name || acc.accountName || acc.fb_account_name,
+      acc.account_id || acc.accountId || acc.id
+    ).includes(searchAccountQuery.toLowerCase())
   );
   const activeTokenKey = getStoreTokenKey(storeData.platform);
   const activeTokenConfigured = Boolean(storeData[getStoreTokenConfiguredKey(storeData.platform)]);
@@ -482,17 +485,16 @@ export function StoreDetailsPage({
                                 }}
                               />
                             </TableHead>
-                            <TableHead className="font-bold text-slate-700">账户名称</TableHead>
-                            <TableHead className="font-bold text-slate-700">ID</TableHead>
+                            <TableHead className="font-bold text-slate-700">广告账户</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {loadingAccountsList ? (
-                            <TableRow><TableCell colSpan={3} className="text-center h-24 text-slate-500"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></TableCell></TableRow>
+                            <TableRow><TableCell colSpan={2} className="text-center h-24 text-slate-500"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></TableCell></TableRow>
                           ) : availableAccounts.length === 0 ? (
-                            <TableRow><TableCell colSpan={3} className="text-center h-24 text-slate-500 font-medium p-4">暂无可绑定账户，请先到 Meta 账户配置页保存 Token 并拉取账户。</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={2} className="text-center h-24 text-slate-500 font-medium p-4">暂无可绑定账户，请先到 Meta 账户配置页保存 Token 并拉取账户。</TableCell></TableRow>
                           ) : accountsFilter.length === 0 ? (
-                            <TableRow><TableCell colSpan={3} className="text-center h-24 text-slate-400">在活跃账户中未检索到结果</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={2} className="text-center h-24 text-slate-400">在活跃账户中未检索到结果</TableCell></TableRow>
                           ) : (
                             accountsFilter.map((acc, index) => {
                               const accId = getAccountId(acc);
@@ -509,8 +511,14 @@ export function StoreDetailsPage({
                                       />
                                     </div>
                                   </TableCell>
-                                  <TableCell className="font-medium text-slate-800 border-r border-[#f3f4f6]">{accName}</TableCell>
-                                  <TableCell className="font-mono text-xs text-slate-500">{accId}</TableCell>
+                                  <TableCell className="border-r border-[#f3f4f6]">
+                                    <MetaAccountDisplay
+                                      name={accName}
+                                      accountId={accId}
+                                      nameClassName="font-medium text-slate-800 truncate"
+                                      idClassName="text-xs text-slate-500 font-mono truncate"
+                                    />
+                                  </TableCell>
                                 </TableRow>
                               )
                             })
@@ -544,16 +552,21 @@ export function StoreDetailsPage({
                 <Table>
                   <TableHeader className="bg-slate-50/80 border-b">
                     <TableRow>
-                      <TableHead className="font-bold text-slate-700">账户名称</TableHead>
-                      <TableHead className="font-bold text-slate-700">账户 ID</TableHead>
+                      <TableHead className="font-bold text-slate-700">广告账户</TableHead>
                       <TableHead className="text-right font-bold text-slate-700">操作</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {mappings.map((m, index) => (
                       <TableRow key={m.accountId} className={index % 2 === 0 ? "bg-white" : "bg-slate-50/30"}>
-                        <TableCell className="font-medium text-slate-800">{m.accountName || m.accountId}</TableCell>
-                        <TableCell className="font-mono text-xs text-slate-500">{m.accountId}</TableCell>
+                        <TableCell>
+                          <MetaAccountDisplay
+                            name={m.accountName}
+                            accountId={m.accountId}
+                            nameClassName="font-medium text-slate-800 truncate"
+                            idClassName="text-xs text-slate-500 font-mono truncate"
+                          />
+                        </TableCell>
                         <TableCell className="text-right">
                           <Button variant="ghost" size="sm" onClick={() => handleUnmapAccount(m.accountId)} className="text-slate-400 hover:text-red-600 hover:bg-red-50 h-8 px-3 cursor-pointer">
                             <Trash2 className="w-4 h-4 mr-1" /> 解绑

@@ -24,6 +24,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountDisplay";
 
 export function CampaignStructureDashboard({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   // Navigation level
@@ -163,10 +164,9 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
     const query = searchQuery.toLowerCase();
 
     if (viewLevel === "accounts") {
-      const name = (row.fb_account_name || "").toLowerCase();
-      const id = (row.fb_account_id || "").toLowerCase();
+      const accountSearchText = metaAccountSearchText(row.fb_account_name, row.fb_account_id);
       const store = (row.storeName || "").toLowerCase();
-      return name.includes(query) || id.includes(query) || store.includes(query);
+      return accountSearchText.includes(query) || store.includes(query);
     }
     if (viewLevel === "campaigns") {
       const name = (row.name || "").toLowerCase();
@@ -386,7 +386,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                 viewLevel === "campaigns" ? "text-slate-900 font-bold" : "text-slate-400"
               )}
               onClick={() => navigateBackTo("campaigns")}
-              title={selectedAccountName || selectedAccount}
+              title={`${selectedAccountName || "未命名 Meta 账号"} / ${selectedAccount}`}
             >
               <FolderGit2 className="w-4 h-4" />
               {selectedAccountName || selectedAccount}
@@ -564,8 +564,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                     {/* View Specific Header Definitions */}
                     {viewLevel === "accounts" && (
                       <>
-                        <TableHead className="font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => requestSort("fb_account_name")}>每个广告账户</TableHead>
-                        <TableHead className="font-bold text-slate-700">账户 ID</TableHead>
+                        <TableHead className="font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => requestSort("fb_account_name")}>广告账户</TableHead>
                         <TableHead className="font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => requestSort("storeName")}>绑定店铺</TableHead>
                         <TableHead className="font-bold text-slate-700 text-center">币种</TableHead>
                         <TableHead className="font-bold text-slate-700 text-right cursor-pointer hover:bg-slate-100" onClick={() => requestSort("spend")}>花费金额</TableHead>
@@ -688,14 +687,24 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                         {/* VIEW LEVEL ACCOUNTS */}
                         {viewLevel === "accounts" && (
                           <>
-                            <TableCell className="font-semibold text-blue-600 hover:underline cursor-pointer max-w-[200px] truncate" onClick={() => {
-                              setSelectedAccount(row.fb_account_id);
-                              setSelectedAccountName(row.fb_account_name);
-                              setViewLevel("campaigns");
-                            }} title={row.fb_account_name}>
-                              {row.fb_account_name}
+                            <TableCell className="max-w-[220px]">
+                              <button
+                                type="button"
+                                className="block w-full text-left cursor-pointer"
+                                onClick={() => {
+                                  setSelectedAccount(row.fb_account_id);
+                                  setSelectedAccountName(row.fb_account_name);
+                                  setViewLevel("campaigns");
+                                }}
+                              >
+                                <MetaAccountDisplay
+                                  name={row.fb_account_name}
+                                  accountId={row.fb_account_id}
+                                  nameClassName="font-semibold text-blue-600 hover:underline truncate"
+                                  idClassName="font-mono text-xs text-slate-500 truncate"
+                                />
+                              </button>
                             </TableCell>
-                            <TableCell className="font-mono text-xs text-slate-500">{row.fb_account_id}</TableCell>
                             <TableCell>
                               {row.isBound ? (
                                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-100 text-emerald-700 text-xs font-semibold">

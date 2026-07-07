@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Key, RefreshCcw, Activity, AlertTriangle } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { MetaAccountDisplay } from './common/MetaAccountDisplay';
 
 function getAccountId(acc: unknown): string {
   if (!acc || typeof acc !== "object") return "";
@@ -468,8 +469,7 @@ export function MetaConfigPage() {
           <Table>
             <TableHeader className="bg-slate-50">
               <TableRow>
-                <TableHead className="px-6 py-3 font-semibold text-slate-700">账户ID</TableHead>
-                <TableHead className="px-6 py-3 font-semibold text-slate-700">账户名称</TableHead>
+                <TableHead className="px-6 py-3 font-semibold text-slate-700">广告账户</TableHead>
                 <TableHead className="px-6 py-3 font-semibold text-slate-700">本币与时区</TableHead>
                 <TableHead className="px-6 py-3 font-semibold text-slate-700">近90天消耗状态</TableHead>
               </TableRow>
@@ -477,21 +477,21 @@ export function MetaConfigPage() {
             <TableBody>
               {loadingAccounts ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center py-12 text-slate-500">
+                  <TableCell colSpan={3} className="text-center py-12 text-slate-500">
                     <RefreshCcw className="w-6 h-6 animate-spin mx-auto mb-2 text-slate-400" />
                     正在同步 Meta 广告云端资产，请耐心等候...
                   </TableCell>
                 </TableRow>
               ) : accounts.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center py-12 text-slate-500">
+                  <TableCell colSpan={3} className="text-center py-12 text-slate-500">
                     <Activity className="w-8 h-8 mx-auto mb-2.5 text-slate-300" />
                     暂无已连接 Meta 广告账户。请完成 Meta Business 授权或手动绑定广告账户。
                   </TableCell>
                 </TableRow>
               ) : filteredAccounts.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center py-12 text-slate-400">
+                  <TableCell colSpan={3} className="text-center py-12 text-slate-400">
                     <Activity className="w-8 h-8 mx-auto mb-2.5 text-slate-300" />
                     没有符合筛选条件的 Meta 广告账户
                   </TableCell>
@@ -502,8 +502,14 @@ export function MetaConfigPage() {
                   const accName = getAccountName(acc);
                   return (
                     <TableRow key={accId} className="hover:bg-slate-50 transition-colors">
-                      <TableCell className="px-6 py-4 font-mono text-xs text-slate-600 font-medium">{accId}</TableCell>
-                      <TableCell className="px-6 py-4 font-semibold text-slate-800 text-left">{accName}</TableCell>
+                      <TableCell className="px-6 py-4 text-left">
+                        <MetaAccountDisplay
+                          name={accName}
+                          accountId={accId}
+                          nameClassName="font-semibold text-slate-800 truncate"
+                          idClassName="text-xs text-slate-500 font-mono truncate"
+                        />
+                      </TableCell>
                       <TableCell className="px-6 py-4 text-xs text-slate-500 text-left font-mono">
                         {acc.currency || 'USD'} / {acc.timezone || 'UTC'}
                       </TableCell>

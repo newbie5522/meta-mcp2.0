@@ -15,6 +15,7 @@ import {
   User
 } from "lucide-react";
 import { toast } from "sonner";
+import { MetaAccountDisplay, metaAccountOptionLabel } from "./common/MetaAccountDisplay";
 
 interface AIAnalysisCenterProps {
   startDate: Date;
@@ -336,11 +337,21 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900">{card.title}</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                {card.entityName || card.entityId}
-                <span className="mx-1 text-slate-300">/</span>
-                <span className="font-mono">{card.entityId}</span>
-              </p>
+              {card.entityType === "account" ? (
+                <MetaAccountDisplay
+                  name={card.entityName}
+                  accountId={card.entityId}
+                  className="mt-1"
+                  nameClassName="text-xs text-slate-600 font-semibold truncate"
+                  idClassName="text-[11px] text-slate-500 font-mono truncate"
+                />
+              ) : (
+                <p className="text-xs text-slate-500 mt-1">
+                  {card.entityName || card.entityId}
+                  <span className="mx-1 text-slate-300">/</span>
+                  <span className="font-mono">{card.entityId}</span>
+                </p>
+              )}
             </div>
           </div>
           <div className="text-[11px] text-slate-400 font-mono">
@@ -634,7 +645,7 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
                         const accountId = getAccountId(account);
                         return (
                           <option key={accountId} value={accountId}>
-                            {getAccountName(account)} ({accountId})
+                            {metaAccountOptionLabel(getAccountName(account), accountId)}
                           </option>
                         );
                       })

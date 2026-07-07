@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Search, Loader2, Save, Users, AlertCircle } from 'lucide-react';
+import { MetaAccountDisplay, metaAccountSearchText } from './common/MetaAccountDisplay';
 
 export function TeamConfigPage() {
   const [mappings, setMappings] = useState<any[]>([]);
@@ -33,12 +34,14 @@ export function TeamConfigPage() {
     fetchMappings();
   }, []);
 
-  const filteredMappings = mappings.filter(m => 
-    m.accountName.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    m.accountId.includes(searchQuery) ||
-    m.store.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    m.owner.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredMappings = mappings.filter(m => {
+    const query = searchQuery.toLowerCase();
+    return (
+      metaAccountSearchText(m.accountName, m.accountId).includes(query) ||
+      m.store.toLowerCase().includes(query) ||
+      m.owner.toLowerCase().includes(query)
+    );
+  });
 
   const handleOwnerChange = (accountId: string, value: string) => {
     setEditedMappings(prev => ({
@@ -120,8 +123,7 @@ export function TeamConfigPage() {
             <TableHeader className="bg-[#f9fafb]">
               <TableRow className="hover:bg-transparent border-b-slate-200">
                 <TableHead className="font-bold text-slate-700 h-11 border-r border-[#eaebed]">关联店铺</TableHead>
-                <TableHead className="font-bold text-slate-700 h-11 border-r border-[#eaebed]">广告账户名称</TableHead>
-                <TableHead className="font-bold text-slate-700 h-11 border-r border-[#eaebed]">账户 ID</TableHead>
+                <TableHead className="font-bold text-slate-700 h-11 border-r border-[#eaebed]">广告账户</TableHead>
                 <TableHead className="font-bold text-slate-700 h-11 border-r border-[#eaebed]">项目级</TableHead>
                 <TableHead className="font-bold text-slate-900 h-11 bg-slate-100 flex items-center justify-between border-b-0 w-[200px]">
                   负责人 (Owner)
@@ -131,14 +133,14 @@ export function TeamConfigPage() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-40 text-center">
+                  <TableCell colSpan={4} className="h-40 text-center">
                     <Loader2 className="w-6 h-6 animate-spin mx-auto text-meta-blue" />
                     <p className="mt-2 text-sm text-slate-500">正在拉取系统映射网格...</p>
                   </TableCell>
                 </TableRow>
               ) : filteredMappings.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-40 text-center text-slate-500">
+                  <TableCell colSpan={4} className="h-40 text-center text-slate-500">
                     <AlertCircle className="w-6 h-6 mx-auto mb-2 text-slate-400" />
                     未找到相关的配置数据，请先进入店铺管理页面绑定广告账户。
                   </TableCell>
@@ -150,10 +152,12 @@ export function TeamConfigPage() {
                       {item.store}
                     </TableCell>
                     <TableCell className="text-slate-700 border-r border-slate-100 p-3">
-                      {item.accountName}
-                    </TableCell>
-                    <TableCell className="text-slate-500 font-mono text-xs border-r border-slate-100 p-3">
-                      {item.accountId}
+                      <MetaAccountDisplay
+                        name={item.accountName}
+                        accountId={item.accountId}
+                        nameClassName="font-semibold text-slate-800 truncate"
+                        idClassName="text-xs text-slate-500 font-mono truncate"
+                      />
                     </TableCell>
                     <TableCell className="text-slate-600 border-r border-slate-100 p-3">
                       <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">

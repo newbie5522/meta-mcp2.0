@@ -132,3 +132,90 @@ includeHealthy=false
 `npm run lint` passed through `cmd /c npm run lint`.
 
 `npm run build` passed through `cmd /c npm run build`.
+
+## R4 Final Cleanup
+
+`AdPerformanceDiagnosisPage` now deduplicates by `issueId` before display. The page still filters to actionable production suggestions only, so it does not display `HEALTHY`, `data_health_notice`, or `debug_invalid` as ad performance recommendations.
+
+Deduped grouping priority:
+
+1. `delivery`
+2. `creative`
+3. `outcome`
+4. `budget/audience`
+
+Final R4 grep results:
+
+| Pattern | Result |
+| --- | --- |
+| `当前页面仅展示真实诊断结果` | `<NO_MATCH>` |
+| `数据健康度：健康` | `<NO_MATCH>` |
+| `素材洞察诊断状态` | `<NO_MATCH>` |
+| `HEALTHY` | `<NO_MATCH>` |
+| `includeDebug: true` | `<NO_MATCH>` |
+| `HTTP error 413` | `<NO_MATCH>` |
+| `同步刷新看板` | `<NO_MATCH>` |
+| `刷新 Meta 数据` | `<NO_MATCH>` |
+| `同步广告结构与成效` | `<NO_MATCH>` |
+
+Remaining `bg-amber` / `border-amber` hits are still limited to dynamic config or operational states:
+
+| File | Reason |
+| --- | --- |
+| `src/components/MetaConfigPage.tsx` | Token configured read-only state, real permission warning, no-account result, or local fallback account notice. |
+| `src/components/StoresDashboard.tsx` | Store API not connected or timezone diagnostics warnings. |
+| `src/components/SyncCenterPage.tsx` | `partial_data` sync status badge. |
+| `src/components/TeamConfigPage.tsx` | Owner edit differs from persisted value. |
+
+Verification:
+
+| Command | Result |
+| --- | --- |
+| `cmd /c npm run lint` | Passed |
+| `cmd /c npm run build` | Passed |
+
+This commit is ready for server-side full verification, not final production sign-off.
+
+## R4-B Account Display Format
+
+Added `src/components/common/MetaAccountDisplay.tsx`.
+
+Unified display contract:
+
+```text
+line 1: account name, or 未命名 Meta 账号
+line 2: account id without act_ prefix
+```
+
+The display helpers do not mutate source values. Copy targets, navigation, query params, API payloads, sync tasks, and backend storage continue using the original `accountId` / `fb_account_id`.
+
+Search helper:
+
+```text
+metaAccountSearchText(name, accountId)
+```
+
+It indexes account name, original ID, clean numeric ID, and `act_` ID form, so search supports account name, numeric ID, and `act_` ID even when the stored value uses only one form.
+
+Completed pages:
+
+| Page | Component / helper use |
+| --- | --- |
+| Account data table | `src/components/DataDetailsDashboard.tsx` uses `MetaAccountDisplay`; hierarchy navigation still uses raw `row.fb_account_id`. |
+| Ad hierarchy account level | `src/components/CampaignStructureDashboard.tsx` merges account name and ID into one account column; drill-down and sync payloads still use raw `row.fb_account_id` / `selectedAccount`. |
+| Audience account filter | `src/components/AudienceAnalysisDashboard.tsx` uses `metaAccountOptionLabel`; select value remains raw `fb_account_id`. |
+| Creative account filter and tables | `src/components/CreativeIntelligenceDashboard.tsx` uses clean account display; filter value and hierarchy navigation still use original account ID rules. |
+| AI analysis center | `src/components/AIAnalysisCenter.tsx` uses unified account display in cards and account select labels; manual analysis payload still uses selected raw account ID. |
+| Meta config account list | `src/components/MetaConfigPage.tsx` merges account ID and name columns into one account display column. |
+| Team mapping | `src/components/TeamConfigPage.tsx` merges account name and ID into one account display column. |
+| Store details mapping | `src/components/StoreDetailsPage.tsx` uses unified account display in add mapping and bound mapping lists. |
+| Account details account switcher | `src/components/AccountDetailsPage.tsx` uses unified display in current account trigger and account list. |
+| Monitoring account table | `src/components/MonitoringDashboard.tsx` merges account name and ID into one account display column. |
+| Store data unmapped spend table | `src/components/StoreDataDashboard.tsx` uses unified account display for unmapped spend accounts. |
+
+R5 backlog:
+
+| Area | Reason |
+| --- | --- |
+| Diagnosis issue cards | Current diagnosis pages do not directly render account entity ID/name pairs after R4 cleanup; if future account-level issue cards are reintroduced, they should use `MetaAccountDisplay`. |
+| Country analytics account-count drilldown | Current UI shows account counts, not account identities; if account IDs are expanded later, use `MetaAccountDisplay`. |

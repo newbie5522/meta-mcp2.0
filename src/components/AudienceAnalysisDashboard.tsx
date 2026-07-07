@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { metaAccountOptionLabel } from "./common/MetaAccountDisplay";
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
 
@@ -407,7 +408,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                 <option value="all">所有广告账户</option>
                 {filteredAccounts.map(acc => (
                   <option key={acc.fb_account_id} value={acc.fb_account_id}>
-                    {acc.fb_account_name || acc.fb_account_id}
+                    {metaAccountOptionLabel(acc.fb_account_name, acc.fb_account_id)}
                   </option>
                 ))}
               </select>

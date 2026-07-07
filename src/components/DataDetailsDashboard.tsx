@@ -27,6 +27,7 @@ import {
   formatSyncReceipt,
   getSyncErrorMessage
 } from "@/lib/sync-trigger";
+import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountDisplay";
 
 import { useNavigate } from "react-router-dom";
 
@@ -142,8 +143,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       list = list.filter((item) => 
-        (item.fb_account_name || "").toLowerCase().includes(term) ||
-        String(item.fb_account_id).toLowerCase().includes(term) ||
+        metaAccountSearchText(item.fb_account_name, item.fb_account_id).includes(term) ||
         (item.storeName || "").toLowerCase().includes(term)
       );
     }
@@ -559,7 +559,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
               </colgroup>
               <TableHeader className="bg-slate-50/50">
                 <TableRow>
-                  <TableHead className="font-semibold text-slate-700 h-10">账户 ID & 名称</TableHead>
+                  <TableHead className="font-semibold text-slate-700 h-10">广告账户</TableHead>
                   <TableHead className="font-semibold text-slate-700">绑定店铺</TableHead>
                   <TableHead className="font-semibold text-slate-700">币种/时区</TableHead>
                   <TableHead className="font-semibold text-slate-700 text-center">状态</TableHead>
@@ -616,16 +616,18 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                         )}
                       >
                         <TableCell className="font-medium text-slate-900 overflow-hidden text-ellipsis">
-                          <div className="flex flex-col truncate">
-                            <span 
-                              className="font-bold text-blue-600 hover:underline cursor-pointer flex items-center gap-1 text-[13px] truncate"
-                              onClick={() => handleViewHierarchy(row.fb_account_id)}
-                              title={row.fb_account_name}
-                            >
-                              {row.fb_account_name || "未命名 Meta 账号"}
-                            </span>
-                            <span className="text-[10px] text-slate-400 font-mono">{row.fb_account_id}</span>
-                          </div>
+                          <button
+                            type="button"
+                            className="block w-full text-left cursor-pointer"
+                            onClick={() => handleViewHierarchy(row.fb_account_id)}
+                          >
+                            <MetaAccountDisplay
+                              name={row.fb_account_name}
+                              accountId={row.fb_account_id}
+                              nameClassName="font-bold text-blue-600 hover:underline text-[13px] truncate"
+                              idClassName="text-[10px] text-slate-400 font-mono truncate"
+                            />
+                          </button>
                         </TableCell>
                         <TableCell className="text-slate-600">
                           <span className={cn(

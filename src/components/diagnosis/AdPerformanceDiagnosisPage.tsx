@@ -1,5 +1,5 @@
 import React from "react";
-import { 
+import {
   Sparkles, 
   Activity, 
   AlertCircle,
@@ -10,7 +10,16 @@ import {
   Award,
   DollarSign
 } from "lucide-react";
-import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
+import { useDiagnosticsIssues, type UniformIssue } from "./useDiagnosticsIssues";
+
+function uniqueByIssueId(items: UniformIssue[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.issueId)) return false;
+    seen.add(item.issueId);
+    return true;
+  });
+}
 
 export function AdPerformanceDiagnosisPage({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const {
@@ -32,37 +41,48 @@ export function AdPerformanceDiagnosisPage({ startDate, endDate }: { startDate: 
     issue.severity !== "healthy"
   );
 
+  const usedIssueIds = new Set<string>();
+  const takeGroup = (items: UniformIssue[]) => {
+    const result: UniformIssue[] = [];
+    for (const item of uniqueByIssueId(items)) {
+      if (usedIssueIds.has(item.issueId)) continue;
+      usedIssueIds.add(item.issueId);
+      result.push(item);
+    }
+    return result;
+  };
+
   // Categorize issues based on the requirements:
   // 1. ad_delivery 相关 issues
-  const deliveryIssues = actionableIssues.filter(
+  const deliveryIssues = takeGroup(actionableIssues.filter(
     (iss) => 
       iss.issueType === "ad_delivery" || 
       iss.problemStage === "ad_delivery" ||
       iss.optimizationArea === "delivery"
-  );
+  ));
 
   // 2. creative_attraction 相关 issues
-  const creativeIssues = actionableIssues.filter(
+  const creativeIssues = takeGroup(actionableIssues.filter(
     (iss) => 
       iss.issueType === "creative_attraction" || 
       iss.problemStage === "creative_attraction" ||
       iss.optimizationArea === "creative"
-  );
+  ));
 
   // 3. outcome 相关 issues
-  const outcomeIssues = actionableIssues.filter(
+  const outcomeIssues = takeGroup(actionableIssues.filter(
     (iss) => 
       iss.issueType === "outcome" || 
       iss.problemStage === "outcome" ||
       iss.optimizationArea === "budget"
-  );
+  ));
 
   // 4. budget / audience 相关 issues (or other general optimizationAreas)
-  const budgetAudienceIssues = actionableIssues.filter(
+  const budgetAudienceIssues = takeGroup(actionableIssues.filter(
     (iss) => 
       iss.optimizationArea === "budget" || 
       iss.optimizationArea === "audience"
-  );
+  ));
 
   // Check if we have any relevant ad performance issues at all
   const hasData = deliveryIssues.length > 0 || creativeIssues.length > 0 || outcomeIssues.length > 0 || budgetAudienceIssues.length > 0;
