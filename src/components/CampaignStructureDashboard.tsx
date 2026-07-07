@@ -323,7 +323,15 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
       const endStr = format(endDate, "yyyy-MM-dd");
 
       await axios.post("/api/sync/trigger", {
-        taskType: "sync_meta_creatives",
+        taskType: "sync_meta_structure",
+        accountId: selectedAccount || undefined,
+        startDate: startStr,
+        endDate: endStr,
+        days: 30
+      });
+
+      await axios.post("/api/sync/trigger", {
+        taskType: "sync_meta_insights",
         accountId: selectedAccount || undefined,
         startDate: startStr,
         endDate: endStr,
