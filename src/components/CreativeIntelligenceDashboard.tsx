@@ -48,6 +48,8 @@ import { format } from "date-fns";
 import { toast } from "sonner";
 import axios from "axios";
 import { MetaAccountDisplay, cleanAccountId, metaAccountOptionLabel } from "./common/MetaAccountDisplay";
+import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
+import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask, type SyncTaskPayload } from "@/lib/sync-trigger";
 import { 
   ResponsiveContainer, 
   LineChart, 
@@ -128,12 +130,19 @@ export function CreativeIntelligenceDashboard({
   const [storesList, setStoresList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
+  const [lastGoodData, setLastGoodData] = useState<any | null>(null);
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [creativeDataHealth, setCreativeDataHealth] = useState<any>(null);
 
   const handleSyncCreatives = async () => {
     setSyncing(true);
     const syncToast = toast.loading("正在同步数据...");
+    setSyncStatus({
+      status: "running",
+      message: "正在同步 Meta 素材结构与素材表现数据..."
+    });
+
     try {
       const startStr = startDate ? format(startDate, "yyyy-MM-dd") : format(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), "yyyy-MM-dd");
       const endStr = endDate ? format(endDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
@@ -141,11 +150,12 @@ export function CreativeIntelligenceDashboard({
         ? "all"
         : (storesList.find(store => store.name === localStoreFilter || String(store.id) === localStoreFilter)?.id || "all");
 
-      const payload: Record<string, any> = {
+      const payload: SyncTaskPayload = {
         taskType: "sync_meta_creatives",
         startDate: startStr,
         endDate: endStr,
-        days: 30
+        days: Math.max(1, Math.ceil((new Date(endStr).getTime() - new Date(startStr).getTime()) / 86400000) + 1),
+        limit: 200
       };
       if (selectedAccountFilter !== "all") {
         payload.accountId = selectedAccountFilter;
@@ -154,15 +164,15 @@ export function CreativeIntelligenceDashboard({
         payload.storeId = selectedStoreId;
       }
 
-      const response = await axios.post("/api/sync/trigger", payload);
-      toast.success(response.data.message || "同步数据已完成，正在刷新页面数据。", {
+      const result = await triggerSyncTask(payload);
+      setSyncStatus(mapSyncResultToPanel(result));
+      toast.success(result.message || "同步数据已完成，正在刷新页面数据。", {
         id: syncToast,
       });
       await fetchCreatives();
     } catch (err: any) {
-      const data = err.response?.data;
-      const errMsg = data?.message || data?.details || data?.error || err.message || "同步数据失败";
-      toast.error(errMsg, { id: syncToast });
+      setSyncStatus(mapSyncErrorToPanel(err));
+      toast.error(err?.data?.message || err?.response?.data?.message || err.message || "同步数据失败", { id: syncToast });
     } finally {
       setSyncing(false);
     }
@@ -317,6 +327,11 @@ export function CreativeIntelligenceDashboard({
       setCreatives(formattedGrouped);
       setDiagnostics(resGrouped.data?.diagnostics || null);
       setCreativeDataHealth(resGrouped.data?.dataHealth || null);
+      setLastGoodData({
+        creatives: formattedGrouped,
+        diagnostics: resGrouped.data?.diagnostics || null,
+        dataHealth: resGrouped.data?.dataHealth || null
+      });
 
 
       const storesPayload = resStores.data?.stores || resStores.data?.data || resStores.data || [];
@@ -328,8 +343,11 @@ export function CreativeIntelligenceDashboard({
       }
     } catch (err: any) {
       toast.error("加载素材分析数据失败");
-      setCreatives([]);
-      setCreativeDataHealth(null);
+      if (lastGoodData) {
+        setCreatives(lastGoodData.creatives || []);
+        setDiagnostics(lastGoodData.diagnostics || null);
+        setCreativeDataHealth(lastGoodData.dataHealth || null);
+      }
     } finally {
       setLoading(false);
     }
@@ -699,6 +717,11 @@ export function CreativeIntelligenceDashboard({
         ? "素材结构已同步，成效未同步。请同步广告级成效数据后再判断素材疲劳。"
         : "当前日期范围暂无素材表现数据。"
   );
+  const shouldShowCreativeNotice =
+    !loading &&
+    creatives.length === 0 &&
+    creativeHealthStatus &&
+    !["READY", "OK"].includes(String(creativeHealthStatus).toUpperCase());
 
   const handleExport = () => {
     const exportData = filteredCreatives.map(c => {
@@ -846,7 +869,7 @@ export function CreativeIntelligenceDashboard({
         </div>
       </div>
 
-      {creativeHealthStatus !== "OK" && (
+      {shouldShowCreativeNotice && (
         <div className="bg-slate-50 border border-slate-200 text-slate-700 rounded-xl p-4 space-y-2 shadow-sm animate-in fade-in duration-200">
           <div className="flex items-center gap-2 font-bold text-slate-800 text-xs">
             <AlertTriangle className="w-4 h-4 text-slate-500 shrink-0" />
@@ -935,6 +958,7 @@ export function CreativeIntelligenceDashboard({
             variant="outline"
             className="h-9 px-3.5 text-xs font-semibold border-gray-200 text-gray-600 hover:text-gray-900 shrink-0"
             title="刷新页面数据"
+            disabled={loading || syncing}
           >
             <RefreshCcw className="w-3.5 h-3.5 mr-1.5" />
             刷新页面数据
@@ -949,6 +973,8 @@ export function CreativeIntelligenceDashboard({
           </Button>
         </div>
       </div>
+
+      <SyncStatusPanel status={syncStatus} />
 
       {/* Aggregate KPI Panels connected with parent filters */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

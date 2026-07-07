@@ -79,6 +79,17 @@ function toDateString(value: Date | string | undefined, fallback: string) {
   return value;
 }
 
+export function isBusinessActionableIssue(issue: UniformIssue) {
+  const category = String(issue.category);
+  return (
+    category === "production_suggestion" &&
+    issue.severity !== "healthy" &&
+    issue.issueType !== "unmapped_spend_account" &&
+    issue.problemStage !== "data_health" &&
+    issue.optimizationArea !== "mapping"
+  );
+}
+
 function filterIssues(
   rows: UniformIssue[],
   categories: IssueCategory[],
@@ -89,6 +100,14 @@ function filterIssues(
     if (!includeHealthy && issue.severity === "healthy") return false;
     if (!includeDebug && issue.category === "debug_invalid") return false;
     if (!categories.includes(issue.category)) return false;
+    if (
+      categories.includes("production_suggestion") &&
+      !categories.includes("data_health_notice") &&
+      !includeDebug &&
+      !isBusinessActionableIssue(issue)
+    ) {
+      return false;
+    }
     return true;
   });
 }

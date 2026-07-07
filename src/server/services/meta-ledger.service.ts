@@ -6,6 +6,11 @@ export function canonicalActId(id: string | null | undefined): string {
   return normalizeMetaAccountId(String(id || ""));
 }
 
+/**
+ * Dangerous cleanup helper.
+ * Do not call before fetching fresh Meta rows.
+ * Only use for explicit maintenance after successful upsert validation.
+ */
 export async function cleanMetaAccountFactsForRange(params: {
   accountIds: string[];
   startDate: string;

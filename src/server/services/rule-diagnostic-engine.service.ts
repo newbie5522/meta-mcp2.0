@@ -707,13 +707,13 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
       issues.push({
         issueId: `acc_${accountId}_unmapped_spend_account`,
         issueType: "unmapped_spend_account",
-        category: "production_suggestion",
+        category: "data_health_notice",
         severity: "critical",
         entityType: "account",
         entityId: accountId,
         entityName: accountName,
         title: "活动账户未关联任何独立站店铺",
-        oneLineReason: `该账户近 30 天存在真实买量，但未绑定或指派到具体独立站，存在耗费漏记漏洞风险。`,
+        oneLineReason: "该账户近 30 天存在真实买量，但未绑定或指派到具体独立站，存在耗费漏记风险。",
         actionVerb: "bind_account",
         actionTarget: `account:${accountId}`,
         evidence: baseEvidence,
@@ -722,7 +722,10 @@ export async function detectAccountIssues(params: any): Promise<any[]> {
         limitations: [],
         generationMode: "offline_rule_engine",
         humanConfirmationRequired: true,
-        status: "pending"
+        status: "pending",
+        problemStage: "data_health",
+        optimizationArea: "mapping",
+        funnelStage: "not_applicable"
       });
     }
 

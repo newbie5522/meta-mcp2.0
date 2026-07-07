@@ -10,7 +10,8 @@ import {
   Award,
   DollarSign
 } from "lucide-react";
-import { useDiagnosticsIssues, type UniformIssue } from "./useDiagnosticsIssues";
+import { isBusinessActionableIssue, useDiagnosticsIssues, type UniformIssue } from "./useDiagnosticsIssues";
+import { DiagnosticIssueCard } from "./DiagnosticIssueCard";
 
 function uniqueByIssueId(items: UniformIssue[]) {
   const seen = new Set<string>();
@@ -36,10 +37,7 @@ export function AdPerformanceDiagnosisPage({ startDate, endDate }: { startDate: 
     return `${year}-${month}-${day}`;
   };
 
-  const actionableIssues = issues.filter(issue =>
-    issue.category === "production_suggestion" &&
-    issue.severity !== "healthy"
-  );
+  const actionableIssues = issues.filter(isBusinessActionableIssue);
 
   const usedIssueIds = new Set<string>();
   const takeGroup = (items: UniformIssue[]) => {
@@ -86,16 +84,6 @@ export function AdPerformanceDiagnosisPage({ startDate, endDate }: { startDate: 
 
   // Check if we have any relevant ad performance issues at all
   const hasData = deliveryIssues.length > 0 || creativeIssues.length > 0 || outcomeIssues.length > 0 || budgetAudienceIssues.length > 0;
-  const getSeverityLabel = (value?: string | null) => {
-    const labels: Record<string, string> = {
-      critical: "严重",
-      warning: "需要关注",
-      info: "提醒"
-    };
-  
-    return value ? labels[value] || value : "提醒";
-  };
-
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
       {/* Title Header */}
@@ -156,20 +144,7 @@ export function AdPerformanceDiagnosisPage({ startDate, endDate }: { startDate: 
               ) : (
                 <div className="space-y-4">
                   {deliveryIssues.map((iss) => (
-                    <div key={iss.issueId} className="p-3.5 rounded-lg border border-slate-100 bg-slate-50/40 space-y-2">
-                       <div className="flex items-center justify-between">
-                         <span className="text-[10px] font-mono text-slate-420 font-bold uppercase">{iss.issueId}</span>
-                         <span className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase ${
-                          iss.severity === "critical" ? "bg-red-100 text-red-800" : "bg-slate-100 text-slate-700"
-                         }`}>
-                           {getSeverityLabel(iss.severity)}
-                         </span>
-                       </div>
-                       <h4 className="text-xs font-bold text-slate-905">{iss.title}</h4>
-                       <div className="text-xs text-slate-600 bg-white p-2.5 rounded border border-slate-100 italic">
-                         <strong>诊断分析: </strong>{iss.diagnosisReason || iss.oneLineReason}
-                       </div>
-                    </div>
+                    <DiagnosticIssueCard key={String(iss.issueId)} issue={iss} />
                   ))}
                 </div>
               )}
@@ -191,18 +166,7 @@ export function AdPerformanceDiagnosisPage({ startDate, endDate }: { startDate: 
               ) : (
                 <div className="space-y-4">
                   {creativeIssues.map((iss) => (
-                    <div key={iss.issueId} className="p-3.5 rounded-lg border border-slate-100 bg-slate-50/40 space-y-2">
-                       <div className="flex items-center justify-between">
-                         <span className="text-[10px] font-mono text-slate-420 font-bold uppercase">{iss.issueId}</span>
-                         <span className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase bg-purple-100 text-purple-800`}>
-                           {getSeverityLabel(iss.severity)}
-                         </span>
-                       </div>
-                       <h4 className="text-xs font-bold text-slate-905">{iss.title}</h4>
-                       <div className="text-xs text-slate-600 bg-white p-2.5 rounded border border-slate-100 italic">
-                         <strong>诊断分析: </strong>{iss.diagnosisReason || iss.oneLineReason}
-                       </div>
-                    </div>
+                    <DiagnosticIssueCard key={String(iss.issueId)} issue={iss} />
                   ))}
                 </div>
               )}
@@ -224,18 +188,7 @@ export function AdPerformanceDiagnosisPage({ startDate, endDate }: { startDate: 
               ) : (
                 <div className="space-y-4">
                   {outcomeIssues.map((iss) => (
-                    <div key={iss.issueId} className="p-3.5 rounded-lg border border-slate-100 bg-slate-50/40 space-y-2">
-                       <div className="flex items-center justify-between">
-                         <span className="text-[10px] font-mono text-slate-420 font-bold uppercase">{iss.issueId}</span>
-                         <span className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase bg-emerald-100 text-emerald-800`}>
-                           {getSeverityLabel(iss.severity)}
-                         </span>
-                       </div>
-                       <h4 className="text-xs font-bold text-slate-905">{iss.title}</h4>
-                       <div className="text-xs text-slate-600 bg-white p-2.5 rounded border border-slate-100 italic">
-                         <strong>诊断分析: </strong>{iss.diagnosisReason || iss.oneLineReason}
-                       </div>
-                    </div>
+                    <DiagnosticIssueCard key={String(iss.issueId)} issue={iss} />
                   ))}
                 </div>
               )}
@@ -257,18 +210,7 @@ export function AdPerformanceDiagnosisPage({ startDate, endDate }: { startDate: 
               ) : (
                 <div className="space-y-4">
                   {budgetAudienceIssues.map((iss) => (
-                    <div key={iss.issueId} className="p-3.5 rounded-lg border border-slate-100 bg-slate-50/40 space-y-2">
-                       <div className="flex items-center justify-between">
-                         <span className="text-[10px] font-mono text-slate-420 font-bold uppercase">{iss.issueId}</span>
-                         <span className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase bg-slate-100 text-slate-700`}>
-                           {getSeverityLabel(iss.severity)}
-                         </span>
-                       </div>
-                       <h4 className="text-xs font-bold text-slate-905">{iss.title}</h4>
-                       <div className="text-xs text-slate-600 bg-white p-2.5 rounded border border-slate-100 italic">
-                         <strong>诊断分析: </strong>{iss.diagnosisReason || iss.oneLineReason}
-                       </div>
-                    </div>
+                    <DiagnosticIssueCard key={String(iss.issueId)} issue={iss} />
                   ))}
                 </div>
               )}

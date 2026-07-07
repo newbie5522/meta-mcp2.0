@@ -2,7 +2,7 @@
 import axios from "axios";
 import prisma from "../../db/index.js";
 import { getMetaToken, normalizeMetaAccountId, getNumericAccountId } from "../utils.js";
-import { cleanMetaAccountFactsForRange, canonicalActId } from "./meta-ledger.service.js";
+import { canonicalActId } from "./meta-ledger.service.js";
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -161,12 +161,6 @@ export async function syncMetaAccountSpendRealtime(options: {
 
   const targetAccountIds = accounts.map(a => canonicalActId(a.fb_account_id));
 
-  const cleanResult = await cleanMetaAccountFactsForRange({
-    accountIds: targetAccountIds,
-    startDate: options.startDate,
-    endDate: options.endDate
-  });
-
   const batchSize = 5;
   let recordsFetched = 0;
   let recordsSaved = 0;
@@ -222,6 +216,17 @@ export async function syncMetaAccountSpendRealtime(options: {
           startDate: options.startDate,
           endDate: options.endDate
         });
+
+        if (!rows.length) {
+          failedAccounts.push({
+            accountId: actId,
+            accountName: acc.fb_account_name || metaAccount?.name || null,
+            reason: "NO_NEW_DATA_FROM_META_API",
+            startDate: options.startDate,
+            endDate: options.endDate
+          });
+          return;
+        }
 
         recordsFetched += rows.length;
 
@@ -322,8 +327,15 @@ export async function syncMetaAccountSpendRealtime(options: {
     recordsSaved,
     recordsUpdated,
     accountsSynced: accounts.length - failedAccounts.length,
+    targetAccountsCount: accounts.length,
     failedAccounts,
     diagnostics: {
+      status:
+        recordsFetched === 0 && failedAccounts.length > 0
+          ? "NO_NEW_DATA_OR_FAILED"
+          : failedAccounts.length > 0
+            ? "PARTIAL_SUCCESS"
+            : "SUCCESS",
       mode: "meta_realtime_account_level",
       dateSource: "Meta API date_start",
       timezoneRule: "Meta API owns ad account date_start; no server timezone conversion",
@@ -331,7 +343,6 @@ export async function syncMetaAccountSpendRealtime(options: {
       endDate: options.endDate,
       batchSize,
       accountTimezones,
-      metaLedgerClean: cleanResult,
       canonicalAccountIds: targetAccountIds
     }
   };

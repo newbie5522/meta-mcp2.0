@@ -25,9 +25,12 @@ import { cn } from "@/lib/utils";
 import {
   triggerSyncTask,
   formatSyncReceipt,
-  getSyncErrorMessage
+  getSyncErrorMessage,
+  mapSyncErrorToPanel,
+  mapSyncResultToPanel
 } from "@/lib/sync-trigger";
 import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountDisplay";
+import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
 
 import { useNavigate } from "react-router-dom";
 
@@ -65,6 +68,8 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   // Status Filter state: "spend" | "active" | "all" | "unmapped"
   const [statusFilter, setStatusFilter] = useState<"spend" | "active" | "all" | "unmapped">("all");
   const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
+  const [lastGoodData, setLastGoodData] = useState<any>(null);
   const [autoRefreshPolling, setAutoRefreshPolling] = useState(false);
   const [showHistoricalAccounts, setShowHistoricalAccounts] = useState(false);
 
@@ -93,8 +98,13 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       });
 
       setData(response.data);
+      setLastGoodData(response.data);
     } catch (error: any) {
       console.error("Load Accounts Performance error:", error);
+
+      if (lastGoodData) {
+        setData(lastGoodData);
+      }
 
       if (!silent) {
         toast.error("加载账户数据明细失败: " + getApiErrorMessage(error));
@@ -189,16 +199,57 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
 
   const handleSyncAccounts = async () => {
     setSyncing(true);
+    const startStr = format(startDate, "yyyy-MM-dd");
+    const endStr = format(endDate, "yyyy-MM-dd");
+    const days = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000) + 1);
 
     const toastId = toast.loading(
-      "开始刷新 Meta 广告账户 DataCenter 快照..."
+      "开始同步 Meta 账户与当前日期范围表现..."
     );
 
-    try {
-      const startStr = format(startDate, "yyyy-MM-dd");
-      const endStr = format(endDate, "yyyy-MM-dd");
+    setSyncStatus({
+      status: "running",
+      message: "正在同步 Meta 账户列表..."
+    });
 
-      const data = await triggerSyncTask({
+    try {
+      const accountsResult = await triggerSyncTask({
+        taskType: "sync_meta_accounts"
+      });
+
+      setSyncStatus({
+        status: "running",
+        message: "账户列表已同步，正在拉取当前日期范围广告表现...",
+        chainId: accountsResult.chainId || null,
+        taskIds: accountsResult.taskIds || null,
+        recordsFetched: accountsResult.recordsFetched ?? null,
+        recordsSaved: accountsResult.recordsSaved ?? null,
+        recordsUpdated: accountsResult.recordsUpdated ?? null,
+        targetAccountsCount: accountsResult.targetAccountsCount ?? null,
+        failedAccounts: accountsResult.failedAccounts || null
+      });
+
+      const insightsResult = await triggerSyncTask({
+        taskType: "sync_meta_insights",
+        startDate: startStr,
+        endDate: endStr,
+        days,
+        limit: 200
+      });
+
+      setSyncStatus({
+        status: "running",
+        message: "Meta 广告表现已同步，正在刷新 DataCenter 账本...",
+        chainId: insightsResult.chainId || null,
+        taskIds: insightsResult.taskIds || null,
+        recordsFetched: insightsResult.recordsFetched ?? null,
+        recordsSaved: insightsResult.recordsSaved ?? null,
+        recordsUpdated: insightsResult.recordsUpdated ?? null,
+        targetAccountsCount: insightsResult.targetAccountsCount ?? null,
+        failedAccounts: insightsResult.failedAccounts || null
+      });
+
+      const ledgerResult = await triggerSyncTask({
         taskType: "refresh_meta_datacenter_ledger",
         startDate: startStr,
         endDate: endStr,
@@ -206,13 +257,36 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
         includeUnmapped: true
       });
 
-      toast.success(formatSyncReceipt(data), {
+      const panelResult = mapSyncResultToPanel({
+        ...ledgerResult,
+        chainId: ledgerResult.chainId || insightsResult.chainId || accountsResult.chainId,
+        taskIds: [
+          ...(accountsResult.taskIds || []),
+          ...(insightsResult.taskIds || []),
+          ...(ledgerResult.taskIds || [])
+        ],
+        recordsFetched: ledgerResult.recordsFetched ?? insightsResult.recordsFetched,
+        recordsSaved: ledgerResult.recordsSaved ?? insightsResult.recordsSaved,
+        recordsUpdated: ledgerResult.recordsUpdated ?? insightsResult.recordsUpdated,
+        targetAccountsCount: insightsResult.targetAccountsCount ?? accountsResult.targetAccountsCount,
+        failedAccounts: insightsResult.failedAccounts || ledgerResult.failedAccounts || null
+      });
+      setSyncStatus(panelResult);
+
+      toast.success(formatSyncReceipt({
+        ...ledgerResult,
+        recordsFetched: panelResult.recordsFetched ?? undefined,
+        recordsSaved: panelResult.recordsSaved ?? undefined,
+        recordsUpdated: panelResult.recordsUpdated ?? undefined,
+        targetAccountsCount: panelResult.targetAccountsCount ?? undefined
+      }), {
         id: toastId,
         duration: 7000
       });
 
       await loadData();
     } catch (error: any) {
+      setSyncStatus(mapSyncErrorToPanel(error));
       toast.error(`Meta 同步失败: ${getSyncErrorMessage(error)}`, {
         id: toastId,
         duration: 8000
@@ -337,6 +411,8 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
           </Button>
         </div>
       </div>
+
+      <SyncStatusPanel status={syncStatus} />
 
       {/* Meta Freshness Warning Alert Box */}
       {data.metaFreshness && (data.metaFreshness.warning || (data.metaFreshness.secondsSinceLatestSync !== null && data.metaFreshness.secondsSinceLatestSync > 1800)) && (

@@ -11,7 +11,8 @@ import {
   Inbox,
   Activity
 } from "lucide-react";
-import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
+import { isBusinessActionableIssue, useDiagnosticsIssues } from "./useDiagnosticsIssues";
+import { DiagnosticIssueCard } from "./DiagnosticIssueCard";
 
 export function CreativeFatigueDiagnosisPage({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const {
@@ -35,7 +36,8 @@ export function CreativeFatigueDiagnosisPage({ startDate, endDate }: { startDate
   // 4. entityType === "creative"
   // 5. entityType === "ad"
   // 6. 其他与素材疲劳、CTR 下滑、Frequency、CPC 上升相关的 issues
-  const relevantIssues = issues.filter(iss => {
+  const businessIssues = issues.filter(isBusinessActionableIssue);
+  const relevantIssues = businessIssues.filter(iss => {
     const isPrimaryMatch = 
       iss.problemStage === "creative_attraction" ||
       iss.optimizationArea === "creative" ||
@@ -157,56 +159,7 @@ export function CreativeFatigueDiagnosisPage({ startDate, endDate }: { startDate
             
             <div className="space-y-4">
               {topIssues.map((iss) => (
-                <div key={iss.issueId} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 hover:shadow-md transition-shadow">
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 pb-3">
-                    <div>
-                      <span className="px-2 py-0.5 bg-slate-100 text-slate-705 text-[10px] font-bold rounded mr-2">
-                        编号：{iss.issueId}
-                      </span>
-                      <span className="font-bold text-slate-900 text-sm">{iss.title}</span>
-                    </div>
-                    <span className="text-[11px] font-mono font-bold text-white bg-blue-600 px-2.5 py-1 rounded-full">
-                      优先级：{iss.priorityScore ?? "--"}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                        <Sparkles className="w-3.5 h-3.5 text-blue-600" /> AI 诊断意见
-                      </div>
-                      <p className="text-xs text-slate-650 leading-relaxed bg-blue-50/10 p-3 rounded-lg border border-blue-50/50 italic">
-                        {iss.diagnosisReason || iss.oneLineReason}
-                      </p>
-                    </div>
-
-                    {iss.suggestedActions && iss.suggestedActions.length > 0 && (
-                      <div className="space-y-1.5">
-                        <span className="text-xs font-bold text-slate-800 block">建议应对手段:</span>
-                        <div className="text-xs text-slate-650 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-150">
-                          {iss.suggestedActions.join(" | ")}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* indicators threshold */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-2 text-[10px] text-slate-505 border-t border-slate-100 border-dashed">
-                    <div>
-                      <span className="font-bold text-slate-750">数据限制：</span>{" "}
-                      <span className="font-mono text-slate-800">
-                        {Array.isArray(iss.limitations) ? iss.limitations.join(", ") : String(iss.limitations || "无")}
-                      </span>
-                    </div>
-
-                    <div>
-                      <span className="font-bold text-slate-750">校验指标：</span>{" "}
-                      <span className="font-mono text-slate-800 bg-slate-100 px-1 py-0.5 rounded">
-                        {Array.isArray(iss.validationMetrics) ? iss.validationMetrics.join("; ") : String(iss.validationMetrics || "未配置")}
-                      </span>
-                    </div>
-                  </div>
-                </div>
+                <DiagnosticIssueCard key={String(iss.issueId)} issue={iss} />
               ))}
             </div>
           </div>

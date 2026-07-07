@@ -10,7 +10,8 @@ import {
   RefreshCw,
   Inbox
 } from "lucide-react";
-import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
+import { isBusinessActionableIssue, useDiagnosticsIssues } from "./useDiagnosticsIssues";
+import { DiagnosticIssueCard } from "./DiagnosticIssueCard";
 
 export function ProductDiagnosisPage({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const {
@@ -34,7 +35,8 @@ export function ProductDiagnosisPage({ startDate, endDate }: { startDate: Date; 
   // 4. optimizationArea === "trust"
   // 5. entityType === "product"
   // 6. category === "production_suggestion" 且与产品承接相关
-  const relevantIssues = issues.filter(iss => {
+  const businessIssues = issues.filter(isBusinessActionableIssue);
+  const relevantIssues = businessIssues.filter(iss => {
     const isStageOrArea = 
       iss.problemStage === "product_page_intent" || 
       ["product_page", "pricing", "trust"].includes(iss.optimizationArea || "") ||
@@ -165,61 +167,7 @@ export function ProductDiagnosisPage({ startDate, endDate }: { startDate: Date; 
 
             <div className="space-y-4">
               {topIssues.map((iss) => (
-                <div key={iss.issueId} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-50 pb-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-bold rounded">
-                          编号：{iss.issueId}
-                        </span>
-                        <span className="text-xs text-slate-500 font-semibold uppercase">
-                          {getProductFieldLabel(iss.problemStage || iss.optimizationArea || "产品")}
-                        </span>
-                      </div>
-                      <h4 className="font-bold text-slate-900 text-sm mt-1">{iss.title}</h4>
-                    </div>
-                    <span className="text-[11px] font-mono font-bold text-white bg-blue-600 px-2.5 py-1 rounded-full">
-                      优先级：{iss.priorityScore ?? "--"}
-                    </span>
-                  </div>
-
-                  {/* diagnosis reasoning */}
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                      <Sparkles className="w-3.5 h-3.5 text-blue-600" /> AI 诊断意见
-                    </div>
-                    <p className="text-xs text-slate-650 leading-relaxed bg-blue-50/10 p-3 rounded-lg border border-blue-50/50 italic">
-                      {iss.diagnosisReason || iss.oneLineReason}
-                    </p>
-                  </div>
-
-                  {/* suggested actions */}
-                  {iss.suggestedActions && iss.suggestedActions.length > 0 && (
-                    <div className="space-y-1.5">
-                      <span className="text-xs font-bold text-slate-800 block">推荐优化行动:</span>
-                      <div className="text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100/80">
-                        {iss.suggestedActions.join(" | ")}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* indicators threshold */}
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 pt-2 text-[11px] text-slate-505 border-t border-slate-100 border-dashed">
-                    <div>
-                      <span className="font-bold text-slate-700">数据限制:</span>{" "}
-                      <span className="font-mono text-slate-800">
-                        {Array.isArray(iss.limitations) ? iss.limitations.join(", ") : String(iss.limitations || "无")}
-                      </span>
-                    </div>
-
-                    <div>
-                      <span className="font-bold text-slate-700">校验指标：</span>{" "}
-                      <span className="font-mono text-slate-800 bg-slate-100 px-1 py-0.5 rounded">
-                        {Array.isArray(iss.validationMetrics) ? iss.validationMetrics.map((m) => getMetricLabel(String(m))).join("; ") : String(iss.validationMetrics ? getMetricLabel(String(iss.validationMetrics)) : "未配置")}
-                      </span>
-                    </div>
-                  </div>
-                </div>
+                <DiagnosticIssueCard key={String(iss.issueId)} issue={iss} />
               ))}
             </div>
           </div>

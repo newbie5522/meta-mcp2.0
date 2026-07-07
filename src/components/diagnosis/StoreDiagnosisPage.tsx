@@ -17,7 +17,8 @@ import {
   Award,
   BookOpen
 } from "lucide-react";
-import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
+import { isBusinessActionableIssue, useDiagnosticsIssues } from "./useDiagnosticsIssues";
+import { DiagnosticIssueCard } from "./DiagnosticIssueCard";
 
 export function StoreDiagnosisPage({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const {
@@ -34,23 +35,25 @@ export function StoreDiagnosisPage({ startDate, endDate }: { startDate: Date; en
     return `${year}-${month}-${day}`;
   };
 
+  const businessIssues = issues.filter(isBusinessActionableIssue);
+
   // Filters based on requirements:
   // 1. 店铺经营结果: problemStage === "outcome"
-  const outcomeIssues = issues.filter(iss => iss.problemStage === "outcome");
+  const outcomeIssues = businessIssues.filter(iss => iss.problemStage === "outcome");
 
   // 2. Meta 与 Store 对账: funnelStage === "meta_to_store_reconciliation"
-  const reconciliationIssues = issues.filter(iss => iss.funnelStage === "meta_to_store_reconciliation");
+  const reconciliationIssues = businessIssues.filter(iss => iss.funnelStage === "meta_to_store_reconciliation");
 
   // 3. 数据映射 / 追踪问题: optimizationArea in ["tracking", "mapping", "data_sync"]
-  const trackingIssues = issues.filter(iss => 
+  const trackingIssues = businessIssues.filter(iss =>
     ["tracking", "mapping", "data_sync"].includes(iss.optimizationArea || "")
   );
 
   // 4. 店铺相关 entity: entityType === "store"
-  const storeIssues = issues.filter(iss => iss.entityType === "store");
+  const storeIssues = businessIssues.filter(iss => iss.entityType === "store");
 
   // All store-relevant issues combined: outcome, reconciliation, tracking/mapping/data_sync, store entity
-  const storeRelevantIssues = issues.filter(iss => 
+  const storeRelevantIssues = businessIssues.filter(iss =>
     iss.problemStage === "outcome" ||
     iss.funnelStage === "meta_to_store_reconciliation" ||
     ["tracking", "mapping", "data_sync"].includes(iss.optimizationArea || "") ||
@@ -233,42 +236,7 @@ export function StoreDiagnosisPage({ startDate, endDate }: { startDate: Date; en
 
                 <div className="space-y-4">
                   {topStoreIssues.map((iss) => (
-                    <div key={iss.issueId} className="p-4 rounded-xl hover:bg-slate-50 border border-slate-150/40 transition-colors space-y-3">
-                      <div className="flex items-center justify-between flex-wrap gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="px-2 py-0.5 text-[10px] bg-slate-100 text-slate-700 font-bold rounded-md font-mono uppercase">
-                            {iss.issueId}
-                          </span>
-                          <span className="text-xs text-slate-500 font-semibold uppercase">{getStoreIssueLabel(iss.problemStage, iss.funnelStage)}</span>
-                        </div>
-                        <span className="text-[11px] font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
-                          优先级：{iss.priorityScore ?? "--"}
-                        </span>
-                      </div>
-
-                      <h4 className="text-sm font-bold text-slate-950">{iss.title}</h4>
-                      <p className="text-xs text-slate-600 bg-white p-3 rounded border border-slate-100 leading-relaxed italic">
-                        <strong>诊断结论:</strong> {iss.diagnosisReason || iss.oneLineReason}
-                      </p>
-
-                      {iss.suggestedActions && iss.suggestedActions.length > 0 && (
-                        <div className="text-[11px] text-slate-705 bg-slate-100/50 p-2.5 rounded border border-slate-200/50">
-                          <strong>推荐改进动作:</strong> {iss.suggestedActions.join(" | ")}
-                        </div>
-                      )}
-
-                      {iss.validationMetrics && (
-                        <div className="text-[11px] text-indigo-700 bg-indigo-50/40 p-2 rounded">
-                          <strong>校验指标:</strong> {Array.isArray(iss.validationMetrics) ? iss.validationMetrics.map((m) => getMetricLabel(String(m))).join(", ") : getMetricLabel(String(iss.validationMetrics))}
-                        </div>
-                      )}
-
-                      {iss.limitations && iss.limitations.length > 0 && (
-                        <div className="text-[11px] text-red-700 bg-red-50/50 p-2 rounded">
-                          <strong>数据限制:</strong> {iss.limitations.join(", ")}
-                        </div>
-                      )}
-                    </div>
+                    <DiagnosticIssueCard key={String(iss.issueId)} issue={iss} />
                   ))}
                 </div>
 

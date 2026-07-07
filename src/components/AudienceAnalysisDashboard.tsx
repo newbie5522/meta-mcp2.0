@@ -15,6 +15,8 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { metaAccountOptionLabel } from "./common/MetaAccountDisplay";
+import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
+import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
 
@@ -34,6 +36,9 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   const [data, setData] = useState<any[]>([]);
   const [summary, setSummary] = useState<any | null>(null);
   const [dataHealth, setDataHealth] = useState<any | null>(null);
+  const [lastGoodData, setLastGoodData] = useState<any | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
 
   // Order Country Rows
   const [orderCountryRows, setOrderCountryRows] = useState<any[]>([]);
@@ -89,10 +94,15 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         setData(res.data.rows || []);
         setSummary(res.data.summary || null);
         setDataHealth(res.data.dataHealth || null);
+        setLastGoodData({
+          rows: res.data.rows || [],
+          summary: res.data.summary || null,
+          dataHealth: res.data.dataHealth || null
+        });
       } else {
-        setData([]);
-        setSummary(null);
-        setDataHealth(null);
+        setData(lastGoodData?.rows || []);
+        setSummary(lastGoodData?.summary || null);
+        setDataHealth(lastGoodData?.dataHealth || null);
       }
 
       // If active tab is country, load order countries list from database
@@ -129,14 +139,42 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
     } catch (err: any) {
       console.error("Failed to fetch audience insights", err);
-      setData([]);
-      setSummary(null);
-      setDataHealth(null);
-      setOrderCountryRows([]);
-      setCountriesHealth(null);
+      if (lastGoodData) {
+        setData(lastGoodData.rows || []);
+        setSummary(lastGoodData.summary || null);
+        setDataHealth(lastGoodData.dataHealth || null);
+      }
       toast.error("加载受众成效分析发生错误");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSyncAudience = async () => {
+    setSyncing(true);
+    const startStr = format(startDate, "yyyy-MM-dd");
+    const endStr = format(endDate, "yyyy-MM-dd");
+
+    setSyncStatus({
+      status: "running",
+      message: "正在同步 Meta 受众 breakdown 数据..."
+    });
+
+    try {
+      const result = await triggerSyncTask({
+        taskType: "sync_meta_audience",
+        startDate: startStr,
+        endDate: endStr,
+        days: Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000) + 1),
+        limit: 200
+      });
+
+      setSyncStatus(mapSyncResultToPanel(result));
+      await fetchAudienceInsights();
+    } catch (error: any) {
+      setSyncStatus(mapSyncErrorToPanel(error));
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -256,6 +294,11 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
   const chartKey = `${activeTab}-${format(startDate, "yyyyMMdd")}-${format(endDate, "yyyyMMdd")}-${selectedStore}-${selectedAccount}-${sortBy}-${chartRows.length}`;
   const isMetaBreakdownMissing = dataHealth?.status === "MISSING_META_BREAKDOWN" || dataHealth?.reason === "META_AUDIENCE_BREAKDOWN_MISSING";
+  const shouldShowAudienceNotice =
+    !loading &&
+    data.length === 0 &&
+    dataHealth?.status &&
+    !["READY", "OK"].includes(String(dataHealth.status).toUpperCase());
 
   // Chart Rendering Logic according to instructions
   const renderChart = () => {
@@ -362,7 +405,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     <div className="flex flex-col gap-6 font-sans">
       
       {/* ⚠️ Data Health Warning Banner (warnings & missing from API) */}
-      {dataHealth && (dataHealth.warnings?.length > 0 || dataHealth.missing?.length > 0) && (
+      {data.length > 0 && dataHealth && (dataHealth.warnings?.length > 0 || dataHealth.missing?.length > 0) && (
         <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-1.5 text-xs text-slate-700 shadow-sm">
           <div className="flex items-center gap-2 font-bold mb-1">
             <AlertTriangle className="w-4 h-4 text-slate-500 animate-pulse" />
@@ -377,9 +420,9 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         </div>
       )}
 
-      {isMetaBreakdownMissing && (
+      {shouldShowAudienceNotice && (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-          当前日期范围没有 Meta 受众 breakdown 数据。Meta 受众国家来自 FactAudienceBreakdown；订单收货国家来自订单 shipping/billing country，两者不会混用。
+          当前日期范围没有 Meta 受众 breakdown 数据。请同步受众数据或扩大日期范围。
         </div>
       )}
 
@@ -466,6 +509,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
             <div>
               <button
                 onClick={fetchAudienceInsights}
+                disabled={loading || syncing}
                 className="w-full h-10 flex items-center justify-center gap-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-indigo-600 active:scale-[0.98] transition-all duration-150 shadow-sm"
               >
                 {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
@@ -476,6 +520,18 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
           </div>
         </CardContent>
       </Card>
+
+      <div className="flex justify-end">
+        <button
+          onClick={handleSyncAudience}
+          disabled={loading || syncing}
+          className="h-9 px-3 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-xs font-bold hover:bg-blue-100 disabled:opacity-60"
+        >
+          {syncing ? "同步中..." : "同步数据"}
+        </button>
+      </div>
+
+      <SyncStatusPanel status={syncStatus} />
 
       {/* 📊 Core Indicators Summary Board (Direct Consumption from API) */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">

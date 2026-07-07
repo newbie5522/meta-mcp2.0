@@ -16,8 +16,9 @@ import {
   Heart,
   Sparkles
 } from "lucide-react";
-import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
+import { isBusinessActionableIssue, useDiagnosticsIssues } from "./useDiagnosticsIssues";
 import { AiDashboardSummaryCard } from "../ai/AiDashboardSummaryCard";
+import { DiagnosticIssueCard } from "./DiagnosticIssueCard";
 
 export function DiagnosisOverviewPage({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const {
@@ -40,10 +41,7 @@ export function DiagnosisOverviewPage({ startDate, endDate }: { startDate: Date;
   const endDateStr = formatDate(endDate);
 
   const compactIssues = issues
-    .filter(issue =>
-      issue.category === "production_suggestion" &&
-      issue.severity !== "healthy"
-    )
+    .filter(isBusinessActionableIssue)
     .slice(0, 10)
     .map(issue => ({
       issueId: issue.issueId,
@@ -124,6 +122,7 @@ export function DiagnosisOverviewPage({ startDate, endDate }: { startDate: Date;
   const hasPartialDataNotice = Boolean(reportMeta?.diagnosticsDegraded);
   const reportMessage = reportMeta?.message || "";
   const hasNoIssues = !loading && !error && issues.length === 0;
+  const businessIssues = summary.sortedIssues.filter(isBusinessActionableIssue);
 
   const getProblemStageLabel = (value?: string | null) => {
     const labels: Record<string, string> = {
@@ -309,37 +308,8 @@ export function DiagnosisOverviewPage({ startDate, endDate }: { startDate: Date;
                 </div>
 
                 <div className="space-y-5">
-                  {summary.sortedIssues.slice(0, 5).map((iss) => (
-                    <div key={iss.issueId} className="flex gap-4 p-4 rounded-xl hover:bg-slate-50 border border-slate-100/50 transition-colors">
-                      <div className="w-10 h-10 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center shrink-0">
-                        <TrendingDown className="w-5 h-5" />
-                      </div>
-                      <div className="space-y-2 flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-1 flex-wrap">
-                          <h4 className="text-sm font-bold text-slate-900 break-words">{iss.title}</h4>
-                          <span className="px-2 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-700 rounded uppercase font-mono">
-                            优先级：{iss.priorityScore ?? "--"}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-500 leading-relaxed">
-                          {iss.diagnosisReason || iss.oneLineReason}
-                        </p>
-                        
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-slate-400">
-                          {iss.problemStage && (
-                            <span>阶段: <strong className="text-slate-650">{getProblemStageLabel(iss.problemStage)}</strong></span>
-                          )}
-                          {iss.optimizationArea && (
-                            <span>领域: <strong className="text-slate-650">{getOptimizationAreaLabel(iss.optimizationArea)}</strong></span>
-                          )}
-                          {iss.ownerUserName && (
-                            <span className="flex items-center gap-1 font-semibold text-slate-705">
-                              <User className="w-3 h-3" /> 负责人: {iss.ownerUserName || "暂未分配"}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                  {businessIssues.slice(0, 5).map((iss) => (
+                    <DiagnosticIssueCard key={String(iss.issueId)} issue={iss} />
                   ))}
                 </div>
               </div>

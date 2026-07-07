@@ -27,6 +27,11 @@ export function AiDashboardSummaryCard({
   onRetry,
   disabled = false,
 }: AiDashboardSummaryCardProps) {
+  const isSafetyDisabled =
+    String(error || "").includes("AI 安全解释辅助未启用") ||
+    String(error || "").includes("AI_EXPLAIN_DISABLED") ||
+    String(error || "").toLowerCase().includes("safety");
+
   return (
     <div id="ai-dashboard-summary-card" className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 transition-all duration-300">
       {/* Header section of the AI Dashboard Summary */}
@@ -45,8 +50,14 @@ export function AiDashboardSummaryCard({
         </div>
       )}
 
+      {!loading && error && isSafetyDisabled && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          AI 摘要未启用，不影响下方规则诊断结果。
+        </div>
+      )}
+
       {/* 2. Error State */}
-      {!loading && error && (
+      {!loading && error && !isSafetyDisabled && (
         <div className="p-4 bg-rose-50/50 border border-rose-100 rounded-lg space-y-3">
           <div className="flex items-start gap-2 text-rose-800">
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />

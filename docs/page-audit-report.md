@@ -176,6 +176,81 @@ Verification:
 
 This commit is ready for server-side full verification, not final production sign-off.
 
+## R5 Data Trust Recovery
+
+### Runtime Error Fix
+
+- `isDemoDataEnabled` is now defined in `src/server/routes/data-center.routes.ts`.
+- `/api/data-center/detail` no longer depends on an undefined runtime helper.
+- Routine `dataSourceExplain` fields no longer present legacy/fallback as a normal trusted source; legacy fallback flags are only exposed under `debug` outside production.
+
+### Meta Sync Chain
+
+| Page | Sync chain |
+| --- | --- |
+| `DataDetailsDashboard` | `sync_meta_accounts -> sync_meta_insights -> refresh_meta_datacenter_ledger -> loadData` |
+| `CampaignStructureDashboard` | `sync_meta_accounts -> sync_meta_structure -> sync_meta_insights -> fetchData` |
+| `AudienceAnalysisDashboard` | `sync_meta_audience -> fetchAudienceInsights` |
+| `CreativeIntelligenceDashboard` | `sync_meta_creatives -> fetchCreatives` |
+
+### Safe Fact Write
+
+- `meta-realtime-sync.service.ts` no longer calls `cleanMetaAccountFactsForRange` before fetching fresh Meta API rows.
+- Empty Meta API responses are recorded as `NO_NEW_DATA_FROM_META_API` in `failedAccounts` and do not delete existing facts.
+- `cleanMetaAccountFactsForRange` remains documented as a dangerous maintenance helper and is not part of the realtime fetch-before-write path.
+
+### Refresh Is Readonly
+
+- Data Center page refresh flows call local read APIs only.
+- `GET /api/data-center/stores/:storeId/reconciliation` no longer triggers store sync or ledger refresh.
+- Frontend code no longer calls legacy sync endpoints such as `/sync/rebuild`, `/sync/data-center/refresh*`, `/sync/meta-realtime`, or `/sync/meta-audience-breakdown`.
+
+### Sync Observability
+
+- Added `SyncStatusPanel` for account, hierarchy, audience, and creative pages.
+- Sync receipts show `chainId`, `taskIds`, fetched/saved/updated counts, target account count, and failed account details when present.
+- `/api/sync/trigger` returns richer receipts for Meta accounts, structure, insights, creatives, audience, and ledger refresh tasks, including 409 `SYNC_ALREADY_RUNNING` details.
+
+### Notices
+
+- Audience and creative pages keep normal data views free of persistent explanatory boxes.
+- Empty or unhealthy states render a single dynamic status notice only when the current result set is empty and health status is not `READY`/`OK`.
+- Failed read refreshes preserve the last good local dataset instead of clearing the page to zero.
+
+### Diagnostic Usability
+
+- Added `DiagnosticIssueCard` and wired it into diagnosis overview and business diagnosis pages.
+- Default diagnosis cards no longer show raw `issueId`.
+- Account objects render account name plus cleaned numeric Meta account id; store objects render store name plus store id.
+- `unmapped_spend_account` now belongs to `data_health_notice` with mapping/data-health metadata and is filtered out of business recommendation pages by default.
+
+### AI Summary
+
+- When AI safety/explain assistance is disabled, `AiDashboardSummaryCard` shows a neutral disabled state.
+- AI summary failure does not block rule-based diagnosis results.
+
+### Hard Grep Results
+
+| Pattern | Result |
+| --- | --- |
+| `isDemoDataEnabled` in `data-center.routes.ts` | Found definition and usage |
+| `cleanMetaAccountFactsForRange` in `meta-realtime-sync.service.ts` | `<NO_MATCH>` |
+| `issue: item` in `src/components` | `<NO_MATCH>` |
+| `{iss.issueId}` in `src/components/diagnosis` | `<NO_MATCH>` |
+| `ACC_ACT/acc_act/STORE_1/store_1` in `src/components/diagnosis` | `<NO_MATCH>` |
+| `活动账户未关联任何独立站店铺` | Backend data-health rule only |
+| `数据源健康缺失提醒` in `src/components` | `<NO_MATCH>` |
+| legacy frontend sync endpoints | `<NO_MATCH>` |
+
+### Verification
+
+| Command | Result |
+| --- | --- |
+| `npm run lint` | Passed |
+| `npm run build` | Passed |
+
+This is a local repository implementation and build verification record. It is not a substitute for VPS real-data smoke testing.
+
 ## R4-B Account Display Format
 
 Added `src/components/common/MetaAccountDisplay.tsx`.

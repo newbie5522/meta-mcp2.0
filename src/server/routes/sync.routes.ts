@@ -37,6 +37,98 @@ function requireManualSyncEnabled(req: any, res: any, next: any) {
   return next();
 }
 
+function parseSyncMetadata(log: any) {
+  if (!log?.metadata) return {};
+  if (typeof log.metadata === "object") return log.metadata;
+  try {
+    return JSON.parse(String(log.metadata));
+  } catch {
+    return {};
+  }
+}
+
+async function summarizeSyncLogs(taskIds: string[]) {
+  if (!Array.isArray(taskIds) || taskIds.length === 0) {
+    return {
+      recordsFetched: 0,
+      recordsSaved: 0,
+      recordsUpdated: 0,
+      failedAccounts: [],
+      targetAccountsCount: null,
+      hasFailedTask: false
+    };
+  }
+
+  const logs = await prisma.syncLog.findMany({
+    where: { id: { in: taskIds } }
+  });
+
+  let recordsFetched = 0;
+  let recordsSaved = 0;
+  let recordsUpdated = 0;
+  const failedAccounts: any[] = [];
+  let targetAccountsCount: number | null = null;
+  let hasFailedTask = false;
+
+  for (const log of logs) {
+    const metadata = parseSyncMetadata(log);
+    recordsFetched += Number(log.recordsFetched || 0);
+    recordsSaved += Number(log.recordsSaved || 0);
+    recordsUpdated += Number(metadata.recordsUpdated || 0);
+    if (Array.isArray(metadata.failedAccounts)) {
+      failedAccounts.push(...metadata.failedAccounts);
+    }
+    const nextTargetCount = Number(
+      metadata.targetAccountsCount ?? metadata.accountsSynced ?? metadata.accountsChecked ?? NaN
+    );
+    if (Number.isFinite(nextTargetCount)) {
+      targetAccountsCount = Math.max(targetAccountsCount || 0, nextTargetCount);
+    }
+    if (log.status === "failed") {
+      hasFailedTask = true;
+    }
+  }
+
+  return {
+    recordsFetched,
+    recordsSaved,
+    recordsUpdated,
+    failedAccounts,
+    targetAccountsCount,
+    hasFailedTask
+  };
+}
+
+function buildLimitReceipt(rawLimit: any, targetCount: number) {
+  const requestedLimit =
+    rawLimit !== undefined && rawLimit !== null && rawLimit !== ""
+      ? Number.parseInt(String(rawLimit), 10)
+      : null;
+  const appliedLimit =
+    requestedLimit !== null && Number.isFinite(requestedLimit)
+      ? Math.max(1, Math.min(requestedLimit || 1, 50))
+      : null;
+
+  return {
+    requestedLimit,
+    appliedLimit,
+    targetAccountsCount: targetCount,
+    hasMoreTargets: appliedLimit !== null ? targetCount >= appliedLimit : false
+  };
+}
+
+function deriveSyncStatus(summary: any) {
+  if (summary.hasFailedTask || summary.failedAccounts?.length > 0) {
+    return summary.recordsFetched > 0 || summary.recordsSaved > 0 || summary.recordsUpdated > 0
+      ? "PARTIAL_SUCCESS"
+      : "NO_NEW_DATA";
+  }
+
+  return summary.recordsFetched === 0 && summary.recordsSaved === 0 && summary.recordsUpdated === 0
+    ? "NO_NEW_DATA"
+    : "SUCCESS";
+}
+
 // ============================================================
 // 📊 状态查询接口（保留，不删除）
 // ============================================================
@@ -248,6 +340,7 @@ router.post("/sync/trigger", async (req, res) => {
 
   try {
     console.log(`[Sync Trigger] Chain ${chainId} started with taskType: ${taskType}`);
+    await assertNoRunningTask([taskType]);
 
     // ============================================================
     // 前端安全任务（不需要 ENABLE_MANUAL_SYNC）
@@ -264,8 +357,6 @@ router.post("/sync/trigger", async (req, res) => {
       });
 
       let lastTaskId: string | null = null;
-      let recordsFetched = 0;
-      let recordsSaved = 0;
       const taskIds: string[] = [];
 
       for (const account of targets) {
@@ -280,20 +371,18 @@ router.post("/sync/trigger", async (req, res) => {
         );
         taskIds.push(taskId);
         lastTaskId = taskId;
-
-        const log = await prisma.syncLog.findUnique({ where: { id: taskId } });
-        recordsFetched += log?.recordsFetched || 0;
-        recordsSaved += log?.recordsSaved || 0;
       }
 
-      const status = recordsFetched === 0 && recordsSaved === 0 ? "NO_NEW_DATA" : "SUCCESS";
+      const summary = await summarizeSyncLogs(taskIds);
+      const limitReceipt = buildLimitReceipt(limit, targets.length);
+      const status = deriveSyncStatus(summary);
       return res.json({
         success: true,
         status,
         message:
           status === "NO_NEW_DATA"
             ? `同步完成，但 Meta API 在当前日期范围没有返回新的广告表现数据。已检查 ${targets.length} 个安全范围内账户。`
-            : `同步完成：已检查 ${targets.length} 个账户，拉取 ${recordsFetched} 条 Meta 表现记录，写入/更新 ${recordsSaved} 条事实记录。`,
+            : `同步完成：已检查 ${targets.length} 个账户，拉取 ${summary.recordsFetched} 条 Meta 表现记录，写入 ${summary.recordsSaved} 条，更新 ${summary.recordsUpdated} 条事实记录。`,
         chainId,
         taskType,
         taskIds,
@@ -302,8 +391,11 @@ router.post("/sync/trigger", async (req, res) => {
           name: account.fb_account_name,
           storeId: account.storeId || null
         })),
-        recordsFetched,
-        recordsSaved,
+        recordsFetched: summary.recordsFetched,
+        recordsSaved: summary.recordsSaved,
+        recordsUpdated: summary.recordsUpdated,
+        failedAccounts: summary.failedAccounts,
+        ...limitReceipt,
         startDate: range.startDate,
         endDate: range.endDate
       } as SyncTriggerResponse);
@@ -316,8 +408,6 @@ router.post("/sync/trigger", async (req, res) => {
       const targets = await resolveSafeStoreTargets({ storeId, limit });
 
       let lastTaskId: string | null = null;
-      let recordsFetched = 0;
-      let recordsSaved = 0;
       const taskIds: string[] = [];
 
       for (const store of targets) {
@@ -336,20 +426,17 @@ router.post("/sync/trigger", async (req, res) => {
         );
         taskIds.push(taskId);
         lastTaskId = taskId;
-
-        const log = await prisma.syncLog.findUnique({ where: { id: taskId } });
-        recordsFetched += log?.recordsFetched || 0;
-        recordsSaved += log?.recordsSaved || 0;
       }
 
-      const status = recordsFetched === 0 && recordsSaved === 0 ? "NO_NEW_DATA" : "SUCCESS";
+      const summary = await summarizeSyncLogs(taskIds);
+      const status = deriveSyncStatus(summary);
       return res.json({
         success: true,
         status,
         message:
           status === "NO_NEW_DATA"
             ? `同步完成，但店铺 API 在当前日期范围没有返回新的订单数据。已检查 ${targets.length} 个可同步店铺。`
-            : `同步完成：已检查 ${targets.length} 个店铺，拉取 ${recordsFetched} 条订单记录，写入/更新 ${recordsSaved} 条订单事实。`,
+            : `同步完成：已检查 ${targets.length} 个店铺，拉取 ${summary.recordsFetched} 条订单记录，写入 ${summary.recordsSaved} 条，更新 ${summary.recordsUpdated} 条订单事实。`,
         chainId,
         taskType,
         taskIds,
@@ -359,8 +446,10 @@ router.post("/sync/trigger", async (req, res) => {
           platform: store.platform,
           mode: store.mode
         })),
-        recordsFetched,
-        recordsSaved,
+        recordsFetched: summary.recordsFetched,
+        recordsSaved: summary.recordsSaved,
+        recordsUpdated: summary.recordsUpdated,
+        failedAccounts: summary.failedAccounts,
         startDate: range.startDate,
         endDate: range.endDate
       } as SyncTriggerResponse);
@@ -380,9 +469,11 @@ router.post("/sync/trigger", async (req, res) => {
 
       const log = await prisma.syncLog.findUnique({ where: { id: taskId } });
 
-      const recordsFetched = log?.recordsFetched || 0;
-      const recordsSaved = log?.recordsSaved || 0;
-      const status = recordsFetched === 0 && recordsSaved === 0 ? "NO_NEW_DATA" : "SUCCESS";
+      const summary = await summarizeSyncLogs([taskId]);
+      const limitReceipt = buildLimitReceipt(limit, summary.targetAccountsCount || 0);
+      const recordsFetched = summary.recordsFetched || log?.recordsFetched || 0;
+      const recordsSaved = summary.recordsSaved || log?.recordsSaved || 0;
+      const status = deriveSyncStatus(summary);
 
       return res.json({
         success: true,
@@ -395,7 +486,12 @@ router.post("/sync/trigger", async (req, res) => {
         taskType,
         taskIds: [taskId],
         recordsFetched,
-        recordsSaved
+        recordsSaved,
+        recordsUpdated: summary.recordsUpdated,
+        failedAccounts: summary.failedAccounts,
+        ...limitReceipt,
+        startDate: startDate || null,
+        endDate: endDate || null
       } as SyncTriggerResponse);
     }
 
@@ -424,8 +520,6 @@ router.post("/sync/trigger", async (req, res) => {
       });
 
       let lastTaskId: string | null = structureTaskId;
-      let recordsFetched = 0;
-      let recordsSaved = 0;
       const taskIds: string[] = [structureTaskId];
 
       for (const account of targets) {
@@ -441,15 +535,15 @@ router.post("/sync/trigger", async (req, res) => {
 
         taskIds.push(taskId);
         lastTaskId = taskId;
-
-        const log = await prisma.syncLog.findUnique({ where: { id: taskId } });
-        recordsFetched += log?.recordsFetched || 0;
-        recordsSaved += log?.recordsSaved || 0;
       }
+
+      const summary = await summarizeSyncLogs(taskIds);
+      const limitReceipt = buildLimitReceipt(limit, targets.length);
+      const status = deriveSyncStatus(summary);
 
       return res.json({
         success: true,
-        status: "SUCCESS",
+        status,
         message: `创意素材链路同步完成：已同步广告结构与 Ad Level 成效，处理 ${targets.length} 个账户，期间 ${range.startDate} 到 ${range.endDate}。`,
         chainId,
         taskType,
@@ -459,8 +553,11 @@ router.post("/sync/trigger", async (req, res) => {
           name: account.fb_account_name,
           storeId: account.storeId || null
         })),
-        recordsFetched,
-        recordsSaved,
+        recordsFetched: summary.recordsFetched,
+        recordsSaved: summary.recordsSaved,
+        recordsUpdated: summary.recordsUpdated,
+        failedAccounts: summary.failedAccounts,
+        ...limitReceipt,
         startDate: range.startDate,
         endDate: range.endDate
       } as SyncTriggerResponse);
@@ -468,14 +565,23 @@ router.post("/sync/trigger", async (req, res) => {
 
     if (taskType === SyncTaskType.SYNC_META_ACCOUNTS) {
       const taskId = await SyncCenter.syncMetaAccounts(chainId, "frontend_safe_sync");
-      await SyncCenter.syncMetaActivity(chainId, "frontend_safe_sync", taskId);
+      const activityTaskId = await SyncCenter.syncMetaActivity(chainId, "frontend_safe_sync", taskId);
+      const taskIds = [taskId, activityTaskId];
+      const summary = await summarizeSyncLogs(taskIds);
       return res.json({
         success: true,
         status: "SUCCESS",
         message: "成功同步并更新 Meta 客户及有效广告账户状态 (AdAccount)。",
         chainId,
         taskType,
-        taskIds: [taskId]
+        taskIds,
+        recordsFetched: summary.recordsFetched,
+        recordsSaved: summary.recordsSaved,
+        recordsUpdated: summary.recordsUpdated,
+        targetAccountsCount: summary.targetAccountsCount,
+        failedAccounts: summary.failedAccounts,
+        startDate: startDate || null,
+        endDate: endDate || null
       } as SyncTriggerResponse);
     }
 
@@ -506,13 +612,24 @@ router.post("/sync/trigger", async (req, res) => {
         lastTaskId = taskId;
       }
 
+      const summary = await summarizeSyncLogs(taskIds);
+      const limitReceipt = buildLimitReceipt(limit, targets.length);
+      const status = deriveSyncStatus(summary);
+
       return res.json({
         success: true,
-        status: "SUCCESS",
+        status,
         message: `成功完成受众与渠道细分数据同步（已处理 ${targets.length} 个账户，期间: ${range.startDate} 到 ${range.endDate}）。`,
         chainId,
         taskType,
-        taskIds
+        taskIds,
+        recordsFetched: summary.recordsFetched,
+        recordsSaved: summary.recordsSaved,
+        recordsUpdated: summary.recordsUpdated,
+        failedAccounts: summary.failedAccounts,
+        ...limitReceipt,
+        startDate: range.startDate,
+        endDate: range.endDate
       } as SyncTriggerResponse);
     }
 
@@ -556,7 +673,12 @@ router.post("/sync/trigger", async (req, res) => {
         taskType,
         orderCount,
         grossSales,
-        snapshotsCount: result.snapshots?.length || 0
+        snapshotsCount: result.snapshots?.length || 0,
+        recordsFetched: orderCount,
+        recordsSaved: result.snapshots?.length || 0,
+        recordsUpdated: 0,
+        startDate,
+        endDate
       } as SyncTriggerResponse);
     }
 
@@ -587,8 +709,9 @@ router.post("/sync/trigger", async (req, res) => {
 
       const recordsFetched = result.recordsFetched || 0;
       const recordsSaved = result.recordsSaved || 0;
+      const recordsUpdated = result.recordsUpdated || 0;
       const status =
-        recordsFetched === 0 && recordsSaved === 0
+        recordsFetched === 0 && recordsSaved === 0 && recordsUpdated === 0
           ? "NO_NEW_DATA"
           : "SUCCESS";
 
@@ -602,8 +725,14 @@ router.post("/sync/trigger", async (req, res) => {
         chainId,
         taskType,
         targetAccounts: metaLedgerAccountIds,
+        targetAccountsCount: metaLedgerAccountIds.length,
         recordsFetched,
         recordsSaved,
+        recordsUpdated,
+        failedAccounts: result.failedAccounts || [],
+        taskIds: [],
+        startDate,
+        endDate,
         ...result
       } as SyncTriggerResponse);
       }
@@ -618,6 +747,20 @@ router.post("/sync/trigger", async (req, res) => {
     console.error(`[Sync Trigger] Chain ${chainId} failed:`, error);
 
     const statusCode = error?.statusCode || 500;
+    if (statusCode === 409 || error?.code === "SYNC_ALREADY_RUNNING") {
+      return res.status(409).json({
+        success: false,
+        status: "RUNNING",
+        error: "SYNC_ALREADY_RUNNING",
+        message: error?.message || "已有同步任务正在运行。",
+        chainId,
+        taskType,
+        runningTask: error?.runningTask || null,
+        startDate: startDate || null,
+        endDate: endDate || null
+      } as SyncTriggerResponse);
+    }
+
     return res.status(statusCode).json({
       success: false,
       status: "FAILED",

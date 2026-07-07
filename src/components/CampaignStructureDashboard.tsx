@@ -25,6 +25,8 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountDisplay";
+import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
+import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 
 function getHierarchyEmptyMessage(dataHealth: any, includeZeroSpend: boolean) {
   if (dataHealth?.status === "EMPTY_STRUCTURE" || dataHealth?.reason === "NO_STRUCTURE_ROWS") {
@@ -65,6 +67,8 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
   const [dataHealth, setDataHealth] = useState<any>(null);
   const [structureSummary, setStructureSummary] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const [syncing, setSyncing] = useState<boolean>(false);
+  const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
 
   // Manage initial load with URL parameters (deep linkage from Account Performance page or Creative Insights tab)
   useEffect(() => {
@@ -333,32 +337,71 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
   // Sync utilities trigger
   const handleSyncAdHierarchy = async () => {
+    setSyncing(true);
     const tId = toast.loading("正在触发真实同步任务...");
-    try {
-      const startStr = format(startDate, "yyyy-MM-dd");
-      const endStr = format(endDate, "yyyy-MM-dd");
+    const startStr = format(startDate, "yyyy-MM-dd");
+    const endStr = format(endDate, "yyyy-MM-dd");
+    const days = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000) + 1);
 
-      await axios.post("/api/sync/trigger", {
-        taskType: "sync_meta_structure",
-        accountId: selectedAccount || undefined,
-        startDate: startStr,
-        endDate: endStr,
-        days: 30
+    setSyncStatus({
+      status: "running",
+      message: "正在同步 Meta 账户列表..."
+    });
+
+    try {
+      const accountsResult = await triggerSyncTask({
+        taskType: "sync_meta_accounts"
       });
 
-      await axios.post("/api/sync/trigger", {
+      const structureResult = await triggerSyncTask({
+        taskType: "sync_meta_structure",
+        accountId: selectedAccount || undefined,
+        limit: selectedAccount ? undefined : 200
+      });
+
+      setSyncStatus({
+        status: "running",
+        message: "广告结构已同步，正在同步当前日期范围广告成效...",
+        chainId: structureResult.chainId || accountsResult.chainId || null,
+        taskIds: [
+          ...(accountsResult.taskIds || []),
+          ...(structureResult.taskIds || [])
+        ],
+        recordsFetched: structureResult.recordsFetched ?? null,
+        recordsSaved: structureResult.recordsSaved ?? null,
+        recordsUpdated: structureResult.recordsUpdated ?? null,
+        targetAccountsCount: structureResult.targetAccountsCount ?? null,
+        failedAccounts: structureResult.failedAccounts || null
+      });
+
+      const insightsResult = await triggerSyncTask({
         taskType: "sync_meta_insights",
         accountId: selectedAccount || undefined,
         startDate: startStr,
         endDate: endStr,
-        days: 30
+        days,
+        limit: selectedAccount ? undefined : 200
       });
+
+      setSyncStatus(mapSyncResultToPanel({
+        ...insightsResult,
+        taskIds: [
+          ...(accountsResult.taskIds || []),
+          ...(structureResult.taskIds || []),
+          ...(insightsResult.taskIds || [])
+        ],
+        targetAccountsCount: insightsResult.targetAccountsCount ?? structureResult.targetAccountsCount,
+        failedAccounts: insightsResult.failedAccounts || structureResult.failedAccounts || null
+      }));
 
       toast.success("同步数据任务已完成，正在刷新页面数据。", { id: tId });
       await fetchData();
     } catch (err: any) {
-      const data = err.response?.data;
+      const data = err.data || err.response?.data || err.response;
+      setSyncStatus(mapSyncErrorToPanel(err));
       toast.error("同步数据失败: " + (data?.message || data?.details || data?.error || err.message), { id: tId });
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -531,11 +574,14 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
             size="sm"
             className="h-9 px-3 border-blue-200 text-blue-700 bg-blue-50/10 hover:bg-blue-50"
             onClick={handleSyncAdHierarchy}
+            disabled={loading || syncing}
           >
             同步数据
           </Button>
         </div>
       </div>
+
+      <SyncStatusPanel status={syncStatus} />
 
       {structureSummary && (
         <div className={cn(

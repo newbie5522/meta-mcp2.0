@@ -16,7 +16,8 @@ import {
   Clock,
   AlertCircle
 } from "lucide-react";
-import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
+import { isBusinessActionableIssue, useDiagnosticsIssues } from "./useDiagnosticsIssues";
+import { DiagnosticIssueCard } from "./DiagnosticIssueCard";
 
 export function FunnelDiagnosisPage({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const {
@@ -33,8 +34,10 @@ export function FunnelDiagnosisPage({ startDate, endDate }: { startDate: Date; e
     return `${year}-${month}-${day}`;
   };
 
+  const businessIssues = issues.filter(isBusinessActionableIssue);
+
   // Extract all funnel snapshots
-  const snapshotIssues = issues.filter(iss => iss.evidence?.funnelSnapshot);
+  const snapshotIssues = businessIssues.filter(iss => iss.evidence?.funnelSnapshot);
 
   // 1. missingMetrics 汇总
   const allMissingMetrics = Array.from(new Set(
@@ -52,7 +55,7 @@ export function FunnelDiagnosisPage({ startDate, endDate }: { startDate: Date; e
 
   // Filter issues by the specified stages/kinds:
   // 3. landing_page_arrival 相关 issues
-  const landingPageArrivalIssues = issues.filter(
+  const landingPageArrivalIssues = businessIssues.filter(
     iss => 
       iss.funnelStage === "landing_page_arrival" || 
       String(iss.problemStage).includes("landing_page") || 
@@ -60,7 +63,7 @@ export function FunnelDiagnosisPage({ startDate, endDate }: { startDate: Date; e
   );
 
   // 4. product_page_intent 相关 issues
-  const productPageIntentIssues = issues.filter(
+  const productPageIntentIssues = businessIssues.filter(
     iss => 
       iss.funnelStage === "product_page_intent" || 
       String(iss.problemStage).includes("product_page") || 
@@ -68,7 +71,7 @@ export function FunnelDiagnosisPage({ startDate, endDate }: { startDate: Date; e
   );
 
   // 5. cart_to_checkout 相关 issues
-  const cartToCheckoutIssues = issues.filter(
+  const cartToCheckoutIssues = businessIssues.filter(
     iss => 
       iss.funnelStage === "cart_to_checkout" || 
       String(iss.problemStage).includes("cart") || 
@@ -76,7 +79,7 @@ export function FunnelDiagnosisPage({ startDate, endDate }: { startDate: Date; e
   );
 
   // 6. checkout_payment 相关 issues
-  const checkoutPaymentIssues = issues.filter(
+  const checkoutPaymentIssues = businessIssues.filter(
     iss => 
       iss.funnelStage === "checkout_payment" || 
       String(iss.problemStage).includes("checkout") || 
@@ -85,7 +88,7 @@ export function FunnelDiagnosisPage({ startDate, endDate }: { startDate: Date; e
   );
 
   // 7. meta_to_store_reconciliation 相关 issues
-  const metaToStoreReconciliationIssues = issues.filter(
+  const metaToStoreReconciliationIssues = businessIssues.filter(
     iss => 
       iss.funnelStage === "meta_to_store_reconciliation" || 
       String(iss.problemStage).includes("reconciliation") || 
@@ -129,25 +132,7 @@ export function FunnelDiagnosisPage({ startDate, endDate }: { startDate: Date; e
         ) : (
           <div className="space-y-3">
             {list.map((iss) => (
-              <div key={iss.issueId} className="p-3 bg-slate-50 rounded-lg border border-slate-150/50 space-y-2">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="font-mono font-bold text-slate-500 uppercase">{iss.issueId}</span>
-                  <span className={`px-1 rounded font-bold uppercase ${
-                    iss.severity === "critical" ? "text-red-700 bg-red-50" : "text-slate-700 bg-slate-100"
-                  }`}>
-                     {getSeverityLabel(iss.severity)}
-                  </span>
-                </div>
-                <h4 className="text-xs font-bold text-slate-900">{iss.title}</h4>
-                <p className="text-xs text-slate-650 leading-relaxed bg-white p-2.5 rounded border border-slate-100 italic">
-                  {iss.diagnosisReason || iss.oneLineReason}
-                </p>
-                {Array.isArray(iss.suggestedActions) && iss.suggestedActions.length > 0 && (
-                  <div className="text-[11px] text-slate-600 bg-blue-50/20 p-2 rounded">
-                    <strong>建议对策:</strong> {iss.suggestedActions.join(" | ")}
-                  </div>
-                )}
-              </div>
+              <DiagnosticIssueCard key={String(iss.issueId)} issue={iss} />
             ))}
           </div>
         )}

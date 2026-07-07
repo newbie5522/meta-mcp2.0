@@ -6,7 +6,6 @@ import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import { getProductIntelligence } from "../services/product-intelligence.service.js";
 import { getAggregatedCreativeInsights } from "../services/creative-insights.service.js";
-import { syncStoreData } from "../services/store-sync.service.js";
 import { normalizeMetaAccountId } from "../utils.js";
 import { getCountryAnalytics } from "../services/country-analytics.service.js";
 import { getStoreOrderFacts, getStoreOrderSummary } from "../services/order-fact.service.js";
@@ -16,12 +15,15 @@ import { runDataPipelineAudit } from "../services/data-pipeline-audit.service.js
 import { runDataCenterAudit } from "../services/data-center-audit.service.js";
 import { runDataCenterRebuild } from "../services/data-center-rebuild.service.js";
 import { ensureDataCenterFreshness, getFreshnessMeta } from "../services/data-center-auto-refresh.service.js";
-import { refreshStoreDataCenterLedger } from "../services/datacenter-store-ledger.service.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
 const router = Router();
+
+function isDemoDataEnabled(): boolean {
+  return process.env.ENABLE_DEMO_DATA === "true";
+}
 
 function toStoreInventoryDto(store: any) {
   return {
@@ -303,10 +305,12 @@ router.get("/detail", async (req, res) => {
         noMockData: true,
         orderSource: "Order.store_local_date",
         metaSource: "FactMetaPerformance",
-        mappingSource: "AccountMapping + AdAccount",
+        mappingSource: "AccountMapping + AdAccount"
+      },
+      debug: process.env.NODE_ENV !== "production" ? {
         legacyCreatedAtFallbackEnabled: allowLegacyFallback,
         legacyCreatedAtFallbackUsed: orderSummary.legacyFallbackUsed
-      },
+      } : undefined,
       appliedFilters,
       dateRange: buildDateRange(startStr, endStr)
     });
@@ -561,7 +565,6 @@ router.get("/audience", async (req, res) => {
         dataSourceExplain: {
           dateFilterApplied: true,
           primarySource: "FactAudienceBreakdown",
-          legacyUsed: false,
           noMockData: true
         },
         appliedFilters,
@@ -757,7 +760,6 @@ router.get("/audience", async (req, res) => {
         dataSourceExplain: {
           dateFilterApplied: true,
           primarySource: "FactAudienceBreakdown",
-          legacyUsed: false,
           noMockData: true
         }
       });
@@ -799,7 +801,6 @@ router.get("/audience", async (req, res) => {
       dataSourceExplain: {
         dateFilterApplied: true,
         primarySource: "FactAudienceBreakdown",
-        legacyUsed: false,
         noMockData: true
       }
     });
@@ -1271,9 +1272,7 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
     const startStr = startDate ? String(startDate) : dayjs().subtract(7, "day").format("YYYY-MM-DD");
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
 
-    // Perform live sync of store orders to get accurate audit results
-    const syncResults = await syncStoreData(startStr, endStr, String(store.id));
-    const auditReport = syncResults[store.id] || {
+    const auditReport = {
       storeId: store.id,
       storeName: store.name,
       platform: store.platform || "unknown",
@@ -1290,7 +1289,9 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       skippedReasons: [],
       duplicateCount: 0,
       failedCount: 0,
-      orderItems: []
+      orderItems: [],
+      readOnly: true,
+      message: "GET reconciliation is read-only. Use POST /api/sync/trigger to sync fresh store orders or refresh ledger."
     };
 
     // Calculate database totals (after syncing)
@@ -1332,36 +1333,17 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       systemSalesAmount += uo.orderTotal;
     });
 
-    let ledgerRefreshResult: any = null;
-    try {
-      const refreshResult = await refreshStoreDataCenterLedger({
-        storeId: store.id,
-        startDate: startStr,
-        endDate: endStr
-      });
-      const recordsSaved = refreshResult.snapshots.length;
-      const orderCount = refreshResult.snapshots.reduce((sum, s) => sum + (s.orderCount || 0), 0);
-      const grossSales = Number(refreshResult.snapshots.reduce((sum, s) => sum + (s.grossSales || 0), 0).toFixed(2));
+    const ledgerRefreshResult = {
+      success: true,
+      readOnly: true,
+      storeId: store.id,
+      startDate: startStr,
+      endDate: endStr,
+      source: "DataCenterStoreDaily",
+      message: "Ledger refresh is not executed by this GET endpoint."
+    };
 
-      ledgerRefreshResult = {
-        success: true,
-        storeId: store.id,
-        startDate: startStr,
-        endDate: endStr,
-        recordsSaved,
-        orderCount,
-        grossSales,
-        source: "DataCenterStoreDaily"
-      };
-    } catch (err: any) {
-      console.error("[Reconciliation] Ledger refresh failed:", err);
-      ledgerRefreshResult = {
-        success: false,
-        error: err.message || "Failed to refresh ledger"
-      };
-    }
-
-    // Now load canonical ledgers directly from the DB after refresh
+    // Load canonical ledgers directly from the DB without refreshing.
     const ledgers = await prisma.dataCenterStoreDaily.findMany({
       where: {
         storeId: store.id,
@@ -1932,9 +1914,7 @@ router.get("/accounts-performance", async (req, res) => {
         inventorySource: includeHistoricalAccounts
           ? "AdAccount + AccountMapping + DataCenterMetaAccountDaily"
           : "recentActivity90d AdAccount + active DataCenterMetaAccountDaily",
-        accountDisplayScope: includeHistoricalAccounts ? "historical_all" : "active_only",
-        legacySource: "None",
-        legacyUsed: false
+        accountDisplayScope: includeHistoricalAccounts ? "historical_all" : "active_only"
       },
       freshness
     });
@@ -2702,8 +2682,7 @@ router.get("/audience-insights", async (req, res) => {
     res.json({
       rows,
       dataSourceExplain: {
-        primarySource: "FactAudienceBreakdown",
-        legacyUsed: false
+        primarySource: "FactAudienceBreakdown"
       }
     });
   } catch (error: any) {
