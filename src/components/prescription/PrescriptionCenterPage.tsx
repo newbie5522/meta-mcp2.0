@@ -59,15 +59,6 @@ interface UniformIssue {
   ownerUserName?: string | null;
 }
 
-function getLocalDateString(offsetDays = 0) {
-  const today = new Date();
-  today.setDate(today.getDate() - offsetDays);
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, "0");
-  const day = String(today.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 function NonConfirmedActionPanel({
   issue,
   statusDetail,
@@ -161,10 +152,25 @@ function NonConfirmedActionPanel({
   );
 }
 
-export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: string }) {
+function formatDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function PrescriptionCenterPage({
+  currentSubTab,
+  startDate,
+  endDate
+}: {
+  currentSubTab?: string;
+  startDate: Date;
+  endDate: Date;
+}) {
   const [activeSubTab, setActiveSubTab] = useState<string>("rx-pending");
-  const [startDate, setStartDate] = useState<string>(() => getLocalDateString(29));
-  const [endDate, setEndDate] = useState<string>(() => getLocalDateString(0));
+  const startDateStr = formatDate(startDate);
+  const endDateStr = formatDate(endDate);
   
   // Local storage statuses hook
   const { statusMap, updateStatus, getStatusDetail } = useSuggestionStatus();
@@ -212,8 +218,8 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
           statusDetail: currentStatusDetail,
           context: {
             dateRange: {
-              startDate,
-              endDate
+              startDate: startDateStr,
+              endDate: endDateStr
             },
             currentPage: "prescription_center",
             userRole: "admin",
@@ -267,9 +273,11 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          startDate,
-          endDate,
-          includeDebug: true
+          startDate: startDateStr,
+          endDate: endDateStr,
+          includeDebug: false,
+          categories: ["production_suggestion", "data_health_notice"],
+          includeHealthy: false
         })
       });
 
@@ -280,7 +288,12 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
 
       const report = await response.json();
       if (report && report.success) {
-        setIssues(report.issues || []);
+        const filtered = (report.issues || []).filter((issue: UniformIssue) =>
+          issue.severity !== "healthy" &&
+          issue.category !== "debug_invalid" &&
+          (issue.category === "production_suggestion" || issue.category === "data_health_notice")
+        );
+        setIssues(filtered);
       } else {
         throw new Error(report.error || "获取异常：接口返回 success = false");
       }
@@ -297,7 +310,7 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
 
   useEffect(() => {
     fetchIssues();
-  }, [startDate, endDate]);
+  }, [startDateStr, endDateStr]);
 
   const pendingIssuesCount = issues.filter(r => {
     const s = getStatusDetail(r.issueId).status;
@@ -308,16 +321,13 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
 
   const acceptedIssuesCount = issues.filter(r => {
     const s = getStatusDetail(r.issueId).status;
-    return ["accepted", "in_progress", "executed"].includes(s);
+    return r.category === "production_suggestion" && ["accepted", "in_progress", "executed"].includes(s);
   }).length;
-
-  const debugIssuesCount = issues.filter(r => r.category === "debug_invalid").length;
 
   const tabsConfig = [
     { id: "rx-pending", label: "待处理建议", badge: pendingIssuesCount },
     { id: "rx-health", label: "数据健康提醒", badge: healthIssuesCount },
-    { id: "rx-accepted", label: "已采纳 / 执行中", badge: acceptedIssuesCount },
-    { id: "rx-debug", label: "规则命中记录", badge: debugIssuesCount }
+    { id: "rx-accepted", label: "已采纳 / 执行中", badge: acceptedIssuesCount }
   ];
 
   // Helper to filter items for current tab
@@ -334,11 +344,8 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
     if (activeSubTab === "rx-accepted") {
       return issues.filter(r => {
         const s = getStatusDetail(r.issueId).status;
-        return ["accepted", "in_progress", "executed"].includes(s);
+        return r.category === "production_suggestion" && ["accepted", "in_progress", "executed"].includes(s);
       });
-    }
-    if (activeSubTab === "rx-debug") {
-      return issues.filter(r => r.category === "debug_invalid");
     }
     return [];
   };
@@ -347,20 +354,6 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
-      {/* Disclaimer Banner */}
-      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
-        <div className="flex">
-          <div className="flex-shrink-0">
-            <span className="text-amber-500 font-bold">⚠️</span>
-          </div>
-          <div className="ml-3">
-            <p className="text-xs text-amber-800 font-bold">
-              建议处方中心已接入规则诊断结果。所有建议仅作为运营决策参考，采纳、执行和复盘均需人工确认。
-            </p>
-          </div>
-        </div>
-      </div>
-
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900">建议处方中心</h1>
@@ -368,28 +361,8 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
             整合规则诊断引擎产生的预警结果，进行本地采纳、忽略、执行中与已执行流转。
           </p>
         </div>
-
-        {/* Date Selector and Manual Refresh Button */}
-        <div className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-          <div className="flex items-center gap-1.5 text-xs text-slate-700 font-medium">
-            <span>开始:</span>
-            <input 
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="px-2 py-1 bg-white border border-slate-200 rounded-md shadow-inner text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-          <span className="text-slate-300">|</span>
-          <div className="flex items-center gap-1.5 text-xs text-slate-700 font-medium">
-            <span>结束:</span>
-            <input 
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="px-2 py-1 bg-white border border-slate-200 rounded-md shadow-inner text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
+        <div className="flex items-center gap-3 text-xs text-slate-500 font-semibold">
+          <span>当前统计期间：{startDateStr} 至 {endDateStr}</span>
           <button 
             onClick={fetchIssues}
             disabled={loading}
@@ -487,9 +460,7 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
                 case "critical":
                   return "bg-red-50 border-red-200 text-red-700";
                 case "warning":
-                  return "bg-amber-50 border-amber-200 text-amber-700";
-                case "healthy":
-                  return "bg-emerald-50 border-emerald-200 text-emerald-700";
+                  return "bg-slate-100 border-slate-200 text-slate-700";
                 default:
                   return "bg-blue-50 border-blue-200 text-blue-700";
               }
@@ -499,7 +470,6 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
               switch (sv) {
                 case "critical": return "严重 (Critical)";
                 case "warning": return "警示 (Warning)";
-                case "healthy": return "健康 (Healthy)";
                 default: return "一栏 (Info)";
               }
             };
@@ -521,7 +491,7 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
               }
               return (
                 <span className="flex items-center gap-1 bg-slate-105 border border-slate-205 px-2 py-0.5 text-[10px] text-slate-700 font-extrabold rounded">
-                  规则命中记录，不可执行
+                  非运营建议
                 </span>
               );
             };
@@ -612,17 +582,17 @@ export function PrescriptionCenterPage({ currentSubTab }: { currentSubTab?: stri
 
                 {/* Evidence Snapshot */}
                 {item.evidence?.funnelSnapshot && (
-                  <div className="text-xs bg-amber-50/50 p-3 rounded-lg border border-amber-200/50 mt-2 space-y-1">
-                    <p className="font-bold text-amber-900 flex items-center gap-1 select-none">
-                      ⚠️ 漏斗快照数据异常提示 (funnelSnapshot)
+                  <div className="text-xs bg-slate-50 p-3 rounded-lg border border-slate-200 mt-2 space-y-1">
+                    <p className="font-bold text-slate-900 flex items-center gap-1 select-none">
+                      漏斗快照数据提示 (funnelSnapshot)
                     </p>
                     {item.evidence.funnelSnapshot.missingMetrics && (
-                      <p className="text-amber-850">
+                      <p className="text-slate-700">
                         <strong>缺漏流损指标:</strong> {Array.isArray(item.evidence.funnelSnapshot.missingMetrics) ? item.evidence.funnelSnapshot.missingMetrics.join(", ") : String(item.evidence.funnelSnapshot.missingMetrics)}
                       </p>
                     )}
                     {item.evidence.funnelSnapshot.notes && (
-                      <p className="text-amber-800 whitespace-pre-wrap">
+                      <p className="text-slate-600 whitespace-pre-wrap">
                         <strong>快照备忘:</strong> {item.evidence.funnelSnapshot.notes}
                       </p>
                     )}

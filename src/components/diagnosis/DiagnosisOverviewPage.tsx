@@ -5,7 +5,6 @@ import {
   DollarSign, 
   Layers, 
   Compass, 
-  ShieldCheck, 
   CheckCircle2, 
   ArrowRight,
   TrendingUp,
@@ -15,26 +14,51 @@ import {
   Inbox,
   User,
   Heart,
-  EyeOff,
-  Sparkles,
-  Calendar
+  Sparkles
 } from "lucide-react";
 import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
 import { AiDashboardSummaryCard } from "../ai/AiDashboardSummaryCard";
 
-export function DiagnosisOverviewPage() {
+export function DiagnosisOverviewPage({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const {
     issues,
     summary,
     loading,
     error,
     reportMeta,
-    refetch,
-    startDate,
-    endDate,
-    setStartDate,
-    setEndDate
-  } = useDiagnosticsIssues();
+    refetch
+  } = useDiagnosticsIssues({ startDate, endDate });
+
+  const formatDate = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const startDateStr = formatDate(startDate);
+  const endDateStr = formatDate(endDate);
+
+  const compactIssues = issues
+    .filter(issue =>
+      issue.category === "production_suggestion" &&
+      issue.severity !== "healthy"
+    )
+    .slice(0, 10)
+    .map(issue => ({
+      issueId: issue.issueId,
+      category: issue.category,
+      severity: issue.severity,
+      entityType: issue.entityType,
+      entityId: issue.entityId,
+      entityName: issue.entityName,
+      title: issue.title,
+      oneLineReason: issue.oneLineReason,
+      diagnosisReason: issue.diagnosisReason,
+      suggestedActions: Array.isArray(issue.suggestedActions) ? issue.suggestedActions.slice(0, 3) : [],
+      priorityScore: issue.priorityScore,
+      confidenceScore: issue.confidenceScore
+    }));
 
   // Dashboard-level AI dry-run state
   const [dashboardAiState, setDashboardAiState] = useState<{
@@ -63,11 +87,11 @@ export function DiagnosisOverviewPage() {
         body: JSON.stringify({
           provider: "auto",
           model: "",
-          issues: issues,
+          issues: compactIssues,
           context: {
             dateRange: {
-              startDate,
-              endDate,
+              startDate: startDateStr,
+              endDate: endDateStr,
             },
             currentPage: "diagnosis_overview",
             userRole: "admin",
@@ -136,21 +160,7 @@ export function DiagnosisOverviewPage() {
    
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
-      {/* Disclaimer Banner */}
-      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
-        <div className="flex">
-          <div className="flex-shrink-0">
-            <span className="text-amber-500 font-bold">⚠️</span>
-          </div>
-          <div className="ml-3">
-            <p className="text-xs text-amber-800 font-bold">
-              当前页面仅展示真实诊断结果；如果所选时间内没有异常，会显示为空状态。
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Intro & Date Selector Block */}
+      {/* Intro block */}
       <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-indigo-800 rounded-2xl p-6 sm:p-8 text-white shadow-lg relative overflow-hidden flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
         <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 w-64 h-64 bg-white/5 rounded-full blur-2xl pointer-events-none" />
         <div className="absolute right-12 bottom-0 translate-y-12 w-48 h-48 bg-indigo-500/10 rounded-full blur-xl pointer-events-none" />
@@ -165,38 +175,8 @@ export function DiagnosisOverviewPage() {
           </p>
         </div>
 
-        {/* Date Selector */}
-        <div className="relative z-10 flex items-center gap-2 bg-white/10 backdrop-blur-md p-3 rounded-xl border border-white/10 shrink-0">
-          <Calendar className="w-4 h-4 text-indigo-200" />
-          <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
-            <div className="flex items-center gap-1">
-              <span>开始:</span>
-              <input 
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="px-2 py-1 bg-slate-900/50 border border-indigo-400/30 rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-300 w-32"
-              />
-            </div>
-            <span className="text-white/30">|</span>
-            <div className="flex items-center gap-1">
-              <span>结束:</span>
-              <input 
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="px-2 py-1 bg-slate-900/50 border border-indigo-400/30 rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-300 w-32"
-              />
-            </div>
-            <button 
-              onClick={refetch}
-              disabled={loading}
-              className="p-1 px-2 bg-indigo-600 hover:bg-indigo-500 rounded text-white transition-all disabled:bg-indigo-700/50"
-              title="手动刷新"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-            </button>
-          </div>
+        <div className="relative z-10 bg-white/10 backdrop-blur-md p-3 rounded-xl border border-white/10 shrink-0 text-xs font-semibold">
+          当前统计期间：{startDateStr} 至 {endDateStr}
         </div>
       </div>
 
@@ -250,7 +230,7 @@ export function DiagnosisOverviewPage() {
     ) : (
         <>
           {/* Overview Stats Dashboard Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             
             {/* Stat 1: Production suggestions */}
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
@@ -265,36 +245,6 @@ export function DiagnosisOverviewPage() {
                 <span className="text-xs text-emerald-600 font-semibold">{summary.criticalCount} 严重 · {summary.warningCount} 警示</span>
               </div>
               <p className="text-xs text-slate-400 mt-2">正式诊断出的优化建议数量</p>
-            </div>
-
-            {/* Stat 2: Data Health warnings */}
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">数据健康提醒</span>
-                <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                  <AlertCircle className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-4 flex items-baseline gap-2">
-                <span className="text-3xl font-bold text-slate-900">{summary.dataHealthNoticeCount}</span>
-                <span className="text-xs text-indigo-600 font-semibold">条提醒</span>
-              </div>
-              <p className="text-xs text-slate-400 mt-2">数据延迟或对账异常提报</p>
-            </div>
-
-            {/* Stat 3: Debug logs */}
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">过滤记录</span>
-                <div className="w-8 h-8 rounded-lg bg-slate-50 text-slate-600 flex items-center justify-center">
-                  <EyeOff className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-4 flex items-baseline gap-2">
-                <span className="text-3xl font-bold text-slate-900">{summary.debugInvalidCount}</span>
-                <span className="text-xs text-slate-500 font-semibold">已过滤</span>
-              </div>
-              <p className="text-xs text-slate-400 mt-2">未进入正式建议的记录数量</p>
             </div>
 
             {/* Stat 4: Store list impact */}
@@ -336,7 +286,7 @@ export function DiagnosisOverviewPage() {
             response={dashboardAiState.response}
             onGenerate={handleGenerateDashboardSummary}
             onRetry={handleGenerateDashboardSummary}
-            disabled={issues.length === 0}
+            disabled={compactIssues.length === 0}
           />
 
           {/* Core breakdowns and lists */}
@@ -437,7 +387,7 @@ export function DiagnosisOverviewPage() {
                   {Object.entries(summary.funnelStages).map(([stage, count]) => (
                     <div key={stage} className="flex items-center justify-between text-xs font-semibold">
                       <span className="text-slate-600 font-mono">{stage}</span>
-                      <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded-md font-mono">{count} 项</span>
+                      <span className="px-2 py-0.5 bg-slate-50 text-slate-700 border border-slate-100 rounded-md font-mono">{count} 项</span>
                     </div>
                   ))}
                 </div>
@@ -447,39 +397,6 @@ export function DiagnosisOverviewPage() {
 
           </div>
 
-          {/* Underlay table mapping: Data health problems */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-indigo-650" />
-              数据健康专项检测提示 (Tracking / Mapping)
-            </h3>
-            
-            {issues.filter(iss => iss.category === "data_health_notice" || iss.problemStage === "data_health").length === 0 ? (
-              <p className="text-xs text-slate-400 italic">在此时间范围内暂未发现数据对账中断、映射错误等数据健康问题。</p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {issues.filter(iss => iss.category === "data_health_notice" || iss.problemStage === "data_health").map((iss) => (
-                  <div key={iss.issueId} className="p-4 rounded-xl border border-indigo-100 bg-indigo-50/20 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 text-[10px] rounded font-bold uppercase">
-                        {iss.issueId}
-                      </span>
-                      <span className="text-[10px] text-slate-405 font-mono">
-                        严重度: {iss.severity}
-                      </span>
-                    </div>
-                    <h5 className="text-xs font-bold text-slate-900">{iss.title}</h5>
-                    <p className="text-xs text-slate-600">{iss.diagnosisReason || iss.oneLineReason}</p>
-                    {iss.limitations && iss.limitations.length > 0 && (
-                      <div className="text-[10px] text-red-700 bg-red-50/50 p-2 rounded">
-                        <strong>限制:</strong> {iss.limitations.join(", ")}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </>
       )}
     </div>

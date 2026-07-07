@@ -131,7 +131,7 @@ function priorityLabel(priority: AiWorkbenchCard["priority"]): string {
 
 function priorityClass(priority: AiWorkbenchCard["priority"]): string {
   if (priority === "high") return "bg-red-50 text-red-700 border-red-200";
-  if (priority === "medium") return "bg-amber-50 text-amber-700 border-amber-200";
+  if (priority === "medium") return "bg-slate-50 text-slate-700 border-slate-200";
   return "bg-blue-50 text-blue-700 border-blue-200";
 }
 
@@ -557,7 +557,7 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
 
           <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-sm space-y-4">
             <div className="flex items-center gap-2">
-              <Database className="w-5 h-5 text-amber-600" />
+              <Database className="w-5 h-5 text-slate-600" />
               <h2 className="text-lg font-bold text-slate-900">数据健康检测</h2>
             </div>
             {!overview || overview.dataHealthNotices.length === 0 ? (
@@ -567,13 +567,13 @@ export function AIAnalysisCenter({ startDate, endDate, defaultType = "account_an
             ) : (
               <div className="space-y-3">
                 {overview.dataHealthNotices.map((notice, index) => (
-                  <div key={`${notice.type}-${notice.entityId}-${index}`} className="rounded-md border border-amber-200 bg-amber-50 p-4">
+                  <div key={`${notice.type}-${notice.entityId}-${index}`} className="rounded-md border border-slate-200 bg-slate-50 p-4">
                     <div className="flex items-start gap-3">
-                      <AlertTriangle className="w-4 h-4 text-amber-700 mt-0.5" />
+                      <AlertTriangle className="w-4 h-4 text-slate-600 mt-0.5" />
                       <div className="space-y-1">
-                        <p className="text-sm font-bold text-amber-900">{notice.title}</p>
-                        <p className="text-sm text-amber-800 leading-relaxed">{notice.message}</p>
-                        <p className="text-xs text-amber-700 font-mono">
+                        <p className="text-sm font-bold text-slate-900">{notice.title}</p>
+                        <p className="text-sm text-slate-700 leading-relaxed">{notice.message}</p>
+                        <p className="text-xs text-slate-500 font-mono">
                           {notice.entityType}: {notice.entityId}
                         </p>
                       </div>

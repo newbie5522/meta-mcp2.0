@@ -436,13 +436,13 @@ setAiReport(reportText || "未返回分析报告");
 
       {/* 📊 Main Store Data Table */}
       {((dataHealth.status === "EMPTY_FACTS" || dataHealth.status === "EMPTY") || dataHealth.lastFailedSync?.errorMessage) && !loading && (
-        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-slate-800 text-xs shadow-sm">
-          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+        <div className="flex items-start gap-3 p-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 text-xs shadow-sm">
+          <AlertTriangle className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
           <div className="space-y-1">
-            <h5 className="font-bold text-amber-900">
+            <h5 className="font-bold text-slate-900">
               {dataHealth.status === "EMPTY_FACTS" || dataHealth.status === "EMPTY" ? "当前日期范围暂无店铺订单数据" : "最近一次店铺/同步任务失败"}
             </h5>
-            <p className="text-amber-800 leading-relaxed">
+            <p className="text-slate-600 leading-relaxed">
               {dataHealth.message || "已配置店铺会继续显示在下方列表中；订单数、销售额和 AOV 在事实表为空时按 0 展示。"}
             </p>
             {dataHealth.lastFailedSync?.errorMessage && (
@@ -622,7 +622,7 @@ setAiReport(reportText || "未返回分析报告");
                           <TableCell className="text-center py-3">
                             <span className={cn(
                               "px-2 py-0.5 rounded-full text-[10.5px] font-semibold",
-                              store.accountsCount > 0 ? "bg-slate-100 text-slate-700" : "bg-amber-50 text-amber-600 border border-amber-100"
+                              store.accountsCount > 0 ? "bg-slate-100 text-slate-700" : "bg-slate-50 text-slate-500 border border-slate-100"
                             )}>
                               {store.accountsCount} 个账户
                             </span>
@@ -667,7 +667,7 @@ setAiReport(reportText || "未返回分析报告");
                           {/* ROAS 分别渲染无绑定、无订单、异常和真实ROAS */}
                           <TableCell className="text-right py-3 px-5">
                             {(!store.hasMappedAccounts) ? (
-                              <span className="inline-block px-1.5 py-0.5 rounded text-[9.5px] bg-amber-50/50 text-amber-700 border border-amber-100/50">
+                              <span className="inline-block px-1.5 py-0.5 rounded text-[9.5px] bg-slate-50 text-slate-500 border border-slate-100">
                                 未绑定
                               </span>
                             ) : (!store.hasOrders && store.adSpend > 0) ? (
@@ -862,12 +862,12 @@ setAiReport(reportText || "未返回分析报告");
                 </div>
 
                 <div className="p-3 rounded-lg border border-slate-200 bg-slate-50">
-                  <span className="text-[10px] text-amber-600 font-bold uppercase block">Order 表候选订单数</span>
+                  <span className="text-[10px] text-slate-600 font-bold uppercase block">Order 表候选订单数</span>
                   <div className="mt-1 flex items-baseline gap-1.5">
-                    <span className="text-xl font-extrabold text-amber-700 font-mono">
+                    <span className="text-xl font-extrabold text-slate-700 font-mono">
                       {reconData.orderFact?.uniqueOrderCount ?? reconData.legacyOrderFactOrdersCount}
                     </span>
-                    <span className="text-xs text-amber-600 font-normal">件</span>
+                    <span className="text-xs text-slate-500 font-normal">件</span>
                   </div>
                 </div>
 
@@ -875,8 +875,8 @@ setAiReport(reportText || "未返回分析报告");
 
               {/* Mismatch warnings banner */}
               {(reconData.orderFact?.uniqueOrderCount !== reconData.canonicalLedger?.orderCount && reconData.canonicalLedger) && (
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-slate-500 shrink-0" />
                   <span>发现 Order 表与账目快照存在 {Math.abs((reconData.orderFact?.uniqueOrderCount || 0) - (reconData.canonicalLedger?.orderCount || 0))} 单差异，已列入差异明细。</span>
                 </div>
               )}
@@ -940,7 +940,7 @@ setAiReport(reportText || "未返回分析报告");
                       <div className="flex items-start gap-3">
                         <div className={cn(
                           "p-1.5 rounded-full",
-                          reconData.syncFailedCount === 0 ? "bg-slate-100 text-emerald-600" : "bg-amber-50 text-amber-600"
+                          reconData.syncFailedCount === 0 ? "bg-slate-100 text-emerald-600" : "bg-rose-50 text-rose-600"
                         )}>
                           <Clock className="w-4 h-4" />
                         </div>
@@ -1028,7 +1028,7 @@ setAiReport(reportText || "未返回分析报告");
                                   <div className="text-[10px] text-slate-400 font-mono">API: {item.apiCreatedAtRaw || "—"}</div>
                                 </td>
                                 <td className="p-2.5">
-                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-100 uppercase">
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-50 text-slate-700 border border-slate-100 uppercase">
                                     {item.paymentStatus || "unknown"}
                                   </span>
                                 </td>
@@ -1050,8 +1050,8 @@ setAiReport(reportText || "未返回分析报告");
 
                             {/* 2. ledgerNotInOrderFact */}
                             {reconData.diff.ledgerNotInOrderFact?.map((item: any) => (
-                              <tr key={`ledg-not-in-fact-${item.orderId}`} className="hover:bg-amber-50/10 transition-colors bg-amber-50/5">
-                                <td className="p-2.5 pl-3 font-mono text-amber-700 text-[11px] font-bold">
+                              <tr key={`ledg-not-in-fact-${item.orderId}`} className="hover:bg-slate-50 transition-colors bg-slate-50/40">
+                                <td className="p-2.5 pl-3 font-mono text-slate-700 text-[11px] font-bold">
                                   {item.orderId}
                                 </td>
                                 <td className="p-2.5 text-slate-900 font-mono font-bold">${item.ledgerAmount?.toFixed(2)}</td>
@@ -1066,7 +1066,7 @@ setAiReport(reportText || "未返回分析报告");
                                   </span>
                                 </td>
                                 <td className="p-2.5 pr-3">
-                                  <div className="text-amber-600 font-bold text-[11px]">
+                                  <div className="text-slate-600 font-bold text-[11px]">
                                     📈 账套已记账但本地明细表缺失
                                   </div>
                                   <div className="text-slate-500 text-[10.5px] font-normal leading-tight mt-0.5">
@@ -1173,7 +1173,7 @@ setAiReport(reportText || "未返回分析报告");
                               <td className="p-2.5">
                                 <span className={cn(
                                   "px-1.5 py-0.5 rounded text-[10px] font-bold uppercase",
-                                  item.paymentStatus === "paid" ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-amber-50 text-amber-700 border border-amber-100"
+                                  item.paymentStatus === "paid" ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-slate-50 text-slate-700 border border-slate-100"
                                 )}>
                                   {item.paymentStatus}
                                 </span>

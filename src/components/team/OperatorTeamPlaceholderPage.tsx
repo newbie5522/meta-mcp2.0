@@ -11,7 +11,7 @@ export function OperatorTeamPlaceholderPage() {
         {/* Big styled Icon */}
         <div className="mx-auto w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center shadow-inner relative">
           <Users className="w-8 h-8" />
-          <div className="absolute -bottom-1 -right-1 bg-amber-500 text-white rounded-full p-1 border border-white">
+          <div className="absolute -bottom-1 -right-1 bg-slate-500 text-white rounded-full p-1 border border-white">
             <Lock className="w-3 h-3" />
           </div>
         </div>
@@ -41,7 +41,7 @@ export function OperatorTeamPlaceholderPage() {
         </div>
 
         <div className="pt-4 border-t border-slate-100 flex items-center justify-center gap-1.5 text-xs text-slate-400 font-medium">
-          <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+          <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
           模块将在二级权限系统上线后开放部署，敬请期待
         </div>
       </div>

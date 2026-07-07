@@ -22,9 +22,24 @@ import { useDiagnosticsIssues } from "../diagnosis/useDiagnosticsIssues";
 import { AiReviewTemplatePanel } from "../ai/AiReviewTemplatePanel";
 import { AiExplanationEmptyState } from "../ai/AiExplanationEmptyState";
 
-export function PrescriptionReviewPage() {
+function formatDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function PrescriptionReviewPage({
+  startDate,
+  endDate
+}: {
+  startDate: Date;
+  endDate: Date;
+}) {
   const { statusMap } = useSuggestionStatus();
-  const { issues, startDate, endDate } = useDiagnosticsIssues();
+  const { issues } = useDiagnosticsIssues({ startDate, endDate });
+  const startDateStr = formatDate(startDate);
+  const endDateStr = formatDate(endDate);
 
   // AI review template generation state
   const [reviewAiStateByIssueId, setReviewAiStateByIssueId] = useState<{
@@ -77,8 +92,8 @@ export function PrescriptionReviewPage() {
           statusDetail: item,
           context: {
             dateRange: {
-              startDate,
-              endDate
+              startDate: startDateStr,
+              endDate: endDateStr
             },
             currentPage: "prescription_review",
             userRole: "admin",
@@ -170,21 +185,6 @@ export function PrescriptionReviewPage() {
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
-      
-      {/* Disclaimer Banner */}
-      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
-        <div className="flex">
-          <div className="flex-shrink-0">
-            <span className="text-amber-500 font-bold">⚠️</span>
-          </div>
-          <div className="ml-3">
-            <p className="text-xs text-amber-800 font-bold">
-              执行回测用于记录已采纳、执行中和已执行建议的人工跟进状态，并辅助进行 3 / 7 / 14 天周期复盘。
-            </p>
-          </div>
-        </div>
-      </div>
-
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900">执行回测 (Prescription Backtesting)</h1>
@@ -328,7 +328,7 @@ export function PrescriptionReviewPage() {
                         disabled={isMissing}
                       />
                       {isMissing && (
-                        <div className="text-[11px] text-amber-600 font-medium font-sans">
+                        <div className="text-[11px] text-slate-500 font-medium font-sans">
                           AI 解释功能暂无可用诊断输入。
                         </div>
                       )}

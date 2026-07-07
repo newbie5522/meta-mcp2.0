@@ -88,7 +88,7 @@ export function AiDashboardSummaryCard({
               基于当前日期范围内的活跃账户、活跃店铺和核心诊断卡片生成摘要。
             </p>
             {disabled && (
-              <p className="text-[10px] text-amber-600 font-medium">
+              <p className="text-[10px] text-slate-500 font-medium">
                 AI 解释功能暂无可用诊断输入。
               </p>
             )}

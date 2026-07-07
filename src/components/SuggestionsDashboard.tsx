@@ -166,7 +166,7 @@ export function SuggestionsDashboard() {
   
   const getPriorityLabel = (p: number) => {
     if (p <= 1) return { text: "极高 / Urgent", css: "bg-red-500/10 text-red-500 border-red-500/20 font-bold" };
-    if (p === 2) return { text: "高 / High", css: "bg-amber-500/10 text-amber-500 border-amber-500/20 font-bold" };
+    if (p === 2) return { text: "高 / High", css: "bg-slate-100 text-slate-700 border-slate-200 font-bold" };
     if (p === 3) return { text: "中 / Medium", css: "bg-blue-500/10 text-blue-500 border-blue-500/20 font-bold" };
     return { text: "低 / Low", css: "bg-slate-500/10 text-slate-500 border-slate-500/20 font-bold" };
   };
@@ -232,13 +232,13 @@ export function SuggestionsDashboard() {
         </div>
 
         {hasOfflineSuggestions && (
-          <div className="bg-amber-50 border border-amber-200/70 p-4 rounded-xl flex items-start gap-3">
-            <Info className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+          <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl flex items-start gap-3">
+            <Info className="w-5 h-5 text-slate-500 shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-black text-amber-800">
+              <p className="text-xs font-black text-slate-800">
                 当前运行提示：已启用离线物理勾稽诊断
               </p>
-              <p className="text-[11px] text-amber-700 mt-0.5 font-medium leading-relaxed">
+              <p className="text-[11px] text-slate-600 mt-0.5 font-medium leading-relaxed">
                 当前工作区未配置 AI 模型 API 密钥。建议中心已全面加载 <b>System Offline Rule Engine (离线物理规则诊断)</b>，诊断内容完全基于底层数据库中实有的 Orders 事实流、FactMetaPerformance 出纳花费及 AccMappings。虽然非实时在线 AI 生成，但由于采用真实证据闭环，建议极其安全可作业。
               </p>
             </div>
@@ -298,7 +298,7 @@ export function SuggestionsDashboard() {
                   : card.priority <= 1
                   ? "border-red-200 border-l-[6px] border-l-red-500"
                   : card.priority === 2
-                  ? "border-amber-200 border-l-[6px] border-l-amber-500"
+                  ? "border-slate-200 border-l-[6px] border-l-slate-400"
                   : "border-slate-200"
               }`}
             >
@@ -321,7 +321,7 @@ export function SuggestionsDashboard() {
                 {/* Title & Exact operational rationale */}
                 <div className="space-y-1.5">
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-1.5">
-                    <Lightbulb className="w-5 h-5 text-amber-500 shrink-0" />
+                    <Lightbulb className="w-5 h-5 text-slate-500 shrink-0" />
                     {meta.title || card.action}
                   </h3>
                   <p className="text-xs text-slate-600 font-medium leading-relaxed bg-slate-50 p-3.5 rounded-xl border border-slate-100">

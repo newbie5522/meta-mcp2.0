@@ -370,13 +370,13 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
 
       {/* Warning banner of missing/empty metrics if no accounts have spend */}
       {withSpendCount === 0 && !loading && (
-        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-850 text-xs shadow-sm">
-          <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+        <div className="flex items-start gap-3 p-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 text-xs shadow-sm">
+          <AlertTriangle className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
           <div>
-            <h5 className="font-bold text-amber-900 mb-0.5">
+            <h5 className="font-bold text-slate-900 mb-0.5">
               {hasAccountInventoryWithoutFacts ? "账户已存在，但当前日期范围暂无广告表现事实数据" : "当前日期范围内没有有消耗账户"}
             </h5>
-            <p className="text-amber-700 leading-relaxed">
+            <p className="text-slate-600 leading-relaxed">
               {hasAccountInventoryWithoutFacts ? (
                 <>
                   配置中心已保存 <strong className="font-mono">{allAccountsCount}</strong> 个 Meta 广告账户，但所选日期范围

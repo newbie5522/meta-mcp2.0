@@ -4,7 +4,6 @@ import { format } from "date-fns";
 import { 
   Globe, 
   TrendingUp, 
-  Info, 
   HelpCircle, 
   Coins, 
   ShoppingBag, 
@@ -130,29 +129,6 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
 
   return (
     <div className="space-y-6">
-      {/* Informative alert box for code reliability & validation */}
-      <div className="bg-amber-50/70 border border-amber-200 text-amber-900 p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
-        <div className="flex gap-3 items-start">
-          <div className="p-2 bg-amber-100 rounded-xl text-amber-700 mt-0.5">
-            <Info className="w-5 h-5 flex-shrink-0" />
-          </div>
-          <div>
-            <strong className="block font-semibold text-amber-950">国家分析一致性与治理说明</strong>
-            <p className="text-sm text-amber-800 mt-1">
-              由于电商平台 Order 数据表目前未接入国家字段 (shippingCountry Code)，订单分析标识为 <span className="font-semibold text-amber-950">N/A (Unavailable)</span>。当前数据完全来自 Meta 广告账户受众事实源 (FactAudienceBreakdown)。
-            </p>
-            <span className="text-xs text-amber-600 block mt-1.5 font-mono">
-              [治理规范] 杜绝伪造国家字段，确保零幻觉。Meta 国家花费来自受众 country breakdown，不等同于订单归因国家。
-            </span>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <span className="px-3 py-1 bg-amber-100/80 rounded-full text-xs font-semibold text-amber-800 border border-amber-200 whitespace-nowrap">
-            事实链: FactAudienceBreakdown
-          </span>
-        </div>
-      </div>
-
       {loading ? (
         <div className="flex flex-col items-center justify-center min-h-[400px] bg-white rounded-2xl border border-slate-100 p-8 space-y-3">
           <div className="w-10 h-10 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin"></div>
@@ -195,7 +171,7 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
 
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
               <span className="text-sm text-slate-500 font-medium">未映射国家广告花费</span>
-              <h3 className="text-2xl font-bold text-amber-700 mt-1">{currency(data.summary.unmappedMetaSpend)}</h3>
+              <h3 className="text-2xl font-bold text-slate-700 mt-1">{currency(data.summary.unmappedMetaSpend)}</h3>
               <p className="text-xs text-slate-400 mt-2">
                 占比约 {percentage(data.summary.unmappedMetaSpendRate)} (未映射广告账户)
               </p>
@@ -262,7 +238,7 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
 
             {/* Error notifications regarding unavailability of some indicators */}
             {!data.dataHealth.orderCountryAvailable && (
-              <div className="bg-amber-50 px-6 py-3 border-b border-amber-100/70 text-[11.5px] text-amber-800 font-medium">
+              <div className="bg-slate-50 px-6 py-3 border-b border-slate-100 text-[11.5px] text-slate-600 font-medium">
                 ⚠️ 订单国家字段不可用，当前仅展示 Meta 国家受众表现。
               </div>
             )}

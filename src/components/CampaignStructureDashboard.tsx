@@ -525,7 +525,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         <div className={cn(
           "rounded-xl border p-4 text-xs shadow-sm",
           dataHealth?.status === "STRUCTURE_WITHOUT_FACTS"
-            ? "bg-amber-50 border-amber-200 text-amber-900"
+            ? "bg-slate-50 border-slate-200 text-slate-700"
             : dataHealth?.status === "EMPTY_STRUCTURE"
               ? "bg-slate-50 border-slate-200 text-slate-700"
               : "bg-white border-slate-200 text-slate-700"
@@ -648,7 +648,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                     <TableRow>
                       <TableCell colSpan={viewLevel === "ads" ? 15 : 14} className="text-center py-20 text-gray-500">
                         <div className="flex flex-col items-center justify-center max-w-xl mx-auto bg-slate-50 p-6 rounded-2xl border border-slate-200">
-                          <AlertTriangle className="w-10 h-10 text-amber-500 mb-3" />
+                          <AlertTriangle className="w-10 h-10 text-slate-400 mb-3" />
                           <h4 className="text-sm font-bold text-slate-800">未检索到符合条件的层级节点</h4>
                           
                           {dataHealth?.reason && (

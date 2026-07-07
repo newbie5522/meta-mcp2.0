@@ -12,31 +12,29 @@ import {
 } from "lucide-react";
 import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
 
-export function DataHealthDiagnosisPage() {
+export function DataHealthDiagnosisPage({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const {
     issues,
     loading,
     error,
-    refetch,
+    refetch
+  } = useDiagnosticsIssues({
     startDate,
     endDate,
-    setStartDate,
-    setEndDate
-  } = useDiagnosticsIssues();
+    categories: ["data_health_notice"],
+    includeDebug: false,
+    includeHealthy: false
+  });
 
-  // Filter issues based on requirements:
-  // 1. category = data_health_notice
-  // 2. category = debug_invalid
-  // 3. problemStage = data_health
-  // 4. optimizationArea = tracking / mapping / data_sync
+  const formatDate = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
   const matchedIssues = issues.filter(
-    (iss) => 
-      iss.category === "data_health_notice" ||
-      iss.category === "debug_invalid" ||
-      iss.problemStage === "data_health" ||
-      iss.optimizationArea === "tracking" ||
-      iss.optimizationArea === "mapping" ||
-      iss.optimizationArea === "data_sync"
+    (iss) => iss.category === "data_health_notice"
   );
 
   // 5. Gather missingMetrics from matched issues
@@ -60,7 +58,6 @@ export function DataHealthDiagnosisPage() {
   const getCategoryLabel = (value?: string | null) => {
     const labels: Record<string, string> = {
       data_health_notice: "数据提醒",
-      debug_invalid: "已过滤记录",
       production_suggestion: "经营建议"
     };
 
@@ -83,20 +80,6 @@ export function DataHealthDiagnosisPage() {
   
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
-      {/* Disclaimer Banner */}
-      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
-        <div className="flex">
-          <div className="flex-shrink-0">
-            <span className="text-amber-500 font-bold">⚠️</span>
-          </div>
-          <div className="ml-3">
-            <p className="text-xs text-amber-800 font-bold">
-              当前页面仅展示数据健康检查结果；所有处理动作仍需人工确认。
-            </p>
-          </div>
-        </div>
-      </div>
-
       {/* Header */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
@@ -105,35 +88,8 @@ export function DataHealthDiagnosisPage() {
             查看广告数据、店铺订单和系统同步状态，帮助团队发现数据缺失或对账异常。
           </p>
         </div>
-
-        {/* Date search */}
-        <div className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-xl border text-xs text-slate-705">
-          <div className="flex items-center gap-1">
-            <span>开始:</span>
-            <input 
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="px-2 py-1 bg-white border border-slate-200 rounded"
-            />
-          </div>
-          <span>|</span>
-          <div className="flex items-center gap-1">
-            <span>结束:</span>
-            <input 
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="px-2 py-1 bg-white border border-slate-200 rounded"
-            />
-          </div>
-          <button 
-            onClick={refetch}
-            disabled={loading}
-            className="p-1 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold"
-          >
-            <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
-          </button>
+        <div className="text-xs font-semibold text-slate-500">
+          当前统计期间：{formatDate(startDate)} 至 {formatDate(endDate)}
         </div>
       </div>
 
@@ -191,7 +147,7 @@ export function DataHealthDiagnosisPage() {
               ) : (
                 <div className="flex flex-wrap gap-1.5">
                   {allLimitations.map((l, i) => (
-                    <span key={i} className="px-2 py-0.5 bg-amber-50 border border-amber-150 text-amber-900 text-xs font-mono rounded">
+                    <span key={i} className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-800 text-xs font-mono rounded">
                       {l}
                     </span>
                   ))}
@@ -212,7 +168,7 @@ export function DataHealthDiagnosisPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className={`w-2.5 h-2.5 rounded-full ${
                         isDanger ? "bg-red-500" :
-                        isWarning ? "bg-amber-500" : "bg-blue-500"
+                        isWarning ? "bg-blue-500" : "bg-blue-500"
                       }`} />
                       <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-bold font-mono">
                         {item.issueId}

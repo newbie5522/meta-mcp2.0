@@ -151,7 +151,7 @@ export function OverviewDashboard({ startDate, endDate }: { startDate: Date; end
       
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-          <h2 className="font-bold text-slate-800 flex items-center gap-2"><PackageSearch className="w-4 h-4 text-amber-500"/> 产品销售排行</h2>
+          <h2 className="font-bold text-slate-800 flex items-center gap-2"><PackageSearch className="w-4 h-4 text-slate-500"/> 产品销售排行</h2>
         </div>
         <div className="overflow-x-auto p-0">
           <table className="w-full text-sm text-left whitespace-nowrap">
@@ -161,7 +161,7 @@ export function OverviewDashboard({ startDate, endDate }: { startDate: Date; end
             <tbody className="divide-y divide-slate-100">
               {(summary.products || []).map((p: any) => (
                 <tr key={p.sku} className="hover:bg-slate-50">
-                  <td className="px-5 py-3 font-medium text-slate-900 border-l-2 border-transparent hover:border-amber-500">{p.sku}</td>
+                  <td className="px-5 py-3 font-medium text-slate-900 border-l-2 border-transparent hover:border-slate-400">{p.sku}</td>
                   <td className="px-5 py-3 text-right">{p.orderCount}</td>
                   <td className="px-5 py-3 text-right">{p.quantity}</td>
                   <td className="px-5 py-3 text-right text-emerald-600 font-medium">{currency(p.sales)}</td>

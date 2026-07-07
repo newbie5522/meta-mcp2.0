@@ -49,6 +49,16 @@ export interface DiagnosticsReportMeta {
   backendSummary: any | null;
 }
 
+type IssueCategory = UniformIssue["category"];
+
+export interface UseDiagnosticsIssuesOptions {
+  startDate?: Date | string;
+  endDate?: Date | string;
+  categories?: IssueCategory[];
+  includeDebug?: boolean;
+  includeHealthy?: boolean;
+}
+
 function getLocalDateString(offsetDays = 0) {
   const today = new Date();
   today.setDate(today.getDate() - offsetDays);
@@ -58,7 +68,32 @@ function getLocalDateString(offsetDays = 0) {
   return `${year}-${month}-${day}`;
 }
 
-export function useDiagnosticsIssues() {
+function toDateString(value: Date | string | undefined, fallback: string) {
+  if (!value) return fallback;
+  if (value instanceof Date) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  return value;
+}
+
+function filterIssues(
+  rows: UniformIssue[],
+  categories: IssueCategory[],
+  includeDebug: boolean,
+  includeHealthy: boolean
+) {
+  return rows.filter(issue => {
+    if (!includeHealthy && issue.severity === "healthy") return false;
+    if (!includeDebug && issue.category === "debug_invalid") return false;
+    if (!categories.includes(issue.category)) return false;
+    return true;
+  });
+}
+
+export function useDiagnosticsIssues(options: UseDiagnosticsIssuesOptions = {}) {
   const [issues, setIssues] = useState<UniformIssue[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<{ message: string; details?: string } | null>(null);
@@ -68,8 +103,14 @@ export function useDiagnosticsIssues() {
     failedDetectors: [],
     backendSummary: null
   });
-  const [startDate, setStartDate] = useState<string>(() => getLocalDateString(29));
-  const [endDate, setEndDate] = useState<string>(() => getLocalDateString(0));
+  const [localStartDate, setStartDate] = useState<string>(() => getLocalDateString(29));
+  const [localEndDate, setEndDate] = useState<string>(() => getLocalDateString(0));
+  const categories = options.categories || ["production_suggestion"];
+  const includeDebug = options.includeDebug === true;
+  const includeHealthy = options.includeHealthy === true;
+  const startDate = toDateString(options.startDate, localStartDate);
+  const endDate = toDateString(options.endDate, localEndDate);
+  const categoriesKey = categories.join(",");
 
   const fetchIssues = async () => {
     setLoading(true);
@@ -83,7 +124,9 @@ export function useDiagnosticsIssues() {
         body: JSON.stringify({
           startDate,
           endDate,
-          includeDebug: true
+          includeDebug,
+          categories,
+          includeHealthy
         })
       });
 
@@ -95,7 +138,10 @@ export function useDiagnosticsIssues() {
       const report = await response.json();
 
       if (report && report.success) {
-        setIssues(Array.isArray(report.issues) ? report.issues : []);
+        const nextIssues = Array.isArray(report.issues)
+          ? filterIssues(report.issues, categories, includeDebug, includeHealthy)
+          : [];
+        setIssues(nextIssues);
         setReportMeta({
           message: report.message || "诊断已完成。",
           diagnosticsDegraded: Boolean(report.diagnosticsDegraded),
@@ -103,7 +149,7 @@ export function useDiagnosticsIssues() {
           backendSummary: report.summary || null
         });
       } else if (report && Array.isArray(report.issues)) {
-        setIssues(report.issues);
+        setIssues(filterIssues(report.issues, categories, includeDebug, includeHealthy));
         setReportMeta({
           message: report.message || report.error || "诊断接口返回降级结果。",
           diagnosticsDegraded: true,
@@ -139,7 +185,7 @@ export function useDiagnosticsIssues() {
 
   useEffect(() => {
     fetchIssues();
-  }, [startDate, endDate]);
+  }, [startDate, endDate, categoriesKey, includeDebug, includeHealthy]);
 
   // Summarize issues
   const summary = {

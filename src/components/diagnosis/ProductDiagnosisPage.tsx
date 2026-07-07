@@ -7,23 +7,25 @@ import {
   AlertCircle,
   Activity,
   Package,
-  Calendar,
   RefreshCw,
   Inbox
 } from "lucide-react";
 import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
 
-export function ProductDiagnosisPage() {
+export function ProductDiagnosisPage({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const {
     issues,
     loading,
     error,
-    refetch,
-    startDate,
-    endDate,
-    setStartDate,
-    setEndDate
-  } = useDiagnosticsIssues();
+    refetch
+  } = useDiagnosticsIssues({ startDate, endDate });
+
+  const formatDate = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
 
   // Filter criteria from prompt instructions:
   // 1. problemStage === "product_page_intent"
@@ -89,20 +91,6 @@ export function ProductDiagnosisPage() {
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
-      {/* Disclaimer Banner */}
-      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
-        <div className="flex">
-          <div className="flex-shrink-0">
-            <span className="text-amber-500 font-bold">⚠️</span>
-          </div>
-          <div className="ml-3">
-            <p className="text-xs text-amber-800 font-bold">
-              当前页面仅展示真实诊断结果；如果所选时间内没有异常，会显示为空状态。
-            </p>
-          </div>
-        </div>
-      </div>
-
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="space-y-1">
           <h1 className="text-xl font-bold text-slate-900">产品表现诊断</h1>
@@ -110,48 +98,8 @@ export function ProductDiagnosisPage() {
             基于订单和广告表现，查看产品承接、价格和信任相关问题。
           </p>
         </div>
-
-        {/* Date Selector */}
-        <div className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-xl border text-xs text-slate-705 shrink-0">
-          <Calendar className="w-4 h-4 text-slate-400" />
-          <div className="flex items-center gap-1">
-            <span>开始:</span>
-            <input 
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="px-2 py-1 bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-          <span className="text-slate-300">|</span>
-          <div className="flex items-center gap-1">
-            <span>结束:</span>
-            <input 
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="px-2 py-1 bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-          <button 
-            onClick={refetch}
-            disabled={loading}
-            className="p-1 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors disabled:bg-blue-300"
-            title="手动刷新"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-          </button>
-        </div>
-      </div>
-
-      {/* Important Warning Notice */}
-      <div className="p-4 rounded-xl bg-blue-50 border border-blue-150 flex gap-3 text-xs text-blue-900 leading-relaxed">
-        <AlertCircle className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
-        <div className="space-y-1">
-          <span className="font-bold">说明：</span>
-          <p>
-            当前页面主要用于查看产品承接问题，暂不直接给出单品广告预算调整建议。
-          </p>
+        <div className="text-xs font-semibold text-slate-500">
+          当前统计期间：{formatDate(startDate)} 至 {formatDate(endDate)}
         </div>
       </div>
 

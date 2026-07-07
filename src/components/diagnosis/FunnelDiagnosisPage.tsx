@@ -14,22 +14,24 @@ import {
   Inbox,
   RefreshCw,
   Clock,
-  Calendar,
   AlertCircle
 } from "lucide-react";
 import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
 
-export function FunnelDiagnosisPage() {
+export function FunnelDiagnosisPage({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const {
     issues,
     loading,
     error,
-    refetch,
-    startDate,
-    endDate,
-    setStartDate,
-    setEndDate
-  } = useDiagnosticsIssues();
+    refetch
+  } = useDiagnosticsIssues({ startDate, endDate });
+
+  const formatDate = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
 
   // Extract all funnel snapshots
   const snapshotIssues = issues.filter(iss => iss.evidence?.funnelSnapshot);
@@ -131,7 +133,7 @@ export function FunnelDiagnosisPage() {
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="font-mono font-bold text-slate-500 uppercase">{iss.issueId}</span>
                   <span className={`px-1 rounded font-bold uppercase ${
-                    iss.severity === "critical" ? "text-red-700 bg-red-50" : "text-amber-750 bg-amber-50"
+                    iss.severity === "critical" ? "text-red-700 bg-red-50" : "text-slate-700 bg-slate-100"
                   }`}>
                      {getSeverityLabel(iss.severity)}
                   </span>
@@ -155,20 +157,6 @@ export function FunnelDiagnosisPage() {
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
-      {/* Disclaimer Banner */}
-      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
-        <div className="flex">
-          <div className="flex-shrink-0">
-            <span className="text-amber-500 font-bold">⚠️</span>
-          </div>
-          <div className="ml-3">
-            <p className="text-xs text-amber-800 font-bold">
-              当前页面仅展示真实诊断结果；如果所选时间内没有异常，会显示为空状态。
-            </p>
-          </div>
-        </div>
-      </div>
-
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900">转化漏斗诊断</h1>
@@ -176,35 +164,8 @@ export function FunnelDiagnosisPage() {
             查看从广告点击到下单成交的关键环节，帮助团队发现转化流失位置。
           </p>
         </div>
-
-        {/* Date options */}
-        <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl text-xs text-slate-705 border">
-          <div className="flex items-center gap-1">
-            <span>开始:</span>
-            <input 
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="px-2 py-1 bg-white border border-slate-200 rounded"
-            />
-          </div>
-          <span>|</span>
-          <div className="flex items-center gap-1">
-            <span>结束:</span>
-            <input 
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="px-2 py-1 bg-white border border-slate-200 rounded"
-            />
-          </div>
-          <button 
-            onClick={refetch}
-            disabled={loading}
-            className="p-1 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold"
-          >
-            <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
-          </button>
+        <div className="text-xs font-semibold text-slate-500">
+          当前统计期间：{formatDate(startDate)} 至 {formatDate(endDate)}
         </div>
       </div>
 
@@ -242,20 +203,20 @@ export function FunnelDiagnosisPage() {
       ) : (
         <div className="space-y-6">
           {/* Snapshots aggregated Info Card */}
-          <div className="p-5 rounded-2xl bg-amber-50 border border-amber-200/50 space-y-3">
-            <h3 className="text-sm font-bold text-amber-900 flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-amber-600" />
+          <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-3">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-slate-500" />
               聚合漏斗对账诊断结果
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
               <div className="space-y-1">
-                <span className="font-bold text-amber-950 block">缺失指标：</span>
+                <span className="font-bold text-slate-900 block">缺失指标：</span>
                 {allMissingMetrics.length === 0 ? (
-                  <p className="text-amber-800 italic">检测通过，当前没有缺失指标。</p>
+                  <p className="text-slate-500 italic">当前没有缺失指标。</p>
                 ) : (
                   <div className="flex flex-wrap gap-1.5 mt-1">
                     {allMissingMetrics.map((m, idx) => (
-                      <span key={idx} className="px-1.5 py-0.5 bg-amber-200/70 border border-amber-300 text-amber-950 rounded font-mono font-bold">
+                      <span key={idx} className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 text-slate-800 rounded font-mono font-bold">
                         {getMetricLabel(String(m))}
                       </span>
                     ))}
@@ -264,11 +225,11 @@ export function FunnelDiagnosisPage() {
               </div>
 
               <div className="space-y-1">
-                <span className="font-bold text-amber-950 block">异常说明：</span>
+                <span className="font-bold text-slate-900 block">异常说明：</span>
                 {allNotes.length === 0 ? (
-                  <p className="text-amber-850 italic">当前没有额外异常说明。</p>
+                  <p className="text-slate-500 italic">当前没有额外异常说明。</p>
                 ) : (
-                  <ul className="list-disc list-inside space-y-1 text-amber-800">
+                  <ul className="list-disc list-inside space-y-1 text-slate-600">
                     {allNotes.map((n, idx) => (
                       <li key={idx}>{n}</li>
                     ))}

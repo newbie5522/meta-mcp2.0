@@ -172,29 +172,29 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
       case 'data-products':
         return <ProductIntelligenceDashboard startDate={startDate} endDate={endDate} />;
       case 'diag-overview':
-        return <DiagnosisOverviewPage />;
+        return <DiagnosisOverviewPage startDate={startDate} endDate={endDate} />;
       case 'diag-ad':
-        return <AdPerformanceDiagnosisPage />;
+        return <AdPerformanceDiagnosisPage startDate={startDate} endDate={endDate} />;
       case 'diag-funnel':
-        return <FunnelDiagnosisPage />;
+        return <FunnelDiagnosisPage startDate={startDate} endDate={endDate} />;
       case 'diag-store':
-        return <StoreDiagnosisPage />;
+        return <StoreDiagnosisPage startDate={startDate} endDate={endDate} />;
       case 'diag-creative':
-        return <CreativeFatigueDiagnosisPage />;
+        return <CreativeFatigueDiagnosisPage startDate={startDate} endDate={endDate} />;
       case 'diag-product':
-        return <ProductDiagnosisPage />;
+        return <ProductDiagnosisPage startDate={startDate} endDate={endDate} />;
       case 'diag-health':
-        return <DataHealthDiagnosisPage />;
+        return <DataHealthDiagnosisPage startDate={startDate} endDate={endDate} />;
       case 'rx-pending':
-        return <PrescriptionCenterPage currentSubTab="rx-pending" />;
+        return <PrescriptionCenterPage currentSubTab="rx-pending" startDate={startDate} endDate={endDate} />;
       case 'rx-health':
-        return <PrescriptionCenterPage currentSubTab="rx-health" />;
+        return <PrescriptionCenterPage currentSubTab="rx-health" startDate={startDate} endDate={endDate} />;
       case 'rx-accepted':
-        return <PrescriptionCenterPage currentSubTab="rx-accepted" />;
+        return <PrescriptionCenterPage currentSubTab="rx-accepted" startDate={startDate} endDate={endDate} />;
       case 'rx-debug':
-        return <PrescriptionCenterPage currentSubTab="rx-debug" />;
+        return <PrescriptionCenterPage currentSubTab="rx-pending" startDate={startDate} endDate={endDate} />;
       case 'rx-review':
-        return <PrescriptionReviewPage />;
+        return <PrescriptionReviewPage startDate={startDate} endDate={endDate} />;
       case 'monitoring':
         return <MonitoringDashboard />;
       case 'sugg-cards':

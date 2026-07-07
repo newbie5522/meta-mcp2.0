@@ -8,26 +8,33 @@ import {
   TrendingDown,
   Layers,
   Award,
-  DollarSign,
-  Calendar
+  DollarSign
 } from "lucide-react";
 import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
 
-export function AdPerformanceDiagnosisPage() {
+export function AdPerformanceDiagnosisPage({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const {
     issues,
     loading,
     error,
-    refetch,
-    startDate,
-    endDate,
-    setStartDate,
-    setEndDate
-  } = useDiagnosticsIssues();
+    refetch
+  } = useDiagnosticsIssues({ startDate, endDate });
+
+  const formatDate = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const actionableIssues = issues.filter(issue =>
+    issue.category === "production_suggestion" &&
+    issue.severity !== "healthy"
+  );
 
   // Categorize issues based on the requirements:
   // 1. ad_delivery 相关 issues
-  const deliveryIssues = issues.filter(
+  const deliveryIssues = actionableIssues.filter(
     (iss) => 
       iss.issueType === "ad_delivery" || 
       iss.problemStage === "ad_delivery" ||
@@ -35,7 +42,7 @@ export function AdPerformanceDiagnosisPage() {
   );
 
   // 2. creative_attraction 相关 issues
-  const creativeIssues = issues.filter(
+  const creativeIssues = actionableIssues.filter(
     (iss) => 
       iss.issueType === "creative_attraction" || 
       iss.problemStage === "creative_attraction" ||
@@ -43,7 +50,7 @@ export function AdPerformanceDiagnosisPage() {
   );
 
   // 3. outcome 相关 issues
-  const outcomeIssues = issues.filter(
+  const outcomeIssues = actionableIssues.filter(
     (iss) => 
       iss.issueType === "outcome" || 
       iss.problemStage === "outcome" ||
@@ -51,7 +58,7 @@ export function AdPerformanceDiagnosisPage() {
   );
 
   // 4. budget / audience 相关 issues (or other general optimizationAreas)
-  const budgetAudienceIssues = issues.filter(
+  const budgetAudienceIssues = actionableIssues.filter(
     (iss) => 
       iss.optimizationArea === "budget" || 
       iss.optimizationArea === "audience"
@@ -71,21 +78,7 @@ export function AdPerformanceDiagnosisPage() {
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
-      {/* Disclaimer Banner */}
-      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
-        <div className="flex">
-          <div className="flex-shrink-0">
-            <span className="text-amber-500 font-bold">⚠️</span>
-          </div>
-          <div className="ml-3">
-            <p className="text-xs text-amber-800 font-bold">
-              当前页面仅展示真实诊断结果；如果所选时间内没有异常，会显示为空状态。
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Title Header with date search */}
+      {/* Title Header */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900">广告表现诊断</h1>
@@ -93,35 +86,8 @@ export function AdPerformanceDiagnosisPage() {
             汇总广告投放、素材吸引力和转化效果相关问题，帮助团队判断下一步处理方向。
           </p>
         </div>
-
-        {/* Date picking box */}
-        <div className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs text-slate-705">
-          <div className="flex items-center gap-1">
-            <span>开始:</span>
-            <input 
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="px-2 py-1 bg-white border border-slate-200 rounded text-slate-800"
-            />
-          </div>
-          <span className="text-slate-300">|</span>
-          <div className="flex items-center gap-1">
-            <span>结束:</span>
-            <input 
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="px-2 py-1 bg-white border border-slate-200 rounded text-slate-800"
-            />
-          </div>
-          <button 
-            onClick={refetch}
-            disabled={loading}
-            className="p-1 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors disabled:bg-blue-300"
-          >
-            <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
-          </button>
+        <div className="text-xs font-semibold text-slate-500">
+          当前统计期间：{formatDate(startDate)} 至 {formatDate(endDate)}
         </div>
       </div>
 
@@ -149,8 +115,8 @@ export function AdPerformanceDiagnosisPage() {
       ) : !hasData ? (
         <div className="bg-white/50 border border-slate-205 border-dashed rounded-2xl p-16 text-center space-y-3">
           <Inbox className="w-12 h-12 text-slate-400 mx-auto" />
-          <h4 className="text-sm font-bold text-slate-700">暂无可执行广告诊断建议。</h4>
-          <p className="text-xs text-slate-400">当前日期范围内没有发现明显的投放、素材或转化异常。</p>
+          <h4 className="text-sm font-bold text-slate-700">当前日期范围暂无可执行广告表现诊断建议。</h4>
+          <p className="text-xs text-slate-400">没有发现需要处理的投放、素材或转化异常。</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -174,7 +140,7 @@ export function AdPerformanceDiagnosisPage() {
                        <div className="flex items-center justify-between">
                          <span className="text-[10px] font-mono text-slate-420 font-bold uppercase">{iss.issueId}</span>
                          <span className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase ${
-                          iss.severity === "critical" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"
+                          iss.severity === "critical" ? "bg-red-100 text-red-800" : "bg-slate-100 text-slate-700"
                          }`}>
                            {getSeverityLabel(iss.severity)}
                          </span>
@@ -260,7 +226,7 @@ export function AdPerformanceDiagnosisPage() {
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between">
             <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
               <h3 className="font-bold text-slate-900 text-sm">预算控制与受众优化</h3>
-              <span className="px-2 py-0.5 bg-amber-105 text-amber-800 text-[10px] font-bold rounded">
+              <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-bold rounded">
                 数量: {budgetAudienceIssues.length}
               </span>
             </div>
@@ -274,7 +240,7 @@ export function AdPerformanceDiagnosisPage() {
                     <div key={iss.issueId} className="p-3.5 rounded-lg border border-slate-100 bg-slate-50/40 space-y-2">
                        <div className="flex items-center justify-between">
                          <span className="text-[10px] font-mono text-slate-420 font-bold uppercase">{iss.issueId}</span>
-                         <span className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase bg-amber-100 text-amber-800`}>
+                         <span className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase bg-slate-100 text-slate-700`}>
                            {getSeverityLabel(iss.severity)}
                          </span>
                        </div>

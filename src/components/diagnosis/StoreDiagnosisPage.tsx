@@ -12,7 +12,6 @@ import {
   Inbox,
   AlertCircle,
   RefreshCw,
-  Calendar,
   Layers,
   Activity,
   Award,
@@ -20,17 +19,20 @@ import {
 } from "lucide-react";
 import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
 
-export function StoreDiagnosisPage() {
+export function StoreDiagnosisPage({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const {
     issues,
     loading,
     error,
-    refetch,
-    startDate,
-    endDate,
-    setStartDate,
-    setEndDate
-  } = useDiagnosticsIssues();
+    refetch
+  } = useDiagnosticsIssues({ startDate, endDate });
+
+  const formatDate = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
 
   // Filters based on requirements:
   // 1. 店铺经营结果: problemStage === "outcome"
@@ -104,21 +106,7 @@ export function StoreDiagnosisPage() {
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
-      {/* Disclaimer Banner */}
-      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
-        <div className="flex">
-          <div className="flex-shrink-0">
-            <span className="text-amber-500 font-bold">⚠️</span>
-          </div>
-          <div className="ml-3">
-            <p className="text-xs text-amber-800 font-bold">
-              当前页面仅展示店铺经营诊断结果；所有处理动作仍需人工确认。
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Header section with date selection */}
+      {/* Header section */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900">店铺经营诊断</h1>
@@ -126,37 +114,8 @@ export function StoreDiagnosisPage() {
             查看店铺订单、广告归因和经营结果，帮助团队发现店铺层面的异常问题。
           </p>
         </div>
-
-        {/* Date Selector */}
-        <div className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-xl border text-xs text-slate-705 shrink-0">
-          <Calendar className="w-4 h-4 text-slate-400" />
-          <div className="flex items-center gap-1">
-            <span>开始:</span>
-            <input 
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="px-2 py-1 bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-          <span className="text-slate-300">|</span>
-          <div className="flex items-center gap-1">
-            <span>结束:</span>
-            <input 
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="px-2 py-1 bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-          <button 
-            onClick={refetch}
-            disabled={loading}
-            className="p-1 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors disabled:bg-blue-300"
-            title="手动刷新"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-          </button>
+        <div className="text-xs font-semibold text-slate-500">
+          当前统计期间：{formatDate(startDate)} 至 {formatDate(endDate)}
         </div>
       </div>
 

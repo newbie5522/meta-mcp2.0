@@ -540,8 +540,8 @@ export function CreativeIntelligenceDashboard({
         riskBg = "bg-orange-50 border-orange-200 text-orange-700";
       } else if (finalScore >= 20) {
         riskLevel = "轻度疲劳";
-        riskColor = "text-yellow-600 font-semibold";
-        riskBg = "bg-yellow-50 border-yellow-200 text-yellow-800";
+        riskColor = "text-slate-600 font-semibold";
+        riskBg = "bg-slate-50 border-slate-200 text-slate-700";
       }
 
       map[c.id] = {
@@ -833,7 +833,7 @@ export function CreativeIntelligenceDashboard({
             <span>数据源: FactMetaPerformance level=ad + AdCreative / Ad</span>
           </div>
           <p className="text-slate-500 font-medium">
-            <span className={creativeHealthStatus === "OK" ? "text-emerald-700 font-bold" : "text-amber-700 font-bold"}>
+            <span className={creativeHealthStatus === "OK" ? "text-emerald-700 font-bold" : "text-slate-700 font-bold"}>
               {creativeHealthMessage}
             </span>
           </p>
@@ -846,12 +846,12 @@ export function CreativeIntelligenceDashboard({
       </div>
 
       {creativeHealthStatus !== "OK" && (
-        <div className="bg-amber-50 border border-amber-200 text-amber-950 rounded-xl p-4 space-y-2 shadow-sm animate-in fade-in duration-200">
-          <div className="flex items-center gap-2 font-bold text-amber-800 text-xs">
-            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+        <div className="bg-slate-50 border border-slate-200 text-slate-700 rounded-xl p-4 space-y-2 shadow-sm animate-in fade-in duration-200">
+          <div className="flex items-center gap-2 font-bold text-slate-800 text-xs">
+            <AlertTriangle className="w-4 h-4 text-slate-500 shrink-0" />
             <span>{creativeHealthStatus === "STRUCTURE_WITHOUT_FACTS" ? "素材结构已同步，成效未同步" : "当前日期范围暂无素材表现数据"}</span>
           </div>
-          <p className="text-xs text-amber-800 font-medium leading-relaxed">
+          <p className="text-xs text-slate-600 font-medium leading-relaxed">
             {creativeHealthMessage}
           </p>
         </div>
@@ -1215,7 +1215,7 @@ export function CreativeIntelligenceDashboard({
                                     className={`h-full rounded-full ${
                                       fatigue.fatigueScore >= 70 ? 'bg-red-500' : 
                                       fatigue.fatigueScore >= 40 ? 'bg-orange-500' : 
-                                      fatigue.fatigueScore >= 20 ? 'bg-yellow-500' : 'bg-green-500'
+                                      fatigue.fatigueScore >= 20 ? 'bg-slate-500' : 'bg-green-500'
                                     }`}
                                     style={{ width: `${fatigue.fatigueScore}%` }}
                                   ></div>
@@ -1771,7 +1771,7 @@ export function CreativeIntelligenceDashboard({
                   {aiReport && (
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                       aiReport.priority === "HIGH" ? "bg-red-100 text-red-800" :
-                      aiReport.priority === "MEDIUM" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"
+                      aiReport.priority === "MEDIUM" ? "bg-slate-100 text-slate-700" : "bg-slate-100 text-slate-600"
                     }`}>
                       优先级: {aiReport.priority === "HIGH" ? "重要诊断" : aiReport.priority === "MEDIUM" ? "普通诊断" : "常规诊断"}
                     </span>
@@ -1857,7 +1857,7 @@ export function CreativeIntelligenceDashboard({
                   <div className="bg-slate-900 text-slate-100 p-5 rounded-xl space-y-3 border border-slate-800">
                     <div className="flex justify-between items-center border-b border-slate-800 pb-2">
                       <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                        <Clock className="w-3.5 h-3.5 text-amber-500" />
+                        <Clock className="w-3.5 h-3.5 text-slate-500" />
                         受众衰退与性能诊断说明
                       </span>
                       <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${fatigue.riskBg}`}>
@@ -1883,7 +1883,7 @@ export function CreativeIntelligenceDashboard({
 
                       <div className="space-y-1.5 pt-2 border-t border-slate-800 leading-relaxed text-xs">
                         <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider flex items-center gap-1">
-                          <Zap className="w-3 h-3 text-amber-400 fill-amber-400" />
+                          <Zap className="w-3 h-3 text-indigo-400 fill-indigo-400" />
                           深度诊断处方方案:
                         </p>
                         <div className="bg-slate-950 p-3 rounded border border-slate-800 text-slate-300">

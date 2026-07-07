@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { ShieldCheck, Check, Cpu, Server, Info } from 'lucide-react';
+import { Check, Cpu, Server, Info } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { AIProviderConfig, AIProviderId } from '../shared/ai-provider.types';
 import { DEFAULT_AI_PROVIDERS } from '../shared/ai-provider-config';
@@ -33,22 +33,6 @@ export function AiConfigPage() {
         <p className="text-sm text-slate-500" id="ai-config-subtitle">
           预览系统未来集成的智能化大语言模型生态图谱，以及各提供商的处理能力与安全边界。
         </p>
-      </div>
-
-      {/* Security Advisory Announcement */}
-      <div className="p-5 bg-amber-50 border border-amber-200 rounded-xl" id="ai-security-banner">
-        <div className="flex items-start gap-3">
-          <ShieldCheck className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
-          <div className="space-y-1.5 flex-1">
-            <h4 className="text-sm font-bold text-amber-900">核心安全边界及规划说明</h4>
-            <p className="text-xs text-amber-800 leading-relaxed font-medium">
-              当前页面仅展示 AI 提供商接入规划。所有模型通道目前均处于未启用状态，系统不会读取密钥、不连接外部模型、不产生任何外部智能请求。
-            </p>
-            <p className="text-xs text-amber-700 leading-relaxed">
-              系统执行物理逻辑层面的规则诊断，<strong>坚守人工验证底线限制</strong>。本系统不提供自动投放、自动微调预算或自动关闭广告等任何具备直接账号写操作能力的智能模型集成。所有诊断出的异常情况与优化方案仅供参考展示，任何实操投放修改须由运营专员核实后通过官方渠道手工完成。
-            </p>
-          </div>
-        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6" id="ai-config-layout-grid">
@@ -155,8 +139,8 @@ export function AiConfigPage() {
                     <div className="flex-1 space-y-2.5 text-left">
                       <div className="space-y-1.5 text-xs">
                         <p className="text-slate-600 leading-relaxed">{p.description}</p>
-                        <p className="text-[10px] text-amber-700 bg-amber-50/40 p-2.5 rounded-lg border border-amber-100/50 leading-relaxed font-sans mt-2">
-                          <strong className="text-amber-800 block mb-0.5">安全准入规则：</strong>
+                        <p className="text-[10px] text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-100 leading-relaxed font-sans mt-2">
+                          <strong className="text-slate-700 block mb-0.5">安全准入规则：</strong>
                           {p.safetyNotice}
                         </p>
                       </div>

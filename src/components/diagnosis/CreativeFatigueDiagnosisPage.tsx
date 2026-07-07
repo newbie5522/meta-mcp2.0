@@ -7,24 +7,26 @@ import {
   RefreshCw, 
   AlertTriangle,
   Info,
-  Calendar,
   AlertCircle,
   Inbox,
   Activity
 } from "lucide-react";
 import { useDiagnosticsIssues } from "./useDiagnosticsIssues";
 
-export function CreativeFatigueDiagnosisPage() {
+export function CreativeFatigueDiagnosisPage({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const {
     issues,
     loading,
     error,
-    refetch,
-    startDate,
-    endDate,
-    setStartDate,
-    setEndDate
-  } = useDiagnosticsIssues();
+    refetch
+  } = useDiagnosticsIssues({ startDate, endDate });
+
+  const formatDate = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
 
   // Filter requirements:
   // 1. problemStage === "creative_attraction"
@@ -74,20 +76,6 @@ export function CreativeFatigueDiagnosisPage() {
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto font-sans">
-      {/* Disclaimer Banner */}
-      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-sm">
-        <div className="flex">
-          <div className="flex-shrink-0">
-            <span className="text-amber-500 font-bold">⚠️</span>
-          </div>
-          <div className="ml-3">
-            <p className="text-xs text-amber-800 font-bold">
-              当前页面仅展示真实诊断结果；如果所选时间内没有异常，会显示为空状态。
-            </p>
-          </div>
-        </div>
-      </div>
-
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="space-y-1">
           <h1 className="text-xl font-bold text-slate-900">素材疲劳诊断</h1>
@@ -95,37 +83,8 @@ export function CreativeFatigueDiagnosisPage() {
             查看素材点击表现、频次变化和转化异动，帮助团队判断是否需要更换素材。
           </p>
         </div>
-
-        {/* Date Selector */}
-        <div className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-xl border text-xs text-slate-705 shrink-0">
-          <Calendar className="w-4 h-4 text-slate-400" />
-          <div className="flex items-center gap-1">
-            <span>开始:</span>
-            <input 
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="px-2 py-1 bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-          <span className="text-slate-300">|</span>
-          <div className="flex items-center gap-1">
-            <span>结束:</span>
-            <input 
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="px-2 py-1 bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-          <button 
-            onClick={refetch}
-            disabled={loading}
-            className="p-1 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors disabled:bg-blue-300"
-            title="手动刷新"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-          </button>
+        <div className="text-xs font-semibold text-slate-500">
+          当前统计期间：{formatDate(startDate)} 至 {formatDate(endDate)}
         </div>
       </div>
 
@@ -175,10 +134,10 @@ export function CreativeFatigueDiagnosisPage() {
 
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
               <div className="flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-500" />
+                <AlertCircle className="w-4 h-4 text-slate-500" />
                 <h4 className="text-xs font-bold text-slate-500 uppercase">素材吸引力阶段</h4>
               </div>
-              <div className="text-2xl font-extrabold text-amber-600 mt-2">{creativeAttractionCount} 项</div>
+              <div className="text-2xl font-extrabold text-slate-700 mt-2">{creativeAttractionCount} 项</div>
               <p className="text-[10px] text-slate-400 mt-2 font-medium">在展现、频次压迫和初期点击率维度流失预警</p>
             </div>
 

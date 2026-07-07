@@ -270,7 +270,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     if (isMetaBreakdownMissing || chartRows.length === 0) {
       return (
         <div className="h-64 flex flex-col items-center justify-center text-slate-400 bg-slate-50/50 rounded-xl border border-dashed border-slate-200 text-xs p-6 text-center">
-          <AlertTriangle className="w-8 h-8 text-amber-500 mb-2" />
+          <AlertTriangle className="w-8 h-8 text-slate-400 mb-2" />
           <span className="font-bold text-slate-700 text-sm mb-1">受众细分数据未同步</span>
           <p className="text-[11px] text-slate-500 max-w-sm">
             当前日期范围没有 Meta 受众拆分数据，请先同步受众 breakdown。
@@ -362,16 +362,16 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       
       {/* ⚠️ Data Health Warning Banner (warnings & missing from API) */}
       {dataHealth && (dataHealth.warnings?.length > 0 || dataHealth.missing?.length > 0) && (
-        <div className="bg-amber-50 border border-amber-200/80 rounded-xl p-4 flex flex-col gap-1.5 text-xs text-amber-800 shadow-sm">
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-1.5 text-xs text-slate-700 shadow-sm">
           <div className="flex items-center gap-2 font-bold mb-1">
-            <AlertTriangle className="w-4 h-4 text-amber-600 animate-pulse" />
+            <AlertTriangle className="w-4 h-4 text-slate-500 animate-pulse" />
             <span>数据源健康状态提醒 ({dataHealth.status}):</span>
           </div>
           {dataHealth.warnings?.map((warn: string, i: number) => (
             <p key={`warn-${i}`} className="pl-6 font-medium">⚠️ {warn}</p>
           ))}
           {dataHealth.missing?.map((miss: string, i: number) => (
-            <p key={`miss-${i}`} className="pl-6 text-amber-700 font-medium">📌 信息缺少: {miss}</p>
+            <p key={`miss-${i}`} className="pl-6 text-slate-600 font-medium">📌 信息缺少: {miss}</p>
           ))}
         </div>
       )}
@@ -545,21 +545,6 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
       </div>
 
-      {activeTab === "region" && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-2.5 text-xs text-amber-900 shadow-sm animate-fade-in">
-          <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0 animate-pulse" />
-          <div>
-            <p className="font-bold text-amber-950 mb-1">Region 维度指标特殊提示 (Region Operational Guidance):</p>
-            <p className="font-semibold text-amber-800">
-              Region 当前仅展示花费、展示和点击，购买与 ROAS 暂不作为决策指标。
-            </p>
-            <p className="text-slate-500 mt-1">
-              Region 为高基数二级物理地理单元，默认仅展示花费 Top 20。若要过滤非重要小省州投放，可在上方输入最小花费起投门槛。
-            </p>
-          </div>
-        </div>
-      )}
-
       {/* Visual Analytics Space */}
       <div className="grid grid-cols-1 gap-6">
         
@@ -572,7 +557,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                 受众花费与转化购买分布交叉比对图 (Purchases vs Ad Spend)
               </CardTitle>
               {activeTab === "country" && (
-                <p className="text-[10px] text-amber-600 font-semibold mt-1">
+                <p className="text-[10px] text-slate-500 font-semibold mt-1">
                   * 提示：图表展示 Spend Top 10 细分，下方表格展示当前全部 {tableRows.length} 项受众细分数据。
                 </p>
               )}
@@ -613,7 +598,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
             </div>
           ) : (isMetaBreakdownMissing || tableRows.length === 0) ? (
             <div className="p-16 text-center text-slate-500 bg-slate-50/20 rounded-xl my-4 flex flex-col items-center justify-center max-w-lg mx-auto">
-              <AlertTriangle className="w-8 h-8 text-amber-500 mb-2" />
+              <AlertTriangle className="w-8 h-8 text-slate-400 mb-2" />
               <p className="text-xs font-bold text-slate-700">受众细分数据未同步</p>
               <p className="text-[11px] text-slate-400 mt-1">
                 当前日期范围没有 Meta 受众拆分数据，请先同步受众 breakdown。
@@ -728,7 +713,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                             suggestion === "首选优选" && "bg-emerald-100 text-emerald-800",
                             suggestion === "保持投放" && "bg-blue-100 text-blue-800",
                             suggestion === "观察积累" && "bg-slate-100 text-slate-800",
-                            suggestion === "降预算" && "bg-amber-100 text-amber-800",
+                            suggestion === "降预算" && "bg-slate-100 text-slate-700",
                             suggestion === "扩充受众" && "bg-indigo-100 text-indigo-800",
                             suggestion === "关停建议" && "bg-rose-100 text-rose-800"
                           )}>
@@ -778,8 +763,8 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                 <p className="text-xs font-semibold">主站订单国家数据分析中...</p>
               </div>
             ) : (countriesHealth?.status === "ORDER_COUNTRY_BACKFILL_REQUIRED" || orderCountryRows.length === 0) ? (
-              <div className="p-12 text-center text-slate-500 bg-slate-50/20 rounded-xl my-4 flex flex-col items-center justify-center max-w-lg mx-auto border border-dashed border-amber-200">
-                <AlertTriangle className="w-8 h-8 text-amber-500 mb-2" />
+              <div className="p-12 text-center text-slate-500 bg-slate-50/20 rounded-xl my-4 flex flex-col items-center justify-center max-w-lg mx-auto border border-dashed border-slate-200">
+                <AlertTriangle className="w-8 h-8 text-slate-400 mb-2" />
                 <p className="text-xs font-bold text-slate-700">订单国家/地区属性需要回填/校验</p>
                 <p className="text-[11px] text-slate-400 mt-1">
                   主站交易订单存在收货/账单国家解析为空的情况，需要运行账目刷新回填与别名映射校验，请先在「数据中心」或「同步中心」执行相关操作。
