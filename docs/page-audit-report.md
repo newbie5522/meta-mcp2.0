@@ -219,3 +219,82 @@ R5 backlog:
 | --- | --- |
 | Diagnosis issue cards | Current diagnosis pages do not directly render account entity ID/name pairs after R4 cleanup; if future account-level issue cards are reintroduced, they should use `MetaAccountDisplay`. |
 | Country analytics account-count drilldown | Current UI shows account counts, not account identities; if account IDs are expanded later, use `MetaAccountDisplay`. |
+
+## R4 Final Verification
+
+### R4-C Data Center Empty State Review
+
+| Page | Status | Notes |
+| --- | --- | --- |
+| DataDetailsDashboard | PASS | 当前日期范围无 FactMetaPerformance 时显示真实空状态；刷新页面数据只调用 `loadData`，同步数据才触发同步入口。 |
+| StoreDataDashboard | PASS | 当前日期范围无订单时显示真实空状态；未绑定账户消耗仅作为数据健康提醒。 |
+| CampaignStructureDashboard | UPDATED | 区分结构缺失、成效缺失、筛选隐藏；同步按钮仍触发 `sync_meta_structure` + `sync_meta_insights`。 |
+| AudienceAnalysisDashboard | UPDATED | Meta 受众国家与订单国家分离；`MISSING_META_BREAKDOWN` 显示真实缺失状态。 |
+| CreativeIntelligenceDashboard | PASS | 无素材表现 / 结构有成效无状态清晰，未显示假健康。 |
+| ProductIntelligenceDashboard | UPDATED | 当前周期无订单不冒充旧周期产品数据。 |
+| CountryAnalyticsDashboard | UPDATED | 国家维度空状态清晰，来源区分。 |
+
+### R4-D AI Payload Boundary
+
+- `DiagnosisOverviewPage` explain-dashboard uses compact issues.
+- `PrescriptionCenterPage` explain-issue uses `compactIssueForAi`.
+- `PrescriptionReviewPage` explain-review uses `compactIssueForAi`.
+- `AiExplainButton` and `AiExplanationPanel` were inspected; they only render UI / response state and do not send full issue payloads.
+- No AI request should send full `issue` objects.
+- No AI request should send `evidence`, `entityRefs`, `limitations`, or `validationMetrics`.
+
+Search results:
+
+| Pattern | Result |
+| --- | --- |
+| `/api/ai/explain-issue` | Checked |
+| `/api/ai/explain-dashboard` | Checked |
+| `/api/ai/explain-review` | Checked and compacted |
+| `issue: item` | `<NO_MATCH>` |
+| `issue: matchedIssue` | `<NO_MATCH>` |
+| `evidence` in AI request payload | `<NO_MATCH>` |
+| `entityRefs` in AI request payload | `<NO_MATCH>` |
+| `validationMetrics` in AI request payload | `<NO_MATCH>` |
+
+### R4-B Regression Check
+
+- `MetaAccountDisplay` retained.
+- Account display remains:
+  - line 1: account name
+  - line 2: account id without `act_`
+- Search supports account name, numeric id, and `act_` id.
+- Navigation, sync payloads, query params, and backend storage continue using original account id.
+
+### Final Grep Results
+
+| Pattern | Result |
+| --- | --- |
+| `当前页面仅展示真实诊断结果` | `<NO_MATCH>` |
+| `数据健康度：健康` | `<NO_MATCH>` |
+| `素材洞察诊断状态` | `<NO_MATCH>` |
+| `HEALTHY` | `<NO_MATCH>` |
+| `includeDebug: true` | `<NO_MATCH>` |
+| `HTTP error 413` | `<NO_MATCH>` |
+| `issue: item` | `<NO_MATCH>` |
+| `同步刷新看板` | `<NO_MATCH>` |
+| `刷新 Meta 数据` | `<NO_MATCH>` |
+| `同步广告结构与成效` | `<NO_MATCH>` |
+
+Remaining amber/yellow classes:
+Only dynamic config or operational states remain:
+
+| File | Reason |
+| --- | --- |
+| `src/components/MetaConfigPage.tsx` | Token configured read-only state, real permission warning, no-account result, or local fallback account notice. |
+| `src/components/StoresDashboard.tsx` | Store API not connected or timezone diagnostics warnings. |
+| `src/components/SyncCenterPage.tsx` | `partial_data` sync status badge. |
+| `src/components/TeamConfigPage.tsx` | Owner edit differs from persisted value. |
+
+### Verification
+
+| Command | Result |
+| --- | --- |
+| `npm run lint` | Passed |
+| `npm run build` | Passed |
+
+This commit is ready for server-side full verification, not final production sign-off.

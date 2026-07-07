@@ -377,6 +377,12 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         </div>
       )}
 
+      {isMetaBreakdownMissing && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          当前日期范围没有 Meta 受众 breakdown 数据。Meta 受众国家来自 FactAudienceBreakdown；订单收货国家来自订单 shipping/billing country，两者不会混用。
+        </div>
+      )}
+
       {/* Primary Filter Dashboard Controls */}
       <Card className="border-slate-200 shadow-sm">
         <CardContent className="p-5">

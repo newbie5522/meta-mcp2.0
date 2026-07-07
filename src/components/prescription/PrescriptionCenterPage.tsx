@@ -15,7 +15,7 @@ import {
   Database,
   X
 } from "lucide-react";
-import { useSuggestionStatus } from "./useSuggestionStatus";
+import { useSuggestionStatus, type SuggestionStatusDetail } from "./useSuggestionStatus";
 import { SuggestionActionPanel } from "./SuggestionActionPanel";
 import { AiExplainButton } from "../ai/AiExplainButton";
 import { AiExplanationPanel } from "../ai/AiExplanationPanel";
@@ -159,6 +159,41 @@ function formatDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function compactIssueForAi(issue: UniformIssue) {
+  return {
+    issueId: issue.issueId,
+    issueType: issue.issueType,
+    category: issue.category,
+    severity: issue.severity,
+    entityType: issue.entityType,
+    entityId: issue.entityId,
+    entityName: issue.entityName,
+    title: issue.title,
+    oneLineReason: issue.oneLineReason,
+    actionVerb: issue.actionVerb,
+    actionTarget: issue.actionTarget,
+    problemStage: issue.problemStage,
+    optimizationArea: issue.optimizationArea,
+    funnelStage: issue.funnelStage,
+    diagnosisReason: issue.diagnosisReason,
+    suggestedActions: Array.isArray(issue.suggestedActions)
+      ? issue.suggestedActions.slice(0, 3)
+      : [],
+    priorityScore: issue.priorityScore,
+    confidenceScore: issue.confidenceScore,
+    impactScore: issue.impactScore,
+    urgencyScore: issue.urgencyScore,
+    ownerUserName: issue.ownerUserName
+  };
+}
+
+function compactStatusDetailForAi(statusDetail: Pick<SuggestionStatusDetail, "status" | "ignoreReason"> | null | undefined) {
+  return {
+    status: statusDetail?.status || "pending",
+    ...(statusDetail?.ignoreReason ? { ignoreReason: statusDetail.ignoreReason } : {})
+  };
+}
+
 export function PrescriptionCenterPage({
   currentSubTab,
   startDate,
@@ -214,8 +249,8 @@ export function PrescriptionCenterPage({
         body: JSON.stringify({
           provider: "auto",
           model: "",
-          issue: item,
-          statusDetail: currentStatusDetail,
+          issue: compactIssueForAi(item),
+          statusDetail: compactStatusDetailForAi(currentStatusDetail),
           context: {
             dateRange: {
               startDate: startDateStr,

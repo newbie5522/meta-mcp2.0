@@ -29,6 +29,45 @@ function formatDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function compactIssueForAi(issue: any) {
+  return {
+    issueId: issue.issueId,
+    issueType: issue.issueType,
+    category: issue.category,
+    severity: issue.severity,
+    entityType: issue.entityType,
+    entityId: issue.entityId,
+    entityName: issue.entityName,
+    title: issue.title,
+    oneLineReason: issue.oneLineReason,
+    actionVerb: issue.actionVerb,
+    actionTarget: issue.actionTarget,
+    problemStage: issue.problemStage,
+    optimizationArea: issue.optimizationArea,
+    funnelStage: issue.funnelStage,
+    diagnosisReason: issue.diagnosisReason,
+    suggestedActions: Array.isArray(issue.suggestedActions)
+      ? issue.suggestedActions.slice(0, 3)
+      : [],
+    priorityScore: issue.priorityScore,
+    confidenceScore: issue.confidenceScore,
+    impactScore: issue.impactScore,
+    urgencyScore: issue.urgencyScore,
+    ownerUserName: issue.ownerUserName
+  };
+}
+
+function compactReviewStatusForAi(statusDetail: any) {
+  return {
+    issueId: statusDetail?.issueId,
+    status: statusDetail?.status || "pending",
+    ...(statusDetail?.ignoreReason ? { ignoreReason: statusDetail.ignoreReason } : {}),
+    ...(statusDetail?.review3dStatus ? { review3dStatus: statusDetail.review3dStatus } : {}),
+    ...(statusDetail?.review7dStatus ? { review7dStatus: statusDetail.review7dStatus } : {}),
+    ...(statusDetail?.review14dStatus ? { review14dStatus: statusDetail.review14dStatus } : {})
+  };
+}
+
 export function PrescriptionReviewPage({
   startDate,
   endDate
@@ -88,8 +127,8 @@ export function PrescriptionReviewPage({
         body: JSON.stringify({
           provider: "auto",
           model: "",
-          issue: matchedIssue,
-          statusDetail: item,
+          issue: compactIssueForAi(matchedIssue),
+          statusDetail: compactReviewStatusForAi(item),
           context: {
             dateRange: {
               startDate: startDateStr,

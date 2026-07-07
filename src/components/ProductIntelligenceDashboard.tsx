@@ -14,7 +14,8 @@ import {
   Sparkles,
   ArrowRight,
   ShieldCheck,
-  Percent
+  Percent,
+  AlertTriangle
 } from "lucide-react";
 
 interface ProductIntelligenceRecord {
@@ -236,8 +237,11 @@ setProducts(rows);
                   
                   {products.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="px-6 py-12 text-center text-slate-400">
-                        当前时间区间内，由于对账规则已排除失效与未付款项，无符合筛选条件的产品销售流水。
+                      <td colSpan={9} className="px-6 py-10">
+                        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">
+                          <AlertTriangle className="w-7 h-7 text-slate-400 mx-auto mb-2" />
+                          当前日期范围暂无产品订单数据。请扩大日期范围或同步店铺订单数据。
+                        </div>
                       </td>
                     </tr>
                   )}

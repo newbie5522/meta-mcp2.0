@@ -127,6 +127,8 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
     return val.toLocaleString();
   };
 
+  const countryRows = data?.rows || [];
+
   return (
     <div className="space-y-6">
       {loading ? (
@@ -266,7 +268,7 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {data.rows.map((row) => (
+                  {countryRows.map((row) => (
                     <tr key={row.countryCode} className="hover:bg-slate-50/80 transition-colors">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
@@ -294,10 +296,13 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
                       </td>
                     </tr>
                   ))}
-                  {data.rows.length === 0 && (
+                  {countryRows.length === 0 && (
                     <tr>
-                      <td colSpan={10} className="px-6 py-12 text-center text-slate-400 font-medium">
-                        当前时间区间内，无符合筛选条件的国家。
+                      <td colSpan={10} className="px-6 py-10">
+                        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">
+                          <AlertTriangle className="w-7 h-7 text-slate-400 mx-auto mb-2" />
+                          当前日期范围暂无国家维度数据。Meta 受众国家来自受众 breakdown，订单国家来自订单 shipping/billing country。
+                        </div>
                       </td>
                     </tr>
                   )}
