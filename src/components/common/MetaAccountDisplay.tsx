@@ -20,7 +20,7 @@ export function metaAccountOptionLabel(name?: string | null, accountId?: string 
   const rawName = String(name || "").trim();
   const rawId = String(accountId || "").trim();
   const lowerName = rawName.toLowerCase();
-  const displayName = rawName && lowerName !== rawId.toLowerCase() && lowerName !== cleanId.toLowerCase() ? rawName : "未命名 Meta 账号";
+  const displayName = rawName && lowerName !== rawId.toLowerCase() && lowerName !== cleanId.toLowerCase() ? rawName : "账户名称未同步";
   return cleanId ? `${displayName} / ${cleanId}` : displayName;
 }
 
@@ -44,7 +44,7 @@ export function MetaAccountDisplay({
   const rawName = String(name || "").trim();
   const rawId = String(accountId || "").trim();
   const lowerName = rawName.toLowerCase();
-  const displayName = rawName && lowerName !== rawId.toLowerCase() && lowerName !== displayId.toLowerCase() ? rawName : "未命名 Meta 账号";
+  const displayName = rawName && lowerName !== rawId.toLowerCase() && lowerName !== displayId.toLowerCase() ? rawName : "账户名称未同步";
 
   return (
     <div className={className} title={`${displayName} / ${accountId || ""}`}>

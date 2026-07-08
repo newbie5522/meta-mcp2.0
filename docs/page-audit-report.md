@@ -176,6 +176,108 @@ Verification:
 
 This commit is ready for server-side full verification, not final production sign-off.
 
+## R5-UIE-V2 Unified Frontend Experience Pass
+
+### Modified Files And Scope
+
+| File | Change |
+| --- | --- |
+| `src/components/common/DataViewTraceBar.tsx` | Added a shared trace strip for current filter range, API response range, timezone, row counts, fact rows, structure rows, level, status, and source. |
+| `src/components/CampaignStructureDashboard.tsx` | Added the trace strip, preserved last good rows on range mismatch, kept hierarchy sync progress visible, removed raw technical source labels from the default UI, and kept AI context dispatch. |
+| `src/components/AudienceAnalysisDashboard.tsx` | Added the trace strip, clarified missing audience breakdown states, kept low-sample notices dynamic, and replaced default technical source wording with business-readable labels. |
+| `src/components/CountryAnalyticsDashboard.tsx` | Added the trace strip, clarified country low-sample / missing-source states, and changed default source labels to business wording. |
+| `src/components/DataDetailsDashboard.tsx` | Added the trace strip above account performance tables and fixed the default source label to business wording while keeping raw IDs for requests. |
+| `src/components/ProductIntelligenceDashboard.tsx` | Added the trace strip, retained current-range guarding, and replaced technical attribution wording with business labels. |
+| `src/components/StoreDataDashboard.tsx` | Added the trace strip for store/order rows and preserved refresh as read-only page data reload. |
+| `src/components/CreativeIntelligenceDashboard.tsx` | Converted the creative page into an operations workspace with ops buckets, account names, default opsScore sorting, detail drawer context, and “问 AI 分析该素材”. |
+| `src/server/services/creative-insights.service.ts` | Added accountName/accountNames/fb_account_name and opsBucket/opsScore/recommendedAction/diagnosisReason to creative rows; exposed performance/structure row counts in diagnostics. |
+| `src/components/AICopilotWindow.tsx` | Added the `open-ai-context` listener, active context card, prompt prefill, message state, and neutral send behavior when no general copilot backend is attached. |
+| `src/components/diagnosis/DiagnosticIssueCard.tsx` | Added “查看证据” and “问 AI”; default card UI no longer exposes raw issue IDs, while expanded evidence/debug still remains available. |
+| `src/lib/business-labels.ts` | Completed severity/entity/funnel labels and changed fallback labels away from raw underscore keys. |
+| `src/lib/sync-trigger.ts` | Normalized sync result/error mapping for SUCCESS, NO_NEW_DATA, PARTIAL, RUNNING, and FAILED; RUNNING now maps to visible progress instead of failure. |
+| `src/server/routes/sync.routes.ts` | Added shared `buildProgress` response fields for sync task responses and 409 running-task responses. |
+| `src/server/routes/data-center.routes.ts` | Added `dataHealth` to account performance and enriched creative data health with factRows/structureRows/dateRange. |
+
+### Sync Progress Contract
+
+`SyncStatusPanel`, `sync-trigger.ts`, and `sync.routes.ts` now share these fields:
+
+- `progressPercent`
+- `currentStep / totalSteps`
+- `processedAccounts / totalAccounts`
+- `processedDimensions / totalDimensions`
+- `runningTask`
+- `chainId`
+- `taskIds`
+- `recordsFetched / recordsSaved / recordsUpdated`
+- `failedAccounts`
+
+RUNNING / 409 responses are mapped to a visible running panel with 15% fallback progress, not an error state.
+
+### DataViewTraceBar Coverage
+
+Covered pages:
+
+- Campaign structure
+- Audience analysis
+- Creative intelligence
+- Product intelligence
+- Country analytics
+- Account data details
+- Store data dashboard
+
+The trace bar exposes current range and response range side by side, which makes date filter mismatches visible instead of silently showing old rows.
+
+### Creative Workspace
+
+The creative page now has:
+
+- accountName / clean account display
+- opsBucket tabs
+- opsScore-first sorting
+- recommended action and diagnosis reason
+- detail drawer with operations summary
+- “问 AI 分析该素材” dispatching `open-ai-context`
+
+The old “生成离线规则诊断” primary-action wording is removed.
+
+### AI Copilot And Diagnosis
+
+- `AICopilotWindow` listens for `open-ai-context` and opens with a context card plus prefilled prompt.
+- Creative, campaign structure, and diagnosis cards dispatch `open-ai-context`.
+- Diagnosis pages route business issues through `DiagnosticIssueCard`.
+- `DiagnosticIssueCard` exposes evidence on demand and adds “问 AI”.
+- `business-labels.ts` centralizes Chinese labels for problem stage, optimization area, funnel stage, severity, and entity type.
+
+### Grep Cleanup Summary
+
+Fixed / removed from default UI:
+
+- `未命名 Meta 账号`
+- `生成离线规则诊断`
+- `{iss.issueId}` default display
+- `ACC_ACT`, `acc_act`, `STORE_1`, `store_1`
+- `FactMetaPerformance`, `Strict Attribution Barrier`, `Deterministic Trace` in frontend component UI
+
+Retained as debug or backend contract only:
+
+- API/source fields such as `dataSourceExplain`, `primarySource`, and source table names may remain in server responses and explicit evidence/debug drawers.
+- `issueId` remains as React keys or expanded debug context, not default visible card text.
+
+### Verification
+
+| Command | Result |
+| --- | --- |
+| `npm run lint` | PASS |
+| `npm run build` | PASS |
+
+Hard grep highlights:
+
+- `progressPercent` appears in `SyncStatusPanel`, `sync-trigger.ts`, and `sync.routes.ts`.
+- `DataViewTraceBar` appears across the required data center pages.
+- `open-ai-context` appears in trigger components and `AICopilotWindow`.
+- Removed-string grep returned no frontend component matches for the prohibited default UI patterns.
+
 ## R5-CF Code Fix
 
 ### PayloadTooLargeError

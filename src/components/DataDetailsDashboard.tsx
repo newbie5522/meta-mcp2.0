@@ -31,6 +31,7 @@ import {
 } from "@/lib/sync-trigger";
 import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountDisplay";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
+import { DataViewTraceBar } from "./common/DataViewTraceBar";
 
 import { useNavigate } from "react-router-dom";
 
@@ -414,6 +415,19 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
 
       <SyncStatusPanel status={syncStatus} />
 
+      <DataViewTraceBar
+        currentStartDate={format(startDate, "yyyy-MM-dd")}
+        currentEndDate={format(endDate, "yyyy-MM-dd")}
+        responseStartDate={data.dateRange?.startDate || data.appliedFilters?.startDate}
+        responseEndDate={data.dateRange?.endDate || data.appliedFilters?.endDate}
+        timezone={data.dateRange?.timezone || data.appliedFilters?.timezone || "America/Los_Angeles"}
+        rowCount={data.accounts?.length || 0}
+        factRows={factRowsCount}
+        status={data.health?.status || "UNKNOWN"}
+        level="account"
+        source="广告成效数据 + 广告账户"
+      />
+
       {/* Meta Freshness Warning Alert Box */}
       {data.metaFreshness && (data.metaFreshness.warning || (data.metaFreshness.secondsSinceLatestSync !== null && data.metaFreshness.secondsSinceLatestSync > 1800)) && (
         <div className="flex items-start gap-3 p-4 bg-orange-50/60 border border-orange-200 rounded-xl text-slate-850 text-xs shadow-sm">
@@ -457,7 +471,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                 <>
                   配置中心已保存 <strong className="font-mono">{allAccountsCount}</strong> 个 Meta 广告账户，但所选日期范围
                   (<strong>{appliedStartDate}</strong> 至 <strong>{appliedEndDate}</strong>)
-                  暂无 FactMetaPerformance 事实记录。下方仍展示账户库存，花费、展示、点击、购买和 ROAS 按 0 展示。
+                  暂无广告成效事实记录。下方仍展示账户库存，花费、展示、点击、购买和 ROAS 按 0 展示。
                 </>
               ) : (
                 <>

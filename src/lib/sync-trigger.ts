@@ -102,18 +102,23 @@ export function getSyncErrorMessage(error: any): string {
   );
 }
 
+function normalizePanelStatus(raw?: string) {
+  const value = String(raw || "").toUpperCase();
+  if (value === "SUCCESS") return "success" as const;
+  if (value === "NO_NEW_DATA" || value === "NO_NEW_DATA_OR_FAILED") return "no_new_data" as const;
+  if (value === "PARTIAL" || value === "PARTIAL_SUCCESS") return "partial_success" as const;
+  if (value === "RUNNING") return "running" as const;
+  if (value === "FAILED" || value === "ERROR") return "error" as const;
+  return "success" as const;
+}
+
 export function mapSyncResultToPanel(data: SyncTaskResponse) {
   const rawStatus = String(data?.status || "").toUpperCase();
-  const normalizedStatus =
-    rawStatus === "RUNNING" ? "running" as const :
-    rawStatus === "NO_NEW_DATA" || rawStatus === "NO_NEW_DATA_OR_FAILED" ? "no_new_data" as const :
-    rawStatus === "PARTIAL" || rawStatus === "PARTIAL_SUCCESS" ? "partial_success" as const :
-    "success" as const;
+  const normalizedStatus = normalizePanelStatus(rawStatus);
   const fallbackPercent =
-    rawStatus === "RUNNING" ? 15 :
-    rawStatus === "SUCCESS" || rawStatus === "NO_NEW_DATA" || rawStatus === "NO_NEW_DATA_OR_FAILED" || rawStatus === "PARTIAL_SUCCESS" || rawStatus === "PARTIAL"
-      ? 100
-      : null;
+    normalizedStatus === "running" ? 15 :
+    ["success", "no_new_data", "partial_success"].includes(normalizedStatus) ? 100 :
+    normalizedStatus === "error" ? 0 : null;
 
   return {
     status: normalizedStatus,
@@ -140,9 +145,45 @@ export function mapSyncResultToPanel(data: SyncTaskResponse) {
 }
 
 export function mapSyncErrorToPanel(error: any) {
-  const data = error?.data || error?.response || {};
+  const data = error?.response?.data || error?.data || error?.response || {};
+  const code = data?.error || data?.code;
+  const message = String(data?.message || error?.message || "");
+  const isRunning =
+    error?.response?.status === 409 ||
+    error?.status === 409 ||
+    data?.status === "RUNNING" ||
+    code === "SYNC_ALREADY_RUNNING" ||
+    message.includes("SYNC_ALREADY_RUNNING") ||
+    message.includes("already running") ||
+    message.includes("正在运行");
+
+  if (isRunning) {
+    return {
+      status: "running" as const,
+      message: data?.message || "已有同步任务正在运行，请等待当前任务完成。",
+      chainId: data.chainId || data.runningTask?.taskChainId || null,
+      taskIds: data.runningTask?.id ? [data.runningTask.id] : null,
+      runningTask: data.runningTask || null,
+      recordsFetched: null,
+      recordsSaved: null,
+      recordsUpdated: null,
+      targetAccountsCount: null,
+      failedAccounts: data.failedAccounts || null,
+      progressPercent: data.progressPercent ?? 15,
+      currentStep: data.currentStep ?? 1,
+      totalSteps: data.totalSteps ?? 1,
+      stepLabel: data.stepLabel || "已有同步任务正在运行",
+      processedAccounts: data.processedAccounts ?? null,
+      totalAccounts: data.totalAccounts ?? data.targetAccountsCount ?? null,
+      processedDimensions: data.processedDimensions ?? null,
+      totalDimensions: data.totalDimensions ?? null,
+      startedAt: data.startedAt ?? null,
+      finishedAt: data.finishedAt ?? null
+    };
+  }
+
   return {
-    status: data.status === "RUNNING" ? "running" as const : "error" as const,
+    status: "error" as const,
     message: getSyncErrorMessage(error),
     chainId: data.chainId || data.runningTask?.taskChainId || null,
     taskIds: data.runningTask?.id ? [data.runningTask.id] : null,
@@ -152,10 +193,10 @@ export function mapSyncErrorToPanel(error: any) {
     recordsUpdated: null,
     targetAccountsCount: null,
     failedAccounts: data.failedAccounts || null,
-    progressPercent: data.progressPercent ?? (data.status === "RUNNING" ? 15 : null),
+    progressPercent: data.progressPercent ?? 0,
     currentStep: data.currentStep ?? null,
     totalSteps: data.totalSteps ?? null,
-    stepLabel: data.stepLabel ?? (data.status === "RUNNING" ? "已有同步任务正在运行" : null),
+    stepLabel: data.stepLabel ?? "同步失败",
     processedAccounts: data.processedAccounts ?? null,
     totalAccounts: data.totalAccounts ?? data.targetAccountsCount ?? null,
     processedDimensions: data.processedDimensions ?? null,

@@ -23,6 +23,7 @@ import {
   responseDateRangeMatches,
   shouldPreserveLastGoodData
 } from "@/lib/data-view-state";
+import { DataViewTraceBar } from "./common/DataViewTraceBar";
 
 interface CountryAnalyticsRecord {
   countryCode: string;
@@ -94,7 +95,7 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
   const [selectedRow, setSelectedRow] = useState<CountryAnalyticsRecord | null>(null);
   const [lastGoodData, setLastGoodData] = useState<CountryAnalyticsData | null>(null);
   const [viewNotice, setViewNotice] = useState<string | null>(null);
-  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string } | null>(null);
+  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string; timezone?: string } | null>(null);
 
   const fetchCountryData = async () => {
     setLoading(true);
@@ -168,14 +169,17 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
 
   return (
     <div className="space-y-6">
-      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600 flex flex-wrap gap-3">
-        <span>当前筛选周期：{format(startDate, "yyyy-MM-dd")} ~ {format(endDate, "yyyy-MM-dd")}</span>
-        {responseDateRange && (
-          <span>接口返回周期：{responseDateRange.startDate} ~ {responseDateRange.endDate}</span>
-        )}
-        <span>当前数据行数：{countryRows.length}</span>
-        <span>状态：{countryHealthStatus}</span>
-      </div>
+      <DataViewTraceBar
+        currentStartDate={format(startDate, "yyyy-MM-dd")}
+        currentEndDate={format(endDate, "yyyy-MM-dd")}
+        responseStartDate={responseDateRange?.startDate}
+        responseEndDate={responseDateRange?.endDate}
+        timezone={responseDateRange?.timezone || "America/Los_Angeles"}
+        rowCount={countryRows.length}
+        status={countryHealthStatus}
+        level="country"
+        source="受众国家事实数据 + 店铺订单"
+      />
       {viewNotice && (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
           {viewNotice}
@@ -283,7 +287,7 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
                   Meta 国家受众表现排行榜
                 </h3>
                 <p className="text-slate-500 text-xs mt-1">
-                  当前根据 Meta 事实受众数据表 (FactAudienceBreakdown) 计算展现、点击与广告购买率。
+                  当前根据 Meta 受众国家事实数据计算展现、点击与广告购买率。
                 </p>
               </div>
             </div>
@@ -389,8 +393,8 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
 
                   <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
                     <div>
-                      <span className="text-xs text-slate-400 block">数据源 (Primary Source)</span>
-                      <strong className="text-sm text-slate-900 font-semibold">{data.dataSourceExplain.metaPrimarySource}</strong>
+                      <span className="text-xs text-slate-400 block">数据来源</span>
+                      <strong className="text-sm text-slate-900 font-semibold">Meta 受众国家事实数据</strong>
                     </div>
                     <div>
                       <span className="text-xs text-slate-400 block">关联广告账户数量</span>
@@ -433,7 +437,7 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
                         <div>
                           <strong className="text-slate-900">数据源合规机制 (Audience Origin Check):</strong>
                           <p className="text-slate-500 text-xs mt-0.5">
-                            本报告所采用的 Meta 广告国家明细来自于 <code>FactAudienceBreakdown</code>。不等同于订单归因国家。
+                            本报告所采用的 Meta 广告国家明细来自受众国家事实数据。不等同于订单归因国家。
                           </p>
                         </div>
                       </div>
@@ -441,7 +445,7 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
                   </div>
 
                   <div className="space-y-2">
-                    <span className="text-xs text-slate-400 uppercase font-semibold">数据审计解释 (dataSourceExplain)</span>
+                    <span className="text-xs text-slate-400 uppercase font-semibold">数据来源说明</span>
                     <pre className="bg-slate-950 text-[#86e2d5] text-xs p-4 rounded-xl font-mono overflow-auto max-h-[160px]">
                       {JSON.stringify(data.dataSourceExplain, null, 2)}
                     </pre>

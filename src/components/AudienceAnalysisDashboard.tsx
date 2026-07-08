@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { metaAccountOptionLabel } from "./common/MetaAccountDisplay";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
+import { DataViewTraceBar } from "./common/DataViewTraceBar";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 import {
   CURRENT_RANGE_NOT_READY_MESSAGE,
@@ -46,7 +47,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
   const [viewNotice, setViewNotice] = useState<string | null>(null);
-  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string } | null>(null);
+  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string; timezone?: string } | null>(null);
 
   // Order Country Rows
   const [orderCountryRows, setOrderCountryRows] = useState<any[]>([]);
@@ -588,16 +589,18 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
       <SyncStatusPanel status={syncStatus} />
 
-      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600 flex flex-wrap gap-3">
-        <span>当前筛选周期：{format(startDate, "yyyy-MM-dd")} ~ {format(endDate, "yyyy-MM-dd")}</span>
-        {responseDateRange && (
-          <span>接口返回周期：{responseDateRange.startDate} ~ {responseDateRange.endDate}</span>
-        )}
-        <span>当前维度：{activeTab}</span>
-        <span>当前数据行数：{data.length}</span>
-        <span>状态：{dataHealth?.status || "UNKNOWN"}</span>
-        {dataHealth?.factRows !== undefined && <span>事实行数：{dataHealth.factRows}</span>}
-      </div>
+      <DataViewTraceBar
+        currentStartDate={format(startDate, "yyyy-MM-dd")}
+        currentEndDate={format(endDate, "yyyy-MM-dd")}
+        responseStartDate={responseDateRange?.startDate}
+        responseEndDate={responseDateRange?.endDate}
+        timezone={responseDateRange?.timezone || "America/Los_Angeles"}
+        rowCount={data.length}
+        factRows={dataHealth?.factRows}
+        status={dataHealth?.status || "UNKNOWN"}
+        level={activeTab}
+        source="受众拆分事实数据"
+      />
 
       {lowCountrySampleNotice && !viewNotice && !shouldShowAudienceNotice && (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
@@ -714,8 +717,8 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
             <CardTitle className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
               <SlidersHorizontal className="w-4 h-4 text-indigo-600" />
               {activeTab === "country" 
-                ? "Meta 受众国家：来自 FactAudienceBreakdown"
-                : "11 维受众分析智能交叉决策底表 (Deterministic Demographic Attributes)"}
+                ? "Meta 受众国家表现"
+                : "11 维受众分析决策底表"}
             </CardTitle>
             <p className="text-[11px] text-slate-400 mt-1">
               表格默认按 Spend DESC 排序。点击字段表头可切换为 Purchases、ROAS、CPA、CTR 高效排序。
@@ -736,7 +739,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
               <AlertTriangle className="w-8 h-8 text-slate-400 mb-2" />
               <p className="text-xs font-bold text-slate-700">受众细分数据未同步</p>
               <p className="text-[11px] text-slate-400 mt-1">
-                当前日期范围没有 Meta 受众拆分数据，请先同步受众 breakdown。
+                当前日期范围没有 Meta 受众拆分数据，请先同步受众细分数据。
               </p>
             </div>
           ) : (
@@ -884,7 +887,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                 订单收货国家：来自 Order shipping/billing country
               </CardTitle>
               <p className="text-[11px] text-slate-400 mt-1">
-                该区域只展示主站订单收货/账单国家，不代表 Meta 受众国家；Meta 受众国家来自上方 FactAudienceBreakdown。
+                该区域只展示主站订单收货/账单国家，不代表 Meta 受众国家；Meta 受众国家来自上方受众细分事实数据。
               </p>
             </div>
             <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 px-3 py-1 rounded-full font-mono">

@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountDisplay";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
+import { DataViewTraceBar } from "./common/DataViewTraceBar";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 import {
   CURRENT_RANGE_NOT_READY_MESSAGE,
@@ -77,7 +78,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
   const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
   const [lastGoodData, setLastGoodData] = useState<any | null>(null);
   const [viewNotice, setViewNotice] = useState<string | null>(null);
-  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string } | null>(null);
+  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string; timezone?: string } | null>(null);
   const startStrKey = format(startDate, "yyyy-MM-dd");
   const endStrKey = format(endDate, "yyyy-MM-dd");
 
@@ -548,7 +549,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                 viewLevel === "campaigns" ? "text-slate-900 font-bold" : "text-slate-400"
               )}
               onClick={() => navigateBackTo("campaigns")}
-              title={`${selectedAccountName || "未命名 Meta 账号"} / ${selectedAccount}`}
+              title={`${selectedAccountName || "账户名称未同步"} / ${selectedAccount}`}
             >
               <FolderGit2 className="w-4 h-4" />
               {selectedAccountName || selectedAccount}
@@ -686,21 +687,19 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
       <SyncStatusPanel status={syncStatus} />
 
-      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600 flex flex-wrap gap-3">
-        <span>当前筛选周期：{startStrKey} ~ {endStrKey}</span>
-        {responseDateRange && (
-          <span>接口返回周期：{responseDateRange.startDate} ~ {responseDateRange.endDate}</span>
-        )}
-        <span>当前数据行数：{data.length}</span>
-        {dataHealth?.factRows !== undefined && (
-          <span>事实行数：{dataHealth.factRows}</span>
-        )}
-        {dataHealth?.structureRows !== undefined && (
-          <span>结构行数：{dataHealth.structureRows}</span>
-        )}
-        <span>状态：{dataHealth?.status || structureSummary?.health?.status || "UNKNOWN"}</span>
-        <span>层级：{viewLevel}</span>
-      </div>
+      <DataViewTraceBar
+        currentStartDate={startStrKey}
+        currentEndDate={endStrKey}
+        responseStartDate={responseDateRange?.startDate}
+        responseEndDate={responseDateRange?.endDate}
+        timezone={responseDateRange?.timezone || "America/Los_Angeles"}
+        rowCount={data.length}
+        factRows={dataHealth?.factRows}
+        structureRows={dataHealth?.structureRows}
+        status={dataHealth?.status || structureSummary?.health?.status || "UNKNOWN"}
+        level={viewLevel}
+        source="广告层级结构 + 广告成效数据"
+      />
 
       {viewNotice && (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
@@ -725,7 +724,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
           </div>
           {dataHealth?.status === "STRUCTURE_WITHOUT_FACTS" && (
             <p className="mt-2 font-semibold">
-              结构已同步，成效未同步。当前日期范围内没有 FactMetaPerformance 成效数据，请同步广告成效数据或扩大日期范围。
+              结构已同步，成效未同步。当前日期范围内没有广告成效事实数据，请同步广告成效数据或扩大日期范围。
             </p>
           )}
           {dataHealth?.missingReason && dataHealth?.status !== "STRUCTURE_WITHOUT_FACTS" && (
@@ -840,14 +839,14 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                           </p>
                           {dataHealth?.reason && (
                             <p className="mt-3 text-[11px] text-slate-400 font-mono">
-                              Diagnostic Code: {dataHealth.reason}
+                              状态原因：{dataHealth.reason}
                             </p>
                           )}
                           {(dataHealth?.factRows !== undefined || dataHealth?.structureRows !== undefined || dataHealth?.level) && (
                             <div className="mt-2 flex flex-wrap justify-center gap-3 text-[10px] text-slate-400 font-mono">
-                              {dataHealth?.factRows !== undefined && <span>Fact Rows: {dataHealth.factRows}</span>}
-                              {dataHealth?.structureRows !== undefined && <span>Structure Rows: {dataHealth.structureRows}</span>}
-                              {dataHealth?.level && <span>Level: {dataHealth.level}</span>}
+                              {dataHealth?.factRows !== undefined && <span>事实行数：{dataHealth.factRows}</span>}
+                              {dataHealth?.structureRows !== undefined && <span>结构行数：{dataHealth.structureRows}</span>}
+                              {dataHealth?.level && <span>层级：{dataHealth.level}</span>}
                             </div>
                           )}
                         </div>

@@ -1909,6 +1909,19 @@ router.get("/accounts-performance", async (req, res) => {
         lastSyncTimeStr: latestFetched ? dayjs(latestFetched).format("YYYY-MM-DD HH:mm:ss") : "无记录",
         isSyncActive: false
       },
+      dataHealth: {
+        status: rows.length > 0 ? "READY" : "EMPTY_FACTS",
+        reason: rows.length > 0 ? "OK" : "NO_ACCOUNT_LEDGER_ROWS",
+        message: rows.length > 0 ? "账号表现账目已按当前日期范围返回。" : "当前日期范围内暂无账号表现账目。",
+        level: "account",
+        factRows: rows.length,
+        structureRows: results.length,
+        dateRange: buildDateRange(startStr, endStr),
+        queryDebug: {
+          storeId: storeIdParam || "all",
+          includeHistoricalAccounts
+        }
+      },
       summary: {
         totalAccounts: results.length,
         activeAccounts: results.filter(a => a.spend > 0).length,
@@ -2783,16 +2796,25 @@ router.get("/creative-insights", async (req, res) => {
     const creativeHealth = hasPerformanceRows
       ? {
           status: "OK",
-          message: "素材成效数据来自 FactMetaPerformance level=ad，并关联 AdCreative / Ad。"
+          message: "素材成效数据来自广告级事实数据，并关联素材与广告结构。",
+          factRows: Number(result.diagnostics?.performanceRows || rows.length || 0),
+          structureRows: Number(result.diagnostics?.structureRows || 0),
+          dateRange: buildDateRange(startStr, endStr)
         }
       : hasCreativeStructure
         ? {
             status: "STRUCTURE_WITHOUT_FACTS",
-            message: "素材结构已同步，成效未同步。请同步广告级成效数据后再判断素材疲劳。"
+            message: "素材结构已同步，成效未同步。请同步广告级成效数据后再判断素材疲劳。",
+            factRows: Number(result.diagnostics?.performanceRows || 0),
+            structureRows: Number(result.diagnostics?.structureRows || 0),
+            dateRange: buildDateRange(startStr, endStr)
           }
         : {
             status: "EMPTY",
-            message: "当前日期范围暂无素材表现数据。"
+            message: "当前日期范围暂无素材表现数据。",
+            factRows: Number(result.diagnostics?.performanceRows || 0),
+            structureRows: Number(result.diagnostics?.structureRows || 0),
+            dateRange: buildDateRange(startStr, endStr)
           };
 
     res.json({

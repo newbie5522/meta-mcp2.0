@@ -49,6 +49,7 @@ import { toast } from "sonner";
 import axios from "axios";
 import { MetaAccountDisplay, cleanAccountId, metaAccountOptionLabel } from "./common/MetaAccountDisplay";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
+import { DataViewTraceBar } from "./common/DataViewTraceBar";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask, type SyncTaskPayload } from "@/lib/sync-trigger";
 import {
   CURRENT_RANGE_NOT_READY_MESSAGE,
@@ -56,6 +57,7 @@ import {
   responseDateRangeMatches,
   shouldPreserveLastGoodData
 } from "@/lib/data-view-state";
+import { cn } from "@/lib/utils";
 import { 
   ResponsiveContainer, 
   LineChart, 
@@ -80,6 +82,13 @@ interface CreativeData {
   cpc: number;
   cpm: number;
   frequency: number;
+  cpa?: number;
+  clicks?: number;
+  opsScore?: number;
+  opsBucket?: string;
+  opsBucketLabel?: string;
+  recommendedAction?: string;
+  diagnosisReason?: string;
   hookRate: number; // 3-second view rate
   aiRiskStatus: string;
   trendStatus: string;
@@ -142,7 +151,7 @@ export function CreativeIntelligenceDashboard({
   const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
   const [lastGoodData, setLastGoodData] = useState<any | null>(null);
   const [viewNotice, setViewNotice] = useState<string | null>(null);
-  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string } | null>(null);
+  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string; timezone?: string } | null>(null);
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [creativeDataHealth, setCreativeDataHealth] = useState<any>(null);
 
@@ -223,12 +232,21 @@ export function CreativeIntelligenceDashboard({
   const [aiReport, setAiReport] = useState<any>(null);
 
   // Sorting state for (1)素材预览设置
-  const [previewSortField, setPreviewSortField] = useState<string>("spend");
+  const [previewSortField, setPreviewSortField] = useState<string>("opsScore");
   const [previewSortOrder, setPreviewSortOrder] = useState<"asc" | "desc">("desc");
 
   // Sorting state for (2)素材表现指标
   const [metricsSortField, setMetricsSortField] = useState<string>("spend");
   const [metricsSortOrder, setMetricsSortOrder] = useState<"asc" | "desc">("desc");
+  const creativeBuckets = [
+    { id: "all", label: "全部素材" },
+    { id: "scale_candidate", label: "扩量候选" },
+    { id: "high_click_test", label: "高点击测试" },
+    { id: "watching", label: "观察中" },
+    { id: "fatigue_warning", label: "疲劳预警" },
+    { id: "stop_loss", label: "低效止损" }
+  ] as const;
+  const [activeOpsBucket, setActiveOpsBucket] = useState<string>("all");
 
   // Scroll Synchronization Refs & State
   const previewContainerRef = React.useRef<HTMLDivElement>(null);
@@ -448,6 +466,9 @@ export function CreativeIntelligenceDashboard({
 ROAS：${creative.roas}
 CPM：${creative.cpm}
 频次：${creative.frequency}
+运营分组：${creative.opsBucketLabel || creative.opsBucket || "观察中"}
+建议动作：${creative.recommendedAction || "继续观察"}
+诊断依据：${creative.diagnosisReason || "当前数据不足以做扩量或止损判断。"}
 日期范围：${startStrKey} ~ ${endStrKey}`;
 
     window.dispatchEvent(new CustomEvent("open-ai-context", {
@@ -472,6 +493,11 @@ CPM：${creative.cpm}
           cpc: creative.cpc,
           cpm: creative.cpm,
           frequency: creative.frequency,
+          opsBucket: creative.opsBucket,
+          opsBucketLabel: creative.opsBucketLabel,
+          opsScore: creative.opsScore,
+          recommendedAction: creative.recommendedAction,
+          diagnosisReason: creative.diagnosisReason,
           dateRange: {
             startDate: startStrKey,
             endDate: endStrKey
@@ -595,10 +621,11 @@ CPM：${creative.cpm}
       
       const matchesAccount = selectedAccountFilter === "all" || String(c.accountId) === selectedAccountFilter;
       const matchesCampaign = selectedCampaignFilter === "all" || String(c.campaignId) === selectedCampaignFilter;
+      const matchesOpsBucket = activeOpsBucket === "all" || c.opsBucket === activeOpsBucket;
 
-      return belongsToFilteredStore && matchesType && matchesSearch && matchesAccount && matchesCampaign;
+      return belongsToFilteredStore && matchesType && matchesSearch && matchesAccount && matchesCampaign && matchesOpsBucket;
     });
-  }, [creatives, activeStoreIds, selectedType, searchTerm, selectedAccountFilter, selectedCampaignFilter]);
+  }, [creatives, activeStoreIds, selectedType, searchTerm, selectedAccountFilter, selectedCampaignFilter, activeOpsBucket]);
 
   // Daily records matching current selection
 
@@ -703,7 +730,10 @@ CPM：${creative.cpm}
       let valA: any = "";
       let valB: any = "";
 
-      if (previewSortField === "spend") {
+      if (previewSortField === "opsScore") {
+        valA = a.opsScore || 0;
+        valB = b.opsScore || 0;
+      } else if (previewSortField === "spend") {
         valA = a.spend || 0;
         valB = b.spend || 0;
       } else if (previewSortField === "purchases") {
@@ -813,7 +843,7 @@ CPM：${creative.cpm}
   const creativeHealthStatus = creativeDataHealth?.status || (hasCreativePerformance ? "OK" : hasCreativeStructure ? "STRUCTURE_WITHOUT_FACTS" : "EMPTY");
   const creativeHealthMessage = creativeDataHealth?.message || (
     creativeHealthStatus === "OK"
-      ? "素材成效数据来自 FactMetaPerformance level=ad，并关联 AdCreative / Ad。"
+      ? "素材成效数据来自广告成效事实表，并关联素材与广告结构。"
       : creativeHealthStatus === "STRUCTURE_WITHOUT_FACTS"
         ? "素材结构已同步，成效未同步。请同步广告级成效数据后再判断素材疲劳。"
         : "当前日期范围暂无素材表现数据。"
@@ -955,7 +985,7 @@ CPM：${creative.cpm}
       <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 flex flex-wrap items-center justify-between gap-4 text-xs shadow-sm">
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-md font-semibold font-mono text-[11px]">
-            <span>数据源: FactMetaPerformance level=ad + AdCreative / Ad</span>
+            <span>数据源: 广告成效数据 + 素材结构</span>
           </div>
           <p className="text-slate-500 font-medium">
             <span className={creativeHealthStatus === "OK" ? "text-emerald-700 font-bold" : "text-slate-700 font-bold"}>
@@ -1083,15 +1113,41 @@ CPM：${creative.cpm}
 
       <SyncStatusPanel status={syncStatus} />
 
-      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600 flex flex-wrap gap-3">
-        <span>当前筛选周期：{startStrKey || "--"} ~ {endStrKey || "--"}</span>
-        {responseDateRange && (
-          <span>接口返回周期：{responseDateRange.startDate} ~ {responseDateRange.endDate}</span>
-        )}
-        <span>当前数据行数：{creatives.length}</span>
-        <span>素材数量：{creatives.length}</span>
-        <span>状态：{creativeDataHealth?.status || "UNKNOWN"}</span>
-        <span>当前排序：{activeSubTab === "metrics" ? metricsSortField : previewSortField} / {activeSubTab === "metrics" ? metricsSortOrder : previewSortOrder}</span>
+      <DataViewTraceBar
+        currentStartDate={startStrKey || "--"}
+        currentEndDate={endStrKey || "--"}
+        responseStartDate={responseDateRange?.startDate}
+        responseEndDate={responseDateRange?.endDate}
+        timezone={responseDateRange?.timezone || "America/Los_Angeles"}
+        rowCount={creatives.length}
+        status={creativeDataHealth?.status || "UNKNOWN"}
+        level={activeSubTab}
+        source="广告成效数据 + 素材结构"
+        extra={<span>当前排序：{activeSubTab === "metrics" ? metricsSortField : previewSortField} / {activeSubTab === "metrics" ? metricsSortOrder : previewSortOrder}</span>}
+      />
+
+      <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
+        {creativeBuckets.map(bucket => {
+          const count = bucket.id === "all"
+            ? creatives.length
+            : creatives.filter(c => c.opsBucket === bucket.id).length;
+          const active = activeOpsBucket === bucket.id;
+          return (
+            <button
+              key={bucket.id}
+              type="button"
+              onClick={() => setActiveOpsBucket(bucket.id)}
+              className={cn(
+                "h-8 rounded-lg px-3 text-xs font-bold transition-all",
+                active
+                  ? "bg-slate-900 text-white"
+                  : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+              )}
+            >
+              {bucket.label} <span className="font-mono opacity-70">{count}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Aggregate KPI Panels connected with parent filters */}
@@ -1370,6 +1426,15 @@ CPM：${creative.cpm}
                                     style={{ width: `${fatigue.fatigueScore}%` }}
                                   ></div>
                                 </div>
+                                <div className="text-[10px] text-slate-600">
+                                  <span className="font-bold text-slate-800">{c.opsBucketLabel || "观察中"}</span>
+                                  {c.opsScore !== undefined && <span className="font-mono ml-1">({c.opsScore})</span>}
+                                </div>
+                                {c.recommendedAction && (
+                                  <div className="text-[10px] text-slate-500 max-w-[160px] truncate" title={c.recommendedAction}>
+                                    {c.recommendedAction}
+                                  </div>
+                                )}
                               </div>
                             </TableCell>
                             <TableCell className="py-3">
@@ -1917,6 +1982,27 @@ CPM：${creative.cpm}
                     <p className="text-xs font-bold text-slate-900 mt-1">{selectedPreviewCreative.ctr.toFixed(2)}%</p>
                   </div>
                 </div>
+              </div>
+
+              {/* Offline Rule Deep Intelligence Expert Audit Card */}
+              <div className="bg-white border border-slate-200 p-4 rounded-xl space-y-2 shadow-sm">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">运营决策分组</p>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-bold text-slate-900">{selectedPreviewCreative.opsBucketLabel || "观察中"}</span>
+                  <span className="text-xs font-mono text-slate-500">opsScore: {selectedPreviewCreative.opsScore ?? "--"}</span>
+                </div>
+                <p className="text-xs text-slate-700 leading-relaxed">
+                  {selectedPreviewCreative.recommendedAction || "继续观察 24-48 小时"}
+                </p>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  {selectedPreviewCreative.diagnosisReason || "当前数据不足以做扩量或止损判断。"}
+                </p>
+                <Button
+                  onClick={() => handleAskCreativeAI(selectedPreviewCreative)}
+                  className="w-full h-8 bg-slate-900 text-white hover:bg-slate-800 text-xs font-bold rounded-lg"
+                >
+                  问 AI 分析该素材
+                </Button>
               </div>
 
               {/* Offline Rule Deep Intelligence Expert Audit Card */}

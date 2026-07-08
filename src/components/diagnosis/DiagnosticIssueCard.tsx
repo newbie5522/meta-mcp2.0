@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
+import { ChevronDown, ChevronRight, ExternalLink, MessageSquare } from "lucide-react";
 import { MetaAccountDisplay } from "@/components/common/MetaAccountDisplay";
 import {
   funnelStageLabels,
@@ -69,6 +69,34 @@ export function DiagnosticIssueCard({ issue }: { issue: any }) {
     issue.funnelStage ? `漏斗：${toBusinessLabel(issue.funnelStage, funnelStageLabels)}` : null
   ].filter(Boolean);
 
+  function askIssueAI() {
+    const prompt = `请分析这个诊断问题，并给出投放/店铺运营处理建议：${issue.title}`;
+
+    window.dispatchEvent(new CustomEvent("open-ai-context", {
+      detail: {
+        source: "diagnosis_issue",
+        title: issue.title,
+        prompt,
+        context: {
+          issueId: issue.issueId,
+          entityType: issue.entityType,
+          entityId: issue.entityId,
+          entityName: issue.entityName,
+          accountId: issue.accountId,
+          accountName: issue.accountName,
+          storeId: issue.storeId,
+          storeName: issue.storeName,
+          severity: issue.severity,
+          problemStage: issue.problemStage,
+          optimizationArea: issue.optimizationArea,
+          funnelStage: issue.funnelStage,
+          evidence: issue.evidence,
+          suggestedActions: issue.suggestedActions
+        }
+      }
+    }));
+  }
+
   return (
     <div className="p-4 rounded-xl border border-slate-200 bg-white space-y-3">
       <div className="flex items-start justify-between gap-3">
@@ -92,7 +120,16 @@ export function DiagnosticIssueCard({ issue }: { issue: any }) {
           className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:text-blue-900"
         >
           {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-          {open ? "收起详情" : "查看详情"}
+          {open ? "收起证据" : "查看证据"}
+        </button>
+
+        <button
+          type="button"
+          onClick={askIssueAI}
+          className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-700 hover:text-indigo-900"
+        >
+          <MessageSquare className="w-3 h-3" />
+          问 AI
         </button>
 
         {issue.route && (
@@ -130,6 +167,15 @@ export function DiagnosticIssueCard({ issue }: { issue: any }) {
                   <li key={index}>{action}</li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {issue.evidence && (
+            <div>
+              <div className="font-bold text-slate-800 mb-1">证据快照</div>
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded bg-white border border-slate-200 p-2 text-[10px] text-slate-500">
+                {JSON.stringify(issue.evidence, null, 2)}
+              </pre>
             </div>
           )}
 

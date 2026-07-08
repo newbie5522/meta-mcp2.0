@@ -23,6 +23,7 @@ import {
   responseDateRangeMatches,
   shouldPreserveLastGoodData
 } from "@/lib/data-view-state";
+import { DataViewTraceBar } from "./common/DataViewTraceBar";
 
 interface ProductIntelligenceRecord {
   id: string;
@@ -60,7 +61,7 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
   const [selectedProduct, setSelectedProduct] = useState<ProductIntelligenceRecord | null>(null);
   const [lastGoodData, setLastGoodData] = useState<ProductIntelligenceRecord[] | null>(null);
   const [viewNotice, setViewNotice] = useState<string | null>(null);
-  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string } | null>(null);
+  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string; timezone?: string } | null>(null);
   const [dataHealthStatus, setDataHealthStatus] = useState<string>("UNKNOWN");
 
   const fetchProducts = async () => {
@@ -146,14 +147,16 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
 
   return (
   <div className="space-y-6">
-      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600 flex flex-wrap gap-3">
-        <span>当前筛选周期：{format(startDate, "yyyy-MM-dd")} ~ {format(endDate, "yyyy-MM-dd")}</span>
-        {responseDateRange && (
-          <span>接口返回周期：{responseDateRange.startDate} ~ {responseDateRange.endDate}</span>
-        )}
-        <span>当前数据行数：{products.length}</span>
-        <span>状态：{dataHealthStatus}</span>
-      </div>
+      <DataViewTraceBar
+        currentStartDate={format(startDate, "yyyy-MM-dd")}
+        currentEndDate={format(endDate, "yyyy-MM-dd")}
+        responseStartDate={responseDateRange?.startDate}
+        responseEndDate={responseDateRange?.endDate}
+        timezone={responseDateRange?.timezone || "America/Los_Angeles"}
+        rowCount={products.length}
+        status={dataHealthStatus}
+        source="Order"
+      />
       {viewNotice && (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
           {viewNotice}
@@ -305,7 +308,7 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
                     <ShieldCheck className="w-5 h-5 text-indigo-600" />
                     <div>
                       <h4 className="font-bold text-slate-950 text-base">商品级 AI 可信度合规审计</h4>
-                      <p className="text-[11px] text-slate-500 mt-0.5">ProductId: {selectedProduct.productId}</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">商品 ID: {selectedProduct.productId}</p>
                     </div>
                   </div>
                   <button 
@@ -324,7 +327,7 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
 
                   <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
                     <div>
-                      <span className="text-xs text-slate-400 block">营收聚合路径 (Primary Source)</span>
+                      <span className="text-xs text-slate-400 block">营收聚合路径</span>
                       <strong className="text-sm text-slate-900 capitalize font-semibold">{selectedProduct.source}</strong>
                     </div>
                     <div>
@@ -347,14 +350,14 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
                   <div className="space-y-4">
                     <h5 className="text-[12.5px] font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5 border-b border-dashed border-slate-200 pb-1.5">
                       <Calendar className="w-4 h-4 text-blue-500" /> 
-                      可信对账与去伪装溯源机制 (Deterministic Trace)
+                      可信对账与归因链路
                     </h5>
 
                     <div className="space-y-3.5 text-[12.5px] text-slate-600 leading-relaxed">
                       <div className="flex items-start gap-2.5">
                         <div className="p-1 bg-indigo-50 text-indigo-600 rounded-lg mt-0.5 font-mono text-xs font-semibold">A</div>
                         <div>
-                          <strong className="text-slate-900">非伪造归因机制 (Strict Attribution Barrier):</strong>
+                          <strong className="text-slate-900">归因保护:</strong>
                           <p className="text-slate-500 text-xs mt-0.5">
                             由于系统内未重建真实 Product-to-Ad mapping，故将商品级 <code>adSpend</code>/<code>ROAS</code> 直接声明为空。坚决防范由分摊估算机制带来的数据幻觉。
                           </p>
@@ -374,7 +377,7 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
                   </div>
 
                   <div className="space-y-2">
-                    <span className="text-xs text-slate-400 uppercase font-semibold">数据审计 JSON (dataSourceExplain)</span>
+                    <span className="text-xs text-slate-400 uppercase font-semibold">数据来源 JSON</span>
                     <pre className="bg-slate-950 text-[#86e2d5] text-xs p-4 rounded-xl font-mono overflow-auto max-h-[160px]">
                       {JSON.stringify(selectedProduct.dataSourceExplain, null, 2)}
                     </pre>

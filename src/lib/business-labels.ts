@@ -7,7 +7,8 @@ export const problemStageLabels: Record<string, string> = {
   creative_attraction: "素材吸引力",
   creative_fatigue: "素材疲劳",
   store_operations: "店铺经营",
-  landing_page_arrival: "落地页到达"
+  landing_page_arrival: "落地页到达",
+  cart_to_checkout: "加购到结账"
 };
 
 export const optimizationAreaLabels: Record<string, string> = {
@@ -35,7 +36,25 @@ export const funnelStageLabels: Record<string, string> = {
   meta_to_store_reconciliation: "Meta 与店铺对账"
 };
 
+export const severityLabels: Record<string, string> = {
+  critical: "严重",
+  warning: "需要关注",
+  info: "提醒",
+  healthy: "正常"
+};
+
+export const entityTypeLabels: Record<string, string> = {
+  account: "广告账户",
+  ad_account: "广告账户",
+  store: "店铺",
+  campaign: "广告系列",
+  adset: "广告组",
+  ad: "广告",
+  creative: "素材",
+  product: "商品"
+};
+
 export function toBusinessLabel(value: string | null | undefined, map: Record<string, string>) {
   if (!value) return "未分类";
-  return map[value] || value;
+  return map[value] || String(value).replace(/_/g, " ");
 }

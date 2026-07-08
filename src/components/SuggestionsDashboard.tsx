@@ -239,7 +239,7 @@ export function SuggestionsDashboard() {
                 当前运行提示：已启用离线物理勾稽诊断
               </p>
               <p className="text-[11px] text-slate-600 mt-0.5 font-medium leading-relaxed">
-                当前工作区未配置 AI 模型 API 密钥。建议中心已全面加载 <b>System Offline Rule Engine (离线物理规则诊断)</b>，诊断内容完全基于底层数据库中实有的 Orders 事实流、FactMetaPerformance 出纳花费及 AccMappings。虽然非实时在线 AI 生成，但由于采用真实证据闭环，建议极其安全可作业。
+                当前工作区未配置 AI 模型 API 密钥。建议中心已全面加载离线规则诊断，诊断内容基于底层数据库中实有的订单事实流、广告成效花费及账户映射。虽然非实时在线 AI 生成，但由于采用真实证据闭环，建议可用于运营复核。
               </p>
             </div>
           </div>
@@ -349,10 +349,10 @@ export function SuggestionsDashboard() {
                     {isExpanded && (
                       <div className="p-3 bg-white/85 border-t border-indigo-100/50 space-y-2 text-xs text-slate-600">
                         <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-[10px] bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                          <div><span className="text-slate-400 font-semibold uppercase">Primary Source:</span> <span className="text-slate-800 font-bold">{meta.evidence.primarySource}</span></div>
-                          <div><span className="text-slate-400 font-semibold uppercase">Date Range:</span> <span className="text-slate-800 font-bold">{meta.evidence.dateRange}</span></div>
+                          <div><span className="text-slate-400 font-semibold uppercase">数据来源:</span> <span className="text-slate-800 font-bold">{meta.evidence.primarySource}</span></div>
+                          <div><span className="text-slate-400 font-semibold uppercase">统计周期:</span> <span className="text-slate-800 font-bold">{meta.evidence.dateRange}</span></div>
                           {meta.evidence.supportingSources?.length > 0 && (
-                            <div className="col-span-2 mt-1"><span className="text-slate-400 font-semibold uppercase">Supporting:</span> <span className="text-slate-700 font-bold">{meta.evidence.supportingSources.join(", ")}</span></div>
+                            <div className="col-span-2 mt-1"><span className="text-slate-400 font-semibold uppercase">辅助来源:</span> <span className="text-slate-700 font-bold">{meta.evidence.supportingSources.join(", ")}</span></div>
                           )}
                         </div>
 

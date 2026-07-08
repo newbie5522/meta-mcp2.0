@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { MetaAccountDisplay } from "./common/MetaAccountDisplay";
+import { DataViewTraceBar } from "./common/DataViewTraceBar";
 
 // Types matching API structure
 interface StoreMetric {
@@ -359,6 +360,20 @@ setAiReport(reportText || "未返回分析报告");
           刷新页面数据
         </Button>
       </div>
+
+      <DataViewTraceBar
+        currentStartDate={formattedStartDate}
+        currentEndDate={formattedEndDate}
+        responseStartDate={appliedDateRange?.startDate}
+        responseEndDate={appliedDateRange?.endDate}
+        timezone={(appliedDateRange as any)?.timezone || "America/Los_Angeles"}
+        rowCount={stores.length}
+        factRows={aggregatedStats.totalOrders}
+        structureRows={stores.length}
+        status={dataHealth.status}
+        level="store"
+        source="店铺订单 + 店铺配置"
+      />
 
       {/* 📊 KPI summary banner */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">

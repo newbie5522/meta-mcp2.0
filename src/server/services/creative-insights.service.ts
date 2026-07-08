@@ -13,6 +13,11 @@ export interface AggregatedCreative {
   accountName: string;
   accountNames: string[];
   fb_account_name: string;
+  opsScore: number;
+  opsBucket: string;
+  opsBucketLabel: string;
+  recommendedAction: string;
+  diagnosisReason: string;
   storeId: number | null;
   storeName: string;
   creativeName: string;
@@ -43,6 +48,57 @@ export interface AggregatedCreative {
   adCount: number;
   
   syncedAt: string;
+}
+
+function classifyCreative(item: {
+  spend: number;
+  purchases: number;
+  roas: number;
+  ctr: number;
+  frequency: number;
+}) {
+  if (item.spend >= 20 && item.purchases > 0 && item.roas >= 1.5) {
+    return {
+      opsBucket: "scale_candidate",
+      opsBucketLabel: "扩量候选",
+      recommendedAction: "提高预算或复制相似素材测试",
+      diagnosisReason: "已有购买且 ROAS 达到扩量观察线。"
+    };
+  }
+
+  if (item.ctr >= 1.5 && item.spend < 30 && item.purchases === 0) {
+    return {
+      opsBucket: "high_click_test",
+      opsBucketLabel: "高点击测试",
+      recommendedAction: "继续小预算测试落地页承接",
+      diagnosisReason: "点击率较高但转化尚未验证。"
+    };
+  }
+
+  if (item.frequency >= 2.2 || (item.spend >= 20 && item.roas < 1)) {
+    return {
+      opsBucket: "fatigue_warning",
+      opsBucketLabel: "疲劳预警",
+      recommendedAction: "准备替换素材或降低预算",
+      diagnosisReason: "频次或 ROAS 已出现疲劳风险。"
+    };
+  }
+
+  if (item.spend >= 30 && item.purchases === 0) {
+    return {
+      opsBucket: "stop_loss",
+      opsBucketLabel: "低效止损",
+      recommendedAction: "暂停或重做素材角度",
+      diagnosisReason: "花费已达到观察线但没有购买。"
+    };
+  }
+
+  return {
+    opsBucket: "watching",
+    opsBucketLabel: "观察中",
+    recommendedAction: "继续观察 24-48 小时",
+    diagnosisReason: "当前数据不足以做扩量或止损判断。"
+  };
 }
 
 export async function getAggregatedCreativeInsights(params: {
@@ -137,6 +193,8 @@ export async function getAggregatedCreativeInsights(params: {
             hasAdLevelInsights,
             hasAdCreativeLinks,
             hasCreativeStaticInfo,
+            performanceRows: 0,
+            structureRows: totalAdsCount,
             noAdLevelInsightsWarning: !hasAdLevelInsights,
             adCreativeNotLinkedWarning: !hasAdCreativeLinks,
             creativeStaticMissingWarning: !hasCreativeStaticInfo
@@ -441,6 +499,19 @@ export async function getAggregatedCreativeInsights(params: {
     // Status calculations for fatigue & premium UX
     const aiRiskStatus = frequency > 2.2 ? "high" : frequency > 1.8 ? "moderate" : "safe";
     const trendStatus = roasVal > 2.0 ? "up" : roasVal < 1.0 ? "down" : "stable";
+    const opsScore = Number((
+      Math.min(40, roasVal * 15) +
+      Math.min(25, ctrVal * 5) +
+      Math.min(20, item.purchases * 5) -
+      Math.max(0, frequency - 2) * 10
+    ).toFixed(1));
+    const ops = classifyCreative({
+      spend: item.spend,
+      purchases: item.purchases,
+      roas: roasVal,
+      ctr: ctrVal,
+      frequency
+    });
 
     return {
       id: item.creativeId,
@@ -454,6 +525,8 @@ export async function getAggregatedCreativeInsights(params: {
       accountName: accountNamesList[0] || "",
       accountNames: accountNamesList,
       fb_account_name: accountNamesList[0] || "",
+      opsScore,
+      ...ops,
       storeId: item.storeId,
       storeName: item.storeName,
       creativeName: item.creativeName,
@@ -545,6 +618,8 @@ export async function getAggregatedCreativeInsights(params: {
       hasAdLevelInsights,
       hasAdCreativeLinks,
       hasCreativeStaticInfo,
+      performanceRows: performanceRows.length,
+      structureRows: totalAdsCount,
       noAdLevelInsightsWarning: !hasAdLevelInsights,
       adCreativeNotLinkedWarning: !hasAdCreativeLinks,
       creativeStaticMissingWarning: !hasCreativeStaticInfo
