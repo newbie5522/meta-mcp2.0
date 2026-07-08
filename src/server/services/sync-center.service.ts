@@ -114,15 +114,15 @@ export class SyncCenter {
         );
       }
 
-      await prisma.syncLog.update({
-        where: { id: existingRunningTask.id },
-        data: {
-          status: "failed",
-          finishedAt: new Date(),
-          error: "STALE_RUNNING_TASK_MARKED_FAILED",
-          errorMessage: "Stale running task was automatically marked failed before starting a new task."
-        }
-      });
+        await prisma.syncLog.update({
+          where: { id: existingRunningTask.id },
+          data: {
+            status: "failed",
+            finishedAt: new Date(),
+            error: "STALE_RUNNING_TASK_TIMEOUT",
+            errorMessage: "STALE_RUNNING_TASK_TIMEOUT"
+          }
+        });
     }
 
     try {
@@ -670,12 +670,19 @@ export class SyncCenter {
           endDate: endStr,
           accountIds: accountId ? [accountId] : undefined,
           dimensions: ["country", "age", "gender", "publisher_platform"],
-          includeUnmapped: false
+          includeUnmapped: true
         });
 
-        if (!stats.success) {
+        if (stats.status === "FAILED") {
+          const failedAccounts = Array.isArray(stats.failedAccounts)
+            ? stats.failedAccounts
+            : [];
+          const failureDetail = failedAccounts.length > 0
+            ? failedAccounts.map(item => `${item.accountId}:${item.dimension || "unknown"}:${item.message || item.error || "unknown_error"}`).join("; ")
+            : stats.reason || stats.message || "Meta API 未返回受众 breakdown 数据，且没有提供具体失败账户。";
+
           throw new Error(
-            `META_AUDIENCE_SYNC_FAILED: ${stats.failedAccounts.map(item => `${item.accountId}:${item.dimension || "unknown"}:${item.message}`).join("; ")}`
+            `META_AUDIENCE_SYNC_FAILED: ${failureDetail}`
           );
         }
 
@@ -690,9 +697,14 @@ export class SyncCenter {
             targetTable: "FactAudienceBreakdown",
             recordsUpdated: stats.recordsUpdated,
             recordsFailed: stats.failedAccounts.length,
+            failedAccounts: stats.failedAccounts,
             accountsSynced: stats.accountsSynced,
+            targetAccountsCount: stats.targetAccountsCount,
+            dimensionsRequested: stats.dimensionsRequested || ["country", "age", "gender", "publisher_platform"],
             dimensionsSynced: stats.dimensionsSynced,
             status: stats.status,
+            reason: stats.reason,
+            message: stats.message,
             completedAt: new Date().toISOString()
           }
         };

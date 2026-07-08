@@ -37,7 +37,7 @@ export function safeDateToDateString(date: Date): string {
 
 export function getBusinessDateRange(rangeId: string): { startDateStr: string; endDateStr: string } {
   const today = getBusinessNow();
-  const closedEnd = getBusinessNow().subtract(1, "day");
+  const yesterday = today.subtract(1, "day");
 
   switch (rangeId) {
     case "today":
@@ -48,35 +48,35 @@ export function getBusinessDateRange(rangeId: string): { startDateStr: string; e
 
     case "yesterday":
       return {
-        startDateStr: closedEnd.format("YYYY-MM-DD"),
-        endDateStr: closedEnd.format("YYYY-MM-DD")
+        startDateStr: yesterday.format("YYYY-MM-DD"),
+        endDateStr: yesterday.format("YYYY-MM-DD")
       };
 
     case "past_7":
       return {
-        startDateStr: closedEnd.subtract(6, "day").format("YYYY-MM-DD"),
-        endDateStr: closedEnd.format("YYYY-MM-DD")
+        startDateStr: today.subtract(6, "day").format("YYYY-MM-DD"),
+        endDateStr: today.format("YYYY-MM-DD")
       };
 
     case "past_14":
       return {
-        startDateStr: closedEnd.subtract(13, "day").format("YYYY-MM-DD"),
-        endDateStr: closedEnd.format("YYYY-MM-DD")
+        startDateStr: today.subtract(13, "day").format("YYYY-MM-DD"),
+        endDateStr: today.format("YYYY-MM-DD")
       };
 
     case "past_30":
       return {
-        startDateStr: closedEnd.subtract(29, "day").format("YYYY-MM-DD"),
-        endDateStr: closedEnd.format("YYYY-MM-DD")
+        startDateStr: today.subtract(29, "day").format("YYYY-MM-DD"),
+        endDateStr: today.format("YYYY-MM-DD")
       };
 
     case "this_week": {
-      const start = closedEnd.startOf("week").add(1, "day");
-      const fixedStart = start.isAfter(closedEnd) ? start.subtract(7, "day") : start;
+      const start = today.startOf("week").add(1, "day");
+      const fixedStart = start.isAfter(today) ? start.subtract(7, "day") : start;
 
       return {
         startDateStr: fixedStart.format("YYYY-MM-DD"),
-        endDateStr: closedEnd.format("YYYY-MM-DD")
+        endDateStr: today.format("YYYY-MM-DD")
       };
     }
 
@@ -93,8 +93,8 @@ export function getBusinessDateRange(rangeId: string): { startDateStr: string; e
 
     case "this_month": {
       return {
-        startDateStr: closedEnd.startOf("month").format("YYYY-MM-DD"),
-        endDateStr: closedEnd.format("YYYY-MM-DD")
+        startDateStr: today.startOf("month").format("YYYY-MM-DD"),
+        endDateStr: today.format("YYYY-MM-DD")
       };
     }
 
@@ -108,8 +108,8 @@ export function getBusinessDateRange(rangeId: string): { startDateStr: string; e
 
     default:
       return {
-        startDateStr: closedEnd.subtract(29, "day").format("YYYY-MM-DD"),
-        endDateStr: closedEnd.format("YYYY-MM-DD")
+        startDateStr: today.subtract(29, "day").format("YYYY-MM-DD"),
+        endDateStr: today.format("YYYY-MM-DD")
       };
   }
 }

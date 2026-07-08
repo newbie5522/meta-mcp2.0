@@ -17,6 +17,12 @@ import { cn } from "@/lib/utils";
 import { metaAccountOptionLabel } from "./common/MetaAccountDisplay";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
+import {
+  CURRENT_RANGE_NOT_READY_MESSAGE,
+  DATE_RANGE_MISMATCH_MESSAGE,
+  responseDateRangeMatches,
+  shouldPreserveLastGoodData
+} from "@/lib/data-view-state";
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
 
@@ -39,6 +45,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   const [lastGoodData, setLastGoodData] = useState<any | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
+  const [viewNotice, setViewNotice] = useState<string | null>(null);
 
   // Order Country Rows
   const [orderCountryRows, setOrderCountryRows] = useState<any[]>([]);
@@ -91,18 +98,35 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       });
       
       if (res.data) {
-        setData(res.data.rows || []);
+        const rows = res.data.rows || [];
+        if (!responseDateRangeMatches(res.data, startStr, endStr) && lastGoodData) {
+          setData(lastGoodData.rows || []);
+          setSummary(lastGoodData.summary || null);
+          setDataHealth(lastGoodData.dataHealth || null);
+          setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
+          return;
+        }
+        if (shouldPreserveLastGoodData(res.data, rows, lastGoodData)) {
+          setData(lastGoodData.rows || []);
+          setSummary(lastGoodData.summary || null);
+          setDataHealth(lastGoodData.dataHealth || null);
+          setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+          return;
+        }
+        setData(rows);
         setSummary(res.data.summary || null);
         setDataHealth(res.data.dataHealth || null);
         setLastGoodData({
-          rows: res.data.rows || [],
+          rows,
           summary: res.data.summary || null,
           dataHealth: res.data.dataHealth || null
         });
+        setViewNotice(null);
       } else {
         setData(lastGoodData?.rows || []);
         setSummary(lastGoodData?.summary || null);
         setDataHealth(lastGoodData?.dataHealth || null);
+        setViewNotice(lastGoodData ? CURRENT_RANGE_NOT_READY_MESSAGE : null);
       }
 
       // If active tab is country, load order countries list from database
@@ -143,6 +167,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         setData(lastGoodData.rows || []);
         setSummary(lastGoodData.summary || null);
         setDataHealth(lastGoodData.dataHealth || null);
+        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
       }
       toast.error("加载受众成效分析发生错误");
     } finally {
@@ -299,6 +324,10 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     data.length === 0 &&
     dataHealth?.status &&
     !["READY", "OK"].includes(String(dataHealth.status).toUpperCase());
+  const audienceNoticeMessage =
+    syncStatus.status === "no_new_data"
+      ? syncStatus.message || "Meta API 当前日期范围未返回受众 breakdown 数据。请扩大日期范围或检查 Meta 账户是否有足够投放数据。"
+      : dataHealth?.message || "当前日期范围暂无 Meta 受众 breakdown 数据。";
 
   // Chart Rendering Logic according to instructions
   const renderChart = () => {
@@ -420,9 +449,15 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         </div>
       )}
 
-      {shouldShowAudienceNotice && (
+      {viewNotice && (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-          当前日期范围没有 Meta 受众 breakdown 数据。请同步受众数据或扩大日期范围。
+          {viewNotice}
+        </div>
+      )}
+
+      {shouldShowAudienceNotice && !viewNotice && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          {audienceNoticeMessage}
         </div>
       )}
 

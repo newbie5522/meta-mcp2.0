@@ -69,10 +69,10 @@ export function formatSyncReceipt(data: SyncTaskResponse): string {
   const saved = data.recordsSaved ?? "--";
   const updated = data.recordsUpdated ?? "--";
   const targetAccounts = data.targetAccountsCount ?? "--";
-  const status = data.status || "SUCCESS";
+  const status = String(data.status || "SUCCESS").toUpperCase();
 
-  if (status === "NO_NEW_DATA") {
-    return `同步完成，但当前日期范围没有新数据。目标账户 ${targetAccounts} 个，拉取 ${fetched} 条，写入 ${saved} 条。`;
+  if (status === "NO_NEW_DATA" || status === "NO_NEW_DATA_OR_FAILED") {
+    return data.message || `同步完成，但当前日期范围没有新数据。目标账户 ${targetAccounts} 个，拉取 ${fetched} 条，写入 ${saved} 条。`;
   }
 
   const parts = [
@@ -82,15 +82,9 @@ export function formatSyncReceipt(data: SyncTaskResponse): string {
     Array.isArray(data.taskIds) && data.taskIds.length > 0
       ? `taskIds: ${data.taskIds.join(", ")}`
       : "",
-    data.recordsFetched !== undefined
-      ? `fetched: ${data.recordsFetched}`
-      : "",
-    data.recordsSaved !== undefined
-      ? `saved: ${data.recordsSaved}`
-      : "",
-    data.recordsUpdated !== undefined
-      ? `updated: ${data.recordsUpdated}`
-      : ""
+    data.recordsFetched !== undefined ? `fetched: ${data.recordsFetched}` : "",
+    data.recordsSaved !== undefined ? `saved: ${data.recordsSaved}` : "",
+    data.recordsUpdated !== undefined ? `updated: ${data.recordsUpdated}` : ""
   ].filter(Boolean);
 
   return parts.join(" | ");
@@ -113,8 +107,8 @@ export function mapSyncResultToPanel(data: SyncTaskResponse) {
 
   return {
     status:
-      rawStatus === "NO_NEW_DATA" ? "no_new_data" as const :
-      rawStatus === "PARTIAL_SUCCESS" ? "partial_success" as const :
+      rawStatus === "NO_NEW_DATA" || rawStatus === "NO_NEW_DATA_OR_FAILED" ? "no_new_data" as const :
+      rawStatus === "PARTIAL" || rawStatus === "PARTIAL_SUCCESS" ? "partial_success" as const :
       "success" as const,
     message: formatSyncReceipt(data),
     chainId: data.chainId || null,
@@ -134,6 +128,7 @@ export function mapSyncErrorToPanel(error: any) {
     message: getSyncErrorMessage(error),
     chainId: data.chainId || data.runningTask?.taskChainId || null,
     taskIds: data.runningTask?.id ? [data.runningTask.id] : null,
+    runningTask: data.runningTask || null,
     recordsFetched: null,
     recordsSaved: null,
     recordsUpdated: null,

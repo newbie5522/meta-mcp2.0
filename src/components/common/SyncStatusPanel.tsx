@@ -10,6 +10,12 @@ export type SyncPanelStatus = {
   recordsUpdated?: number | null;
   targetAccountsCount?: number | null;
   failedAccounts?: Array<any> | null;
+  runningTask?: {
+    id?: string | null;
+    taskType?: string | null;
+    taskChainId?: string | null;
+    startedAt?: string | null;
+  } | null;
   startedAt?: string | null;
   finishedAt?: string | null;
 };
@@ -18,22 +24,34 @@ export function SyncStatusPanel({ status }: { status: SyncPanelStatus }) {
   if (!status || status.status === "idle") return null;
 
   const title =
-    status.status === "running" ? "同步中" :
+    status.status === "running" ? "同步任务正在运行" :
     status.status === "success" ? "同步完成" :
     status.status === "partial_success" ? "部分同步完成" :
     status.status === "no_new_data" ? "同步完成，但没有新数据" :
     status.status === "error" ? "同步失败" :
     "同步状态";
 
+  const hasCounters =
+    status.recordsFetched !== null && status.recordsFetched !== undefined ||
+    status.recordsSaved !== null && status.recordsSaved !== undefined ||
+    status.recordsUpdated !== null && status.recordsUpdated !== undefined;
+
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-sm space-y-1">
       <div className="font-bold text-slate-900">{title}</div>
       {status.message && <div>{status.message}</div>}
       {status.chainId && <div className="font-mono text-slate-400">chainId: {status.chainId}</div>}
+      {status.runningTask && (
+        <div className="rounded-lg bg-slate-50 border border-slate-100 p-2 font-mono text-[11px] text-slate-500 space-y-0.5">
+          <div>runningTask: {status.runningTask.taskType || "unknown"}</div>
+          {status.runningTask.id && <div>taskId: {status.runningTask.id}</div>}
+          {status.runningTask.startedAt && <div>startedAt: {String(status.runningTask.startedAt)}</div>}
+        </div>
+      )}
       {Array.isArray(status.taskIds) && status.taskIds.length > 0 && (
         <div className="font-mono text-slate-400">taskIds: {status.taskIds.join(", ")}</div>
       )}
-      {(status.recordsFetched !== null || status.recordsSaved !== null || status.recordsUpdated !== null) && (
+      {hasCounters && (
         <div className="font-mono text-slate-400">
           fetched: {status.recordsFetched ?? "--"} / saved: {status.recordsSaved ?? "--"} / updated: {status.recordsUpdated ?? "--"}
         </div>

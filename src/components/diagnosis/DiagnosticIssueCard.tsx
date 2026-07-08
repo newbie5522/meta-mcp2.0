@@ -1,6 +1,12 @@
 import React, { useState } from "react";
 import { ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
 import { MetaAccountDisplay } from "@/components/common/MetaAccountDisplay";
+import {
+  funnelStageLabels,
+  optimizationAreaLabels,
+  problemStageLabels,
+  toBusinessLabel
+} from "@/lib/business-labels";
 
 function getStoreIdLabel(id?: string | number | null) {
   if (id === null || id === undefined || id === "") return "";
@@ -57,6 +63,12 @@ export function DiagnosticIssueCard({ issue }: { issue: any }) {
     issue.severity === "warning" ? "需要关注" :
     "提醒";
 
+  const businessLabels = [
+    issue.problemStage ? `阶段：${toBusinessLabel(issue.problemStage, problemStageLabels)}` : null,
+    issue.optimizationArea ? `领域：${toBusinessLabel(issue.optimizationArea, optimizationAreaLabels)}` : null,
+    issue.funnelStage ? `漏斗：${toBusinessLabel(issue.funnelStage, funnelStageLabels)}` : null
+  ].filter(Boolean);
+
   return (
     <div className="p-4 rounded-xl border border-slate-200 bg-white space-y-3">
       <div className="flex items-start justify-between gap-3">
@@ -100,6 +112,16 @@ export function DiagnosticIssueCard({ issue }: { issue: any }) {
 
       {open && (
         <div className="rounded-lg bg-slate-50 border border-slate-100 p-3 text-xs text-slate-600 space-y-2">
+          {businessLabels.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {businessLabels.map((label) => (
+                <span key={label} className="rounded bg-white border border-slate-200 px-2 py-0.5 text-[11px] text-slate-600">
+                  {label}
+                </span>
+              ))}
+            </div>
+          )}
+
           {Array.isArray(issue.suggestedActions) && issue.suggestedActions.length > 0 && (
             <div>
               <div className="font-bold text-slate-800 mb-1">建议动作</div>
@@ -110,8 +132,12 @@ export function DiagnosticIssueCard({ issue }: { issue: any }) {
               </ul>
             </div>
           )}
+
           <div className="font-mono text-[10px] text-slate-400">
             issueId: {issue.issueId}
+            {issue.problemStage ? ` / problemStage: ${issue.problemStage}` : ""}
+            {issue.optimizationArea ? ` / optimizationArea: ${issue.optimizationArea}` : ""}
+            {issue.funnelStage ? ` / funnelStage: ${issue.funnelStage}` : ""}
           </div>
         </div>
       )}

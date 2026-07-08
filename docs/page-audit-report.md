@@ -176,6 +176,87 @@ Verification:
 
 This commit is ready for server-side full verification, not final production sign-off.
 
+## R5-CF Code Fix
+
+### PayloadTooLargeError
+
+- `src/server.ts` now registers `express.json({ limit: "2mb" })`.
+- `express.urlencoded` also uses the same `2mb` limit.
+- This only prevents pre-route raw body rejection; AI payloads remain compact and should not send full raw objects.
+
+### Audience Sync Closure
+
+- `sync_meta_audience` now treats a successful Meta API response with zero audience rows as `NO_NEW_DATA`, not `FAILED`.
+- `syncMetaAudience` now includes unmapped active accounts by default so unbound spend accounts can still feed audience/country facts.
+- `META_AUDIENCE_SYNC_FAILED` no longer emits an empty message; hard failures include failed account details or a fallback reason/message.
+- Audience sync metadata includes status, reason, message, requested dimensions, synced dimensions, failed accounts, and target account count.
+- `AudienceAnalysisDashboard` renders READY / NO_NEW_DATA / FAILED / RUNNING as one dynamic state block and preserves previous good rows when the current cycle is not ready.
+
+### Running Task Classification
+
+- `SYNC_TASK_ALREADY_RUNNING` is returned as HTTP 409 with `status: "RUNNING"` and `error: "SYNC_ALREADY_RUNNING"`.
+- `sync_meta_creatives` checks dependent `sync_meta_structure` and `sync_meta_insights` running locks before launching.
+- Stale running tasks older than 30 minutes are marked failed with `STALE_RUNNING_TASK_TIMEOUT` before a new task proceeds.
+- `SyncStatusPanel` can display chain id, running task type, task id, and startedAt.
+
+### Date Contract
+
+- Business shortcuts now use Los Angeles dates and include LA today for today, past 7/14/30 days, this week, and this month.
+- Data Center responses echo `appliedFilters` and `dateRange` with `timezone: "America/Los_Angeles"`.
+- Campaign structure, audience, creative, product, and country pages verify response date ranges before replacing current view data.
+
+### Refresh Safety
+
+- Added `src/lib/data-view-state.ts` for shared date-range matching and last-good-data preservation.
+- Campaign structure, audience, creative, product, and country pages keep `lastGoodData`.
+- Empty responses with `SYNC_RUNNING`, `NO_NEW_DATA`, `STRUCTURE_WITHOUT_FACTS`, `MISSING_META_BREAKDOWN`, `META_BREAKDOWN_NOT_READY`, `EMPTY_FACTS`, `EMPTY`, or `EMPTY_STRUCTURE` do not overwrite existing good data.
+- Legacy refresh catch paths in account, monitoring, and dashboard views no longer clear data with `setData([])`.
+
+### Notice Cleanup
+
+- Normal populated views do not show permanent explanatory status boxes.
+- No-data or degraded states render at most one dynamic status notice per target page.
+- The obsolete hidden audience notice block was removed.
+
+### Diagnostic Readability
+
+- Added `src/lib/business-labels.ts` for Chinese labels.
+- Diagnosis overview and issue cards show Chinese business labels by default.
+- Raw technical keys and `issueId` stay out of default diagnosis cards; `issueId` is only shown in expanded debug details.
+- Data health diagnosis no longer displays `issueId` as a default badge.
+- Funnel diagnosis section titles no longer include raw enum keys such as `product_page_intent` or `checkout_payment`.
+
+### AI Context Entry
+
+- `CampaignStructureDashboard` information action now dispatches `open-ai-context` with level, account, campaign/adset/ad ids, key metrics, and current date range.
+- Clipboard copy remains as a fallback.
+- R5 backlog: verify the global AI drawer listener consumes `open-ai-context` in VPS/browser smoke testing.
+
+### R5-CF Grep Results
+
+| Pattern | Result |
+| --- | --- |
+| `express.json` | `express.json({ limit: "2mb" })` found |
+| `META_AUDIENCE_SYNC_FAILED:` | Found only with non-empty `failureDetail` fallback |
+| `includeUnmapped: false` in `sync-center.service.ts` | `<NO_MATCH>` |
+| `NO_AUDIENCE_BREAKDOWN_ROWS_FROM_META_API` | Found in audience sync service |
+| `SYNC_TASK_ALREADY_RUNNING` | Found in running-lock detection |
+| `STALE_RUNNING_TASK_TIMEOUT` | Found in stale task handling |
+| `setData([]) / setProducts([]) / setCreatives([])` | `<NO_MATCH>` |
+| `数据源健康缺失提醒` | `<NO_MATCH>` |
+| `{iss.issueId}` in diagnosis pages | `<NO_MATCH>` |
+| `ACC_ACT / acc_act / STORE_1 / store_1` in diagnosis pages | `<NO_MATCH>` |
+| `open-ai-context` | Found in `CampaignStructureDashboard.tsx` |
+
+### R5-CF Verification
+
+| Command | Result |
+| --- | --- |
+| `npm run lint` | Passed |
+| `npm run build` | Passed |
+
+This is a local repository implementation and build verification record. It is not a substitute for VPS real-data smoke testing.
+
 ## R5 Data Trust Recovery
 
 ### Runtime Error Fix

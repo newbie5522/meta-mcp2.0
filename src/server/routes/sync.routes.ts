@@ -17,6 +17,7 @@ import { v4 as uuidv4 } from "uuid";
 import { SyncTaskType, SyncTriggerRequest, SyncTriggerResponse } from "../types/sync-tasks.js";
 
 const router = Router();
+const STALE_RUNNING_TASK_MINUTES = 30;
 
 // ============================================================
 // 🔐 权限控制
@@ -69,6 +70,11 @@ async function summarizeSyncLogs(taskIds: string[]) {
   const failedAccounts: any[] = [];
   let targetAccountsCount: number | null = null;
   let hasFailedTask = false;
+  let metadataStatus: string | null = null;
+  let metadataReason: string | null = null;
+  let metadataMessage: string | null = null;
+  let dimensionsRequested: string[] | null = null;
+  let dimensionsSynced: string[] | null = null;
 
   for (const log of logs) {
     const metadata = parseSyncMetadata(log);
@@ -84,6 +90,11 @@ async function summarizeSyncLogs(taskIds: string[]) {
     if (Number.isFinite(nextTargetCount)) {
       targetAccountsCount = Math.max(targetAccountsCount || 0, nextTargetCount);
     }
+    if (metadata.status) metadataStatus = String(metadata.status);
+    if (metadata.reason) metadataReason = String(metadata.reason);
+    if (metadata.message) metadataMessage = String(metadata.message);
+    if (Array.isArray(metadata.dimensionsRequested)) dimensionsRequested = metadata.dimensionsRequested;
+    if (Array.isArray(metadata.dimensionsSynced)) dimensionsSynced = metadata.dimensionsSynced;
     if (log.status === "failed") {
       hasFailedTask = true;
     }
@@ -95,7 +106,12 @@ async function summarizeSyncLogs(taskIds: string[]) {
     recordsUpdated,
     failedAccounts,
     targetAccountsCount,
-    hasFailedTask
+    hasFailedTask,
+    metadataStatus,
+    metadataReason,
+    metadataMessage,
+    dimensionsRequested,
+    dimensionsSynced
   };
 }
 
@@ -127,6 +143,60 @@ function deriveSyncStatus(summary: any) {
   return summary.recordsFetched === 0 && summary.recordsSaved === 0 && summary.recordsUpdated === 0
     ? "NO_NEW_DATA"
     : "SUCCESS";
+}
+
+function isSyncAlreadyRunningError(error: any) {
+  const message = String(error?.message || error || "");
+  return (
+    error?.code === "SYNC_ALREADY_RUNNING" ||
+    message.includes("SYNC_TASK_ALREADY_RUNNING") ||
+    message.includes("is already running")
+  );
+}
+
+function getRunningTaskTypesForSync(taskType: string, error?: any) {
+  const message = String(error?.message || error || "");
+  const taskTypes = new Set<string>([taskType]);
+
+  if (taskType === SyncTaskType.SYNC_META_CREATIVES) {
+    taskTypes.add(SyncTaskType.SYNC_META_STRUCTURE);
+    taskTypes.add(SyncTaskType.SYNC_META_INSIGHTS);
+  }
+
+  for (const candidate of Object.values(SyncTaskType)) {
+    if (message.includes(candidate)) {
+      taskTypes.add(candidate);
+    }
+  }
+
+  return Array.from(taskTypes);
+}
+
+async function findRunningTask(taskTypes: string[]) {
+  return prisma.syncLog.findFirst({
+    where: {
+      status: "running",
+      taskType: { in: taskTypes }
+    },
+    orderBy: { startedAt: "desc" }
+  });
+}
+
+async function markStaleRunningTasks(taskTypes: string[]) {
+  const cutoff = dayjs().subtract(STALE_RUNNING_TASK_MINUTES, "minute").toDate();
+  await prisma.syncLog.updateMany({
+    where: {
+      status: "running",
+      taskType: { in: taskTypes },
+      startedAt: { lt: cutoff }
+    },
+    data: {
+      status: "failed",
+      finishedAt: new Date(),
+      error: "STALE_RUNNING_TASK_TIMEOUT",
+      errorMessage: "STALE_RUNNING_TASK_TIMEOUT"
+    }
+  });
 }
 
 // ============================================================
@@ -340,7 +410,7 @@ router.post("/sync/trigger", async (req, res) => {
 
   try {
     console.log(`[Sync Trigger] Chain ${chainId} started with taskType: ${taskType}`);
-    await assertNoRunningTask([taskType]);
+    await assertNoRunningTask(getRunningTaskTypesForSync(taskType));
 
     // ============================================================
     // 前端安全任务（不需要 ENABLE_MANUAL_SYNC）
@@ -544,7 +614,10 @@ router.post("/sync/trigger", async (req, res) => {
       return res.json({
         success: true,
         status,
-        message: `创意素材链路同步完成：已同步广告结构与 Ad Level 成效，处理 ${targets.length} 个账户，期间 ${range.startDate} 到 ${range.endDate}。`,
+        message:
+          status === "NO_NEW_DATA"
+            ? "创意素材链路同步完成，但当前目标账户没有返回新的广告结构或 Ad Level 成效数据。"
+            : `创意素材链路同步完成：已同步广告结构与 Ad Level 成效，处理 ${targets.length} 个账户，期间 ${range.startDate} 到 ${range.endDate}。`,
         chainId,
         taskType,
         taskIds,
@@ -556,6 +629,7 @@ router.post("/sync/trigger", async (req, res) => {
         recordsFetched: summary.recordsFetched,
         recordsSaved: summary.recordsSaved,
         recordsUpdated: summary.recordsUpdated,
+        targetAccountsCount: summary.targetAccountsCount || targets.length,
         failedAccounts: summary.failedAccounts,
         ...limitReceipt,
         startDate: range.startDate,
@@ -614,19 +688,35 @@ router.post("/sync/trigger", async (req, res) => {
 
       const summary = await summarizeSyncLogs(taskIds);
       const limitReceipt = buildLimitReceipt(limit, targets.length);
-      const status = deriveSyncStatus(summary);
+      const metadataStatus = String(summary.metadataStatus || "").toUpperCase();
+      const status =
+        metadataStatus === "NO_NEW_DATA"
+          ? "NO_NEW_DATA"
+          : metadataStatus === "PARTIAL"
+            ? "PARTIAL_SUCCESS"
+            : deriveSyncStatus(summary);
+      const message =
+        status === "NO_NEW_DATA"
+          ? summary.metadataMessage || "Meta API 当前日期范围未返回受众 breakdown 数据。"
+          : status === "PARTIAL_SUCCESS"
+            ? summary.metadataMessage || "部分账户受众 breakdown 同步失败。"
+            : `成功完成受众与渠道细分数据同步（已处理 ${targets.length} 个账户，期间: ${range.startDate} 到 ${range.endDate}）。`;
 
       return res.json({
         success: true,
         status,
-        message: `成功完成受众与渠道细分数据同步（已处理 ${targets.length} 个账户，期间: ${range.startDate} 到 ${range.endDate}）。`,
+        message,
         chainId,
         taskType,
         taskIds,
         recordsFetched: summary.recordsFetched,
         recordsSaved: summary.recordsSaved,
         recordsUpdated: summary.recordsUpdated,
-        failedAccounts: summary.failedAccounts,
+        targetAccountsCount: summary.targetAccountsCount || targets.length,
+        failedAccounts: status === "NO_NEW_DATA" ? [] : summary.failedAccounts,
+        reason: summary.metadataReason || null,
+        dimensionsRequested: summary.dimensionsRequested || ["country", "age", "gender", "publisher_platform"],
+        dimensionsSynced: summary.dimensionsSynced || [],
         ...limitReceipt,
         startDate: range.startDate,
         endDate: range.endDate
@@ -747,15 +837,21 @@ router.post("/sync/trigger", async (req, res) => {
     console.error(`[Sync Trigger] Chain ${chainId} failed:`, error);
 
     const statusCode = error?.statusCode || 500;
-    if (statusCode === 409 || error?.code === "SYNC_ALREADY_RUNNING") {
+    if (statusCode === 409 || isSyncAlreadyRunningError(error)) {
+      const runningTask = error?.runningTask || await findRunningTask(getRunningTaskTypesForSync(taskType, error));
       return res.status(409).json({
         success: false,
         status: "RUNNING",
         error: "SYNC_ALREADY_RUNNING",
-        message: error?.message || "已有同步任务正在运行。",
+        message: "已有同步任务正在运行，请等待当前任务结束后再试。",
         chainId,
         taskType,
-        runningTask: error?.runningTask || null,
+        runningTask: runningTask ? {
+          id: runningTask.id,
+          taskType: runningTask.taskType || runningTask.type || "unknown",
+          taskChainId: runningTask.taskChainId,
+          startedAt: runningTask.startedAt
+        } : null,
         startDate: startDate || null,
         endDate: endDate || null
       } as SyncTriggerResponse);
@@ -827,13 +923,8 @@ for (const endpoint of DEPRECATED_SYNC_ENDPOINTS) {
 // ============================================================
 
 async function assertNoRunningTask(taskTypes: string[]) {
-  const running = await prisma.syncLog.findFirst({
-    where: {
-      status: "running",
-      taskType: { in: taskTypes }
-    },
-    orderBy: { startedAt: "desc" }
-  });
+  await markStaleRunningTasks(taskTypes);
+  const running = await findRunningTask(taskTypes);
 
   if (running) {
     const taskName = running.taskType || running.type || "unknown";

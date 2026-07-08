@@ -107,11 +107,15 @@ export async function syncMetaAudienceBreakdown(options: {
   includeUnmapped?: boolean;
 }): Promise<{
   success: boolean;
-  status: "SUCCESS" | "PARTIAL" | "FAILED";
+  status: "SUCCESS" | "PARTIAL" | "NO_NEW_DATA" | "FAILED";
+  reason: string | null;
+  message: string;
   recordsFetched: number;
   recordsSaved: number;
   recordsUpdated: number;
   accountsSynced: number;
+  targetAccountsCount: number;
+  dimensionsRequested: string[];
   dimensionsSynced: string[];
   failedAccounts: Array<{
     accountId: string;
@@ -121,7 +125,7 @@ export async function syncMetaAudienceBreakdown(options: {
     fbtraceId?: string;
   }>;
 }> {
-  const { startDate, endDate, storeId, accountIds, dimensions, includeUnmapped } = options;
+  const { startDate, endDate, storeId, accountIds, dimensions, includeUnmapped = true } = options;
   const activeDimensions = dimensions && dimensions.length > 0 ? dimensions : ["country", "age", "gender", "publisher_platform"];
 
   console.log(`[Meta Audience Breakdown Sync] Triggered. Range: ${startDate} to ${endDate}, storeId=${storeId}, dimensions=[${activeDimensions.join(", ")}]`);
@@ -314,25 +318,44 @@ export async function syncMetaAudienceBreakdown(options: {
     }
   }
 
-  // Determine global execution status
-  let status: "SUCCESS" | "PARTIAL" | "FAILED" = "SUCCESS";
+  // Determine global execution status. Empty but successful API responses are data state,
+  // not task failure; keep prior facts intact and let callers surface NO_NEW_DATA.
+  let status: "SUCCESS" | "PARTIAL" | "NO_NEW_DATA" | "FAILED" = "SUCCESS";
+  let reason: string | null = null;
   if (failedAccounts.length > 0) {
     if (accountsSyncedCount > 0) {
       status = "PARTIAL";
+      reason = "PARTIAL_AUDIENCE_BREAKDOWN_REQUESTS_FAILED";
     } else {
       status = "FAILED";
+      reason = "ALL_AUDIENCE_BREAKDOWN_REQUESTS_FAILED";
     }
   } else if (totalFetched === 0 && accounts.length > 0) {
-    status = "FAILED";
+    status = "NO_NEW_DATA";
+    reason = "NO_AUDIENCE_BREAKDOWN_ROWS_FROM_META_API";
+  } else if (accounts.length === 0) {
+    status = "NO_NEW_DATA";
+    reason = "NO_TARGET_ACCOUNTS";
   }
 
   return {
     success: status !== "FAILED",
     status,
+    reason,
+    message:
+      status === "NO_NEW_DATA"
+        ? "Meta API 当前日期范围未返回受众 breakdown 数据。"
+        : status === "PARTIAL"
+          ? "部分账户受众 breakdown 同步失败。"
+          : status === "FAILED"
+            ? "Meta 受众 breakdown 同步失败。"
+            : "Meta 受众 breakdown 同步完成。",
     recordsFetched: totalFetched,
     recordsSaved: totalSaved,
     recordsUpdated: totalUpdated,
     accountsSynced: accountsSyncedCount,
+    targetAccountsCount: accounts.length,
+    dimensionsRequested: activeDimensions,
     dimensionsSynced: activeDimensions,
     failedAccounts
   };

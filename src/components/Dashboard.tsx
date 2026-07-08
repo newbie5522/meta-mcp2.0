@@ -117,10 +117,9 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
     setLoading(true);
     try {
       // Unused legacy API calls are decommissioned for LOCKDOWN
-      setData([]);
+      setData((current) => current);
     } catch (error: any) {
       console.error("fetchData error:", error);
-      setData([]);
     } finally {
       setLoading(false);
     }

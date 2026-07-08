@@ -56,7 +56,8 @@ process.on("unhandledRejection", (reason, promise) => {
 });
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
 import routes from "./server/routes/index.js";
 app.use("/api", routes);

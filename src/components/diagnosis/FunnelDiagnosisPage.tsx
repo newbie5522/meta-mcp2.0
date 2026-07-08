@@ -227,11 +227,11 @@ export function FunnelDiagnosisPage({ startDate, endDate }: { startDate: Date; e
           {/* Grouped lists */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             
-            {renderIssueList("Landing Page 广告直达页卡点 (landing_page_arrival)", landingPageArrivalIssues)}
-            {renderIssueList("落地页加购率意向评估 (product_page_intent)", productPageIntentIssues)}
-            {renderIssueList("购物车流失至结账分析 (cart_to_checkout)", cartToCheckoutIssues)}
-            {renderIssueList("发起结账到支付转换 (checkout_payment)", checkoutPaymentIssues)}
-            {renderIssueList("Meta 归因对账单波动 (meta_to_store_reconciliation)", metaToStoreReconciliationIssues)}
+            {renderIssueList("广告点击到落地页卡点", landingPageArrivalIssues)}
+            {renderIssueList("商品页兴趣承接", productPageIntentIssues)}
+            {renderIssueList("购物车到结账流失", cartToCheckoutIssues)}
+            {renderIssueList("结账到支付转化", checkoutPaymentIssues)}
+            {renderIssueList("Meta 归因与店铺对账波动", metaToStoreReconciliationIssues)}
 
           </div>
 

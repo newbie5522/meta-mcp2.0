@@ -20,6 +20,7 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 
 const router = Router();
+const DATA_CENTER_TIMEZONE = "America/Los_Angeles";
 
 function isDemoDataEnabled(): boolean {
   return process.env.ENABLE_DEMO_DATA === "true";
@@ -65,8 +66,8 @@ function isValidDateString(value: unknown): value is string {
 }
 
 function getAppliedDateRange(query: any, fallbackDays = 30) {
-  const fallbackEnd = dayjs().format("YYYY-MM-DD");
-  const fallbackStart = dayjs().subtract(fallbackDays, "day").format("YYYY-MM-DD");
+  const fallbackEnd = dayjs().tz(DATA_CENTER_TIMEZONE).format("YYYY-MM-DD");
+  const fallbackStart = dayjs().tz(DATA_CENTER_TIMEZONE).subtract(fallbackDays - 1, "day").format("YYYY-MM-DD");
   const startStr = isValidDateString(String(query.startDate || "")) ? String(query.startDate).trim() : fallbackStart;
   const endStr = isValidDateString(String(query.endDate || "")) ? String(query.endDate).trim() : fallbackEnd;
 
@@ -87,6 +88,7 @@ function buildAppliedFilters(input: {
   return {
     startDate: input.startStr,
     endDate: input.endStr,
+    timezone: DATA_CENTER_TIMEZONE,
     storeId: input.storeId && input.storeId !== "undefined" && input.storeId !== "null" ? input.storeId : "all",
     accountId: input.accountId || input.selectedAccount || "all",
     dimensionType: input.dimensionType || undefined
@@ -96,7 +98,8 @@ function buildAppliedFilters(input: {
 function buildDateRange(startStr: string, endStr: string) {
   return {
     startDate: startStr,
-    endDate: endStr
+    endDate: endStr,
+    timezone: DATA_CENTER_TIMEZONE
   };
 }
 

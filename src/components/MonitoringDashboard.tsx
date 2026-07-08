@@ -44,7 +44,6 @@ export function MonitoringDashboard() {
       const res = await axios.get(`/api/monitoring/accounts${forceRefresh ? "?refresh=true" : ""}`);
       if (typeof res.data === 'string' && res.data.trim().toLowerCase().startsWith('<!doctype html>')) {
         toast.error("系统正在启动或重启，请稍候...");
-        setData([]);
         return;
       }
       const rawAccounts = res.data.accounts || [];

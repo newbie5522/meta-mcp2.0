@@ -249,7 +249,6 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
           ? error.response.data.error
           : "数据加载失败",
       );
-      setData([]);
     } finally {
       setLoading(false);
     }

@@ -19,6 +19,12 @@ import {
 import { isBusinessActionableIssue, useDiagnosticsIssues } from "./useDiagnosticsIssues";
 import { AiDashboardSummaryCard } from "../ai/AiDashboardSummaryCard";
 import { DiagnosticIssueCard } from "./DiagnosticIssueCard";
+import {
+  funnelStageLabels,
+  optimizationAreaLabels,
+  problemStageLabels,
+  toBusinessLabel
+} from "@/lib/business-labels";
 
 export function DiagnosisOverviewPage({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const {
@@ -321,12 +327,12 @@ export function DiagnosisOverviewPage({ startDate, endDate }: { startDate: Date;
               {/* Problem stage distribution list */}
               <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                 <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-2">
-                  问题阶段分布 (problemStage)
+                  问题阶段分布
                 </h3>
                 <div className="space-y-3">
                   {Object.entries(summary.problemStages).map(([stage, count]) => (
                     <div key={stage} className="flex items-center justify-between text-xs font-semibold">
-                      <span className="text-slate-600 font-mono">{stage}</span>
+                      <span className="text-slate-600">{toBusinessLabel(stage, problemStageLabels)}</span>
                       <span className="px-2 py-0.5 bg-blue-50 text-blue-800 rounded-md font-mono">{count} 项</span>
                     </div>
                   ))}
@@ -336,12 +342,12 @@ export function DiagnosisOverviewPage({ startDate, endDate }: { startDate: Date;
               {/* Optimization Area distribution list */}
               <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                 <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-2">
-                  优化领域分布 (optimizationArea)
+                  优化领域分布
                 </h3>
                 <div className="space-y-3">
                   {Object.entries(summary.optimizationAreas).map(([area, count]) => (
                     <div key={area} className="flex items-center justify-between text-xs font-semibold">
-                      <span className="text-slate-600 font-mono">{area}</span>
+                      <span className="text-slate-600">{toBusinessLabel(area, optimizationAreaLabels)}</span>
                       <span className="px-2 py-0.5 bg-indigo-50 text-indigo-800 rounded-md font-mono">{count} 项</span>
                     </div>
                   ))}
@@ -351,12 +357,12 @@ export function DiagnosisOverviewPage({ startDate, endDate }: { startDate: Date;
               {/* Funnel Stage distribution list */}
               <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                 <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-2">
-                  漏斗阶段分布 (funnelStage)
+                  漏斗阶段分布
                 </h3>
                 <div className="space-y-3">
                   {Object.entries(summary.funnelStages).map(([stage, count]) => (
                     <div key={stage} className="flex items-center justify-between text-xs font-semibold">
-                      <span className="text-slate-600 font-mono">{stage}</span>
+                      <span className="text-slate-600">{toBusinessLabel(stage, funnelStageLabels)}</span>
                       <span className="px-2 py-0.5 bg-slate-50 text-slate-700 border border-slate-100 rounded-md font-mono">{count} 项</span>
                     </div>
                   ))}

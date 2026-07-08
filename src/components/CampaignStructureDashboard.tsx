@@ -27,6 +27,12 @@ import { Button } from "@/components/ui/button";
 import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountDisplay";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
+import {
+  CURRENT_RANGE_NOT_READY_MESSAGE,
+  DATE_RANGE_MISMATCH_MESSAGE,
+  responseDateRangeMatches,
+  shouldPreserveLastGoodData
+} from "@/lib/data-view-state";
 
 function getHierarchyEmptyMessage(dataHealth: any, includeZeroSpend: boolean) {
   if (dataHealth?.status === "EMPTY_STRUCTURE" || dataHealth?.reason === "NO_STRUCTURE_ROWS") {
@@ -69,6 +75,8 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
   const [loading, setLoading] = useState<boolean>(false);
   const [syncing, setSyncing] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
+  const [lastGoodData, setLastGoodData] = useState<any | null>(null);
+  const [viewNotice, setViewNotice] = useState<string | null>(null);
 
   // Manage initial load with URL parameters (deep linkage from Account Performance page or Creative Insights tab)
   useEffect(() => {
@@ -120,9 +128,33 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
           axios.get("/api/data-center/structure", { params: structureParams })
         ]);
 
+        const rows = accountsRes.data?.success ? (accountsRes.data.data || []) : [];
+        const nextHealth = structureRes.data?.health || accountsRes.data?.dataHealth || null;
+        const payloadForState = {
+          ...(accountsRes.data || {}),
+          health: nextHealth,
+          appliedFilters: accountsRes.data?.appliedFilters || structureRes.data?.appliedFilters,
+          dateRange: accountsRes.data?.dateRange || structureRes.data?.dateRange
+        };
+        if (!responseDateRangeMatches(payloadForState, startStr, endStr) && lastGoodData) {
+          setData(lastGoodData.data || []);
+          setStructureSummary(lastGoodData.structureSummary || null);
+          setDataHealth(lastGoodData.dataHealth || null);
+          setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
+          return;
+        }
+        if (shouldPreserveLastGoodData(payloadForState, rows, lastGoodData)) {
+          setData(lastGoodData.data || []);
+          setStructureSummary(lastGoodData.structureSummary || null);
+          setDataHealth(lastGoodData.dataHealth || null);
+          setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+          return;
+        }
         setStructureSummary(structureRes.data || null);
-        setDataHealth(structureRes.data?.health || accountsRes.data?.dataHealth || null);
-        setData(accountsRes.data?.success ? (accountsRes.data.data || []) : []);
+        setDataHealth(nextHealth);
+        setData(rows);
+        setLastGoodData({ data: rows, structureSummary: structureRes.data || null, dataHealth: nextHealth });
+        setViewNotice(null);
         return;
       }
 
@@ -155,14 +187,34 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         nextData = nextData.filter((row: any) => Number(row.spend || 0) > 0);
       }
 
+      if (!responseDateRangeMatches(payload, startStr, endStr) && lastGoodData) {
+        setData(lastGoodData.data || []);
+        setStructureSummary(lastGoodData.structureSummary || null);
+        setDataHealth(lastGoodData.dataHealth || null);
+        setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
+        return;
+      }
+      if (shouldPreserveLastGoodData(payload, nextData, lastGoodData)) {
+        setData(lastGoodData.data || []);
+        setStructureSummary(lastGoodData.structureSummary || null);
+        setDataHealth(lastGoodData.dataHealth || null);
+        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+        return;
+      }
       setStructureSummary(payload);
       setDataHealth(payload.health || null);
       setData(nextData);
+      setLastGoodData({ data: nextData, structureSummary: payload, dataHealth: payload.health || null });
+      setViewNotice(null);
     } catch (e: any) {
       console.error("Failed to fetch ad hierarchy details:", e);
       toast.error("获取层级数据失败: " + (e.response?.data?.error || e.message));
-      setData([]);
-      setStructureSummary(null);
+      if (lastGoodData) {
+        setData(lastGoodData.data || []);
+        setStructureSummary(lastGoodData.structureSummary || null);
+        setDataHealth(lastGoodData.dataHealth || null);
+        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+      }
     } finally {
       setLoading(false);
     }
@@ -237,6 +289,13 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
     if (strA > strB) return sortConfig.direction === "asc" ? 1 : -1;
     return 0;
   });
+  const shouldShowStructureNotice = Boolean(
+    structureSummary &&
+    !loading &&
+    sortedData.length === 0 &&
+    dataHealth?.status &&
+    !["READY", "OK"].includes(String(dataHealth.status).toUpperCase())
+  );
 
   // Copy helper for Creative ID
   const handleCopyText = (text: string, e: React.MouseEvent) => {
@@ -308,8 +367,37 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 请评估该 Creative ID 素材方案的转化成效，并针对后续的素材测试与创意设计迭代方向提供可行思路。`;
     }
 
-    navigator.clipboard.writeText(promptText);
-    toast.success("💡 智能复制了此层级优化的提示词！可直接在右下角 AI 诊断中粘贴提问。", { duration: 4000 });
+    const context = {
+      level: viewLevel,
+      accountId: selectedAccount || row.fb_account_id || row.accountId || "",
+      accountName: selectedAccountName || row.fb_account_name || row.accountName || "",
+      campaignId: row.campaignId || (viewLevel === "campaigns" ? row.id : selectedCampaignId) || "",
+      adsetId: row.adsetId || (viewLevel === "adsets" ? row.id : selectedAdSetId) || "",
+      adId: viewLevel === "ads" ? row.id : "",
+      name: row.name || row.fb_account_name || row.id,
+      spend: Number(row.spend || 0),
+      impressions: Number(row.impressions || 0),
+      clicks: Number(row.clicks || 0),
+      purchases: Number(row.purchases || 0),
+      cpa: Number(row.cpa || 0),
+      roas: Number(row.roas || 0),
+      dateRange: {
+        startDate: format(startDate, "yyyy-MM-dd"),
+        endDate: format(endDate, "yyyy-MM-dd")
+      }
+    };
+
+    window.dispatchEvent(new CustomEvent("open-ai-context", {
+      detail: {
+        source: "campaign_structure",
+        title: `分析${viewLevel}: ${context.name || context.adId || context.campaignId || context.accountId}`,
+        prompt: promptText,
+        context
+      }
+    }));
+
+    navigator.clipboard.writeText(promptText).catch(() => undefined);
+    toast.success("已打开 AI 上下文，并已复制该层级分析提示词。", { duration: 4000 });
   };
 
   // Level-Up Navigation back-links
@@ -583,7 +671,13 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
       <SyncStatusPanel status={syncStatus} />
 
-      {structureSummary && (
+      {viewNotice && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          {viewNotice}
+        </div>
+      )}
+
+      {shouldShowStructureNotice && !viewNotice && (
         <div className={cn(
           "rounded-xl border p-4 text-xs shadow-sm",
           dataHealth?.status === "STRUCTURE_WITHOUT_FACTS"

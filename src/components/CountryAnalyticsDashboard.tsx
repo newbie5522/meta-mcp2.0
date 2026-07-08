@@ -17,6 +17,12 @@ import {
   ShieldCheck,
   AlertTriangle
 } from "lucide-react";
+import {
+  CURRENT_RANGE_NOT_READY_MESSAGE,
+  DATE_RANGE_MISMATCH_MESSAGE,
+  responseDateRangeMatches,
+  shouldPreserveLastGoodData
+} from "@/lib/data-view-state";
 
 interface CountryAnalyticsRecord {
   countryCode: string;
@@ -86,6 +92,8 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
   const [minSpendFilter, setMinSpendFilter] = useState<number>(0);
   const [includeUnmapped, setIncludeUnmapped] = useState<boolean>(true);
   const [selectedRow, setSelectedRow] = useState<CountryAnalyticsRecord | null>(null);
+  const [lastGoodData, setLastGoodData] = useState<CountryAnalyticsData | null>(null);
+  const [viewNotice, setViewNotice] = useState<string | null>(null);
 
   const fetchCountryData = async () => {
     setLoading(true);
@@ -99,10 +107,31 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
           includeUnmappedSpend: includeUnmapped ? "true" : "false"
         }
       });
+      const startStr = format(startDate, "yyyy-MM-dd");
+      const endStr = format(endDate, "yyyy-MM-dd");
+      const rows = res.data?.rows || [];
+      if (!responseDateRangeMatches(res.data, startStr, endStr) && lastGoodData) {
+        setData(lastGoodData);
+        setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
+        return;
+      }
+      if (shouldPreserveLastGoodData(res.data, rows, lastGoodData)) {
+        setData(lastGoodData);
+        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+        return;
+      }
       setData(res.data);
+      setLastGoodData(res.data);
+      setViewNotice(null);
     } catch (err: any) {
       console.error("Failed to load country analytics:", err);
-      setError(err.response?.data?.details || err.message || "Failed to load country analytics data");
+      if (lastGoodData) {
+        setData(lastGoodData);
+        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+        setError(null);
+      } else {
+        setError(err.response?.data?.details || err.message || "Failed to load country analytics data");
+      }
     } finally {
       setLoading(false);
     }
@@ -131,6 +160,11 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
 
   return (
     <div className="space-y-6">
+      {viewNotice && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          {viewNotice}
+        </div>
+      )}
       {loading ? (
         <div className="flex flex-col items-center justify-center min-h-[400px] bg-white rounded-2xl border border-slate-100 p-8 space-y-3">
           <div className="w-10 h-10 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin"></div>

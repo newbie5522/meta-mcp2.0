@@ -50,6 +50,12 @@ import axios from "axios";
 import { MetaAccountDisplay, cleanAccountId, metaAccountOptionLabel } from "./common/MetaAccountDisplay";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask, type SyncTaskPayload } from "@/lib/sync-trigger";
+import {
+  CURRENT_RANGE_NOT_READY_MESSAGE,
+  DATE_RANGE_MISMATCH_MESSAGE,
+  responseDateRangeMatches,
+  shouldPreserveLastGoodData
+} from "@/lib/data-view-state";
 import { 
   ResponsiveContainer, 
   LineChart, 
@@ -132,6 +138,7 @@ export function CreativeIntelligenceDashboard({
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
   const [lastGoodData, setLastGoodData] = useState<any | null>(null);
+  const [viewNotice, setViewNotice] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [creativeDataHealth, setCreativeDataHealth] = useState<any>(null);
 
@@ -324,6 +331,22 @@ export function CreativeIntelligenceDashboard({
         type: item.type || "IMAGE"
       }));
 
+      if (!responseDateRangeMatches(resGrouped.data, startStr, endStr) && lastGoodData) {
+        setCreatives(lastGoodData.creatives || []);
+        setDiagnostics(lastGoodData.diagnostics || null);
+        setCreativeDataHealth(lastGoodData.dataHealth || null);
+        setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
+        return;
+      }
+
+      if (shouldPreserveLastGoodData(resGrouped.data, formattedGrouped, lastGoodData)) {
+        setCreatives(lastGoodData.creatives || []);
+        setDiagnostics(lastGoodData.diagnostics || null);
+        setCreativeDataHealth(lastGoodData.dataHealth || null);
+        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+        return;
+      }
+
       setCreatives(formattedGrouped);
       setDiagnostics(resGrouped.data?.diagnostics || null);
       setCreativeDataHealth(resGrouped.data?.dataHealth || null);
@@ -332,6 +355,7 @@ export function CreativeIntelligenceDashboard({
         diagnostics: resGrouped.data?.diagnostics || null,
         dataHealth: resGrouped.data?.dataHealth || null
       });
+      setViewNotice(null);
 
 
       const storesPayload = resStores.data?.stores || resStores.data?.data || resStores.data || [];
@@ -347,6 +371,7 @@ export function CreativeIntelligenceDashboard({
         setCreatives(lastGoodData.creatives || []);
         setDiagnostics(lastGoodData.diagnostics || null);
         setCreativeDataHealth(lastGoodData.dataHealth || null);
+        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
       }
     } finally {
       setLoading(false);
@@ -869,7 +894,13 @@ export function CreativeIntelligenceDashboard({
         </div>
       </div>
 
-      {shouldShowCreativeNotice && (
+      {viewNotice && (
+        <div className="bg-slate-50 border border-slate-200 text-slate-700 rounded-xl p-4 text-sm">
+          {viewNotice}
+        </div>
+      )}
+
+      {shouldShowCreativeNotice && !viewNotice && (
         <div className="bg-slate-50 border border-slate-200 text-slate-700 rounded-xl p-4 space-y-2 shadow-sm animate-in fade-in duration-200">
           <div className="flex items-center gap-2 font-bold text-slate-800 text-xs">
             <AlertTriangle className="w-4 h-4 text-slate-500 shrink-0" />

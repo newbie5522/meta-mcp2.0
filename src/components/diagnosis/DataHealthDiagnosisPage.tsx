@@ -170,9 +170,6 @@ export function DataHealthDiagnosisPage({ startDate, endDate }: { startDate: Dat
                         isDanger ? "bg-red-500" :
                         isWarning ? "bg-blue-500" : "bg-blue-500"
                       }`} />
-                      <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-bold font-mono">
-                        {item.issueId}
-                      </span>
                       <span className="text-xs text-slate-400 capitalize">
                         {getCategoryLabel(item.category)}
                       </span>
