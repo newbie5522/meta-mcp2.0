@@ -77,6 +77,9 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
   const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
   const [lastGoodData, setLastGoodData] = useState<any | null>(null);
   const [viewNotice, setViewNotice] = useState<string | null>(null);
+  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string } | null>(null);
+  const startStrKey = format(startDate, "yyyy-MM-dd");
+  const endStrKey = format(endDate, "yyyy-MM-dd");
 
   // Manage initial load with URL parameters (deep linkage from Account Performance page or Creative Insights tab)
   useEffect(() => {
@@ -108,12 +111,14 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const startStr = format(startDate, "yyyy-MM-dd");
-      const endStr = format(endDate, "yyyy-MM-dd");
+      const startStr = startStrKey;
+      const endStr = endStrKey;
+      const requestKey = `${startStr}_${endStr}_${viewLevel}_${selectedAccount}_${selectedCampaignId}_${selectedAdSetId}_${includeZeroSpend}`;
       const structureParams: any = {
         selectedAccount: selectedAccount || undefined,
         startDate: startStr,
-        endDate: endStr
+        endDate: endStr,
+        _requestKey: requestKey
       };
 
       if (viewLevel === "accounts") {
@@ -122,20 +127,22 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
             params: {
               startDate: startStr,
               endDate: endStr,
-              includeZeroSpend: includeZeroSpend ? "true" : "false"
+              includeZeroSpend: includeZeroSpend ? "true" : "false",
+              _requestKey: requestKey
             }
           }),
           axios.get("/api/data-center/structure", { params: structureParams })
         ]);
 
         const rows = accountsRes.data?.success ? (accountsRes.data.data || []) : [];
-        const nextHealth = structureRes.data?.health || accountsRes.data?.dataHealth || null;
+        const nextHealth = accountsRes.data?.dataHealth || structureRes.data?.health || null;
         const payloadForState = {
           ...(accountsRes.data || {}),
           health: nextHealth,
           appliedFilters: accountsRes.data?.appliedFilters || structureRes.data?.appliedFilters,
           dateRange: accountsRes.data?.dateRange || structureRes.data?.dateRange
         };
+        setResponseDateRange(payloadForState.dateRange || null);
         if (!responseDateRangeMatches(payloadForState, startStr, endStr) && lastGoodData) {
           setData(lastGoodData.data || []);
           setStructureSummary(lastGoodData.structureSummary || null);
@@ -143,7 +150,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
           setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
           return;
         }
-        if (shouldPreserveLastGoodData(payloadForState, rows, lastGoodData)) {
+        if (lastGoodData?.requestKey === requestKey && shouldPreserveLastGoodData(payloadForState, rows, lastGoodData)) {
           setData(lastGoodData.data || []);
           setStructureSummary(lastGoodData.structureSummary || null);
           setDataHealth(lastGoodData.dataHealth || null);
@@ -153,39 +160,30 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         setStructureSummary(structureRes.data || null);
         setDataHealth(nextHealth);
         setData(rows);
-        setLastGoodData({ data: rows, structureSummary: structureRes.data || null, dataHealth: nextHealth });
+        setLastGoodData({ requestKey, data: rows, structureSummary: structureRes.data || null, dataHealth: nextHealth });
         setViewNotice(null);
         return;
       }
 
-      const res = await axios.get("/api/data-center/structure", { params: structureParams });
+      const hierarchyEndpoint =
+        viewLevel === "campaigns"
+          ? "/api/data-center/ad-hierarchy/campaigns"
+          : viewLevel === "adsets"
+            ? "/api/data-center/ad-hierarchy/adsets"
+            : "/api/data-center/ad-hierarchy/ads";
+      const hierarchyParams: any = {
+        startDate: startStr,
+        endDate: endStr,
+        includeZeroSpend: includeZeroSpend ? "true" : "false",
+        accountId: selectedAccount || undefined,
+        campaignId: selectedCampaignId || undefined,
+        adsetId: selectedAdSetId || undefined,
+        _requestKey: requestKey
+      };
+      const res = await axios.get(hierarchyEndpoint, { params: hierarchyParams });
       const payload = res.data || {};
-      const campaignNameById = new Map((payload.campaigns || []).map((campaign: any) => [campaign.id, campaign.name]));
-      const adsetNameById = new Map((payload.adsets || []).map((adset: any) => [adset.id, adset.name]));
-      let nextData: any[] = [];
-
-      if (viewLevel === "campaigns") {
-        nextData = payload.campaigns || [];
-      } else if (viewLevel === "adsets") {
-        nextData = (payload.adsets || [])
-          .filter((row: any) => !selectedCampaignId || row.campaignId === selectedCampaignId)
-          .map((row: any) => ({
-            ...row,
-            campaignName: campaignNameById.get(row.campaignId) || row.campaignId
-          }));
-      } else if (viewLevel === "ads") {
-        nextData = (payload.ads || [])
-          .filter((row: any) => !selectedAdSetId || row.adsetId === selectedAdSetId)
-          .map((row: any) => ({
-            ...row,
-            adsetName: adsetNameById.get(row.adsetId) || row.adsetId,
-            campaignName: campaignNameById.get(row.campaignId) || row.campaignId
-          }));
-      }
-
-      if (!includeZeroSpend) {
-        nextData = nextData.filter((row: any) => Number(row.spend || 0) > 0);
-      }
+      let nextData: any[] = payload.data || [];
+      setResponseDateRange(payload.dateRange || payload.appliedFilters || null);
 
       if (!responseDateRangeMatches(payload, startStr, endStr) && lastGoodData) {
         setData(lastGoodData.data || []);
@@ -194,7 +192,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
         return;
       }
-      if (shouldPreserveLastGoodData(payload, nextData, lastGoodData)) {
+      if (lastGoodData?.requestKey === requestKey && shouldPreserveLastGoodData(payload, nextData, lastGoodData)) {
         setData(lastGoodData.data || []);
         setStructureSummary(lastGoodData.structureSummary || null);
         setDataHealth(lastGoodData.dataHealth || null);
@@ -202,9 +200,9 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         return;
       }
       setStructureSummary(payload);
-      setDataHealth(payload.health || null);
+      setDataHealth(payload.dataHealth || payload.health || null);
       setData(nextData);
-      setLastGoodData({ data: nextData, structureSummary: payload, dataHealth: payload.health || null });
+      setLastGoodData({ requestKey, data: nextData, structureSummary: payload, dataHealth: payload.dataHealth || payload.health || null });
       setViewNotice(null);
     } catch (e: any) {
       console.error("Failed to fetch ad hierarchy details:", e);
@@ -223,7 +221,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
   // Trigger loading when context filters update
   useEffect(() => {
     fetchData();
-  }, [viewLevel, selectedAccount, selectedCampaignId, selectedAdSetId, startDate, endDate, includeZeroSpend]);
+  }, [viewLevel, selectedAccount, selectedCampaignId, selectedAdSetId, startStrKey, endStrKey, includeZeroSpend]);
 
   // Reset sorting config when entering a new level to avoid stale keys
   useEffect(() => {
@@ -433,7 +431,13 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
     setSyncStatus({
       status: "running",
-      message: "正在同步 Meta 账户列表..."
+      message: "正在同步 Meta 账户列表...",
+      progressPercent: 10,
+      currentStep: 1,
+      totalSteps: 3,
+      stepLabel: "账户列表同步：1 / 3",
+      processedAccounts: 0,
+      totalAccounts: selectedAccount ? 1 : null
     });
 
     try {
@@ -459,7 +463,13 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         recordsSaved: structureResult.recordsSaved ?? null,
         recordsUpdated: structureResult.recordsUpdated ?? null,
         targetAccountsCount: structureResult.targetAccountsCount ?? null,
-        failedAccounts: structureResult.failedAccounts || null
+        failedAccounts: structureResult.failedAccounts || null,
+        progressPercent: 60,
+        currentStep: 2,
+        totalSteps: 3,
+        stepLabel: "广告结构同步：2 / 3",
+        processedAccounts: structureResult.processedAccounts ?? null,
+        totalAccounts: structureResult.totalAccounts ?? structureResult.targetAccountsCount ?? null
       });
 
       const insightsResult = await triggerSyncTask({
@@ -486,8 +496,13 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
       await fetchData();
     } catch (err: any) {
       const data = err.data || err.response?.data || err.response;
-      setSyncStatus(mapSyncErrorToPanel(err));
-      toast.error("同步数据失败: " + (data?.message || data?.details || data?.error || err.message), { id: tId });
+      const panel = mapSyncErrorToPanel(err);
+      setSyncStatus(panel);
+      if (panel.status === "running") {
+        toast.info("已有同步任务正在运行，请稍后查看进度", { id: tId });
+      } else {
+        toast.error("同步数据失败: " + (data?.message || data?.details || data?.error || err.message), { id: tId });
+      }
     } finally {
       setSyncing(false);
     }
@@ -671,6 +686,22 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
       <SyncStatusPanel status={syncStatus} />
 
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600 flex flex-wrap gap-3">
+        <span>当前筛选周期：{startStrKey} ~ {endStrKey}</span>
+        {responseDateRange && (
+          <span>接口返回周期：{responseDateRange.startDate} ~ {responseDateRange.endDate}</span>
+        )}
+        <span>当前数据行数：{data.length}</span>
+        {dataHealth?.factRows !== undefined && (
+          <span>事实行数：{dataHealth.factRows}</span>
+        )}
+        {dataHealth?.structureRows !== undefined && (
+          <span>结构行数：{dataHealth.structureRows}</span>
+        )}
+        <span>状态：{dataHealth?.status || structureSummary?.health?.status || "UNKNOWN"}</span>
+        <span>层级：{viewLevel}</span>
+      </div>
+
       {viewNotice && (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
           {viewNotice}
@@ -687,8 +718,8 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
               : "bg-white border-slate-200 text-slate-700"
         )}>
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-            <span>结构行数：<b className="font-mono">{structureSummary.structureRowsCount ?? 0}</b></span>
-            <span>成效事实行数：<b className="font-mono">{structureSummary.factRowsCount ?? 0}</b></span>
+            <span>结构行数：<b className="font-mono">{structureSummary.structureRowsCount ?? dataHealth?.structureRows ?? 0}</b></span>
+            <span>成效事实行数：<b className="font-mono">{structureSummary.factRowsCount ?? dataHealth?.factRows ?? 0}</b></span>
             <span>状态：<b className="font-mono">{dataHealth?.status || "UNKNOWN"}</b></span>
             <span>当前统计期间：<b className="font-mono">{structureSummary.appliedFilters?.startDate || format(startDate, "yyyy-MM-dd")}</b> 至 <b className="font-mono">{structureSummary.appliedFilters?.endDate || format(endDate, "yyyy-MM-dd")}</b></span>
           </div>

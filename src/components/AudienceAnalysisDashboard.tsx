@@ -46,6 +46,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
   const [viewNotice, setViewNotice] = useState<string | null>(null);
+  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string } | null>(null);
 
   // Order Country Rows
   const [orderCountryRows, setOrderCountryRows] = useState<any[]>([]);
@@ -99,6 +100,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       
       if (res.data) {
         const rows = res.data.rows || [];
+        setResponseDateRange(res.data.dateRange || res.data.appliedFilters || null);
         if (!responseDateRangeMatches(res.data, startStr, endStr) && lastGoodData) {
           setData(lastGoodData.rows || []);
           setSummary(lastGoodData.summary || null);
@@ -182,7 +184,15 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
     setSyncStatus({
       status: "running",
-      message: "正在同步 Meta 受众 breakdown 数据..."
+      message: "正在同步 Meta 受众 breakdown 数据...",
+      progressPercent: 15,
+      currentStep: 1,
+      totalSteps: 4,
+      stepLabel: "受众拆分同步启动",
+      processedAccounts: 0,
+      totalAccounts: null,
+      processedDimensions: 0,
+      totalDimensions: 4
     });
 
     try {
@@ -197,7 +207,13 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       setSyncStatus(mapSyncResultToPanel(result));
       await fetchAudienceInsights();
     } catch (error: any) {
-      setSyncStatus(mapSyncErrorToPanel(error));
+      const panel = mapSyncErrorToPanel(error);
+      setSyncStatus({
+        ...panel,
+        message: panel.status === "running"
+          ? "已有受众同步任务正在运行，正在等待当前任务完成。"
+          : panel.message
+      });
     } finally {
       setSyncing(false);
     }
@@ -328,6 +344,10 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     syncStatus.status === "no_new_data"
       ? syncStatus.message || "Meta API 当前日期范围未返回受众 breakdown 数据。请扩大日期范围或检查 Meta 账户是否有足够投放数据。"
       : dataHealth?.message || "当前日期范围暂无 Meta 受众 breakdown 数据。";
+  const lowCountrySampleNotice =
+    activeTab === "country" && data.length > 0 && data.length <= 1
+      ? "当前国家拆分数据样本较少，请扩大日期范围或确认该账户是否有国家级 breakdown 返回。"
+      : null;
 
   // Chart Rendering Logic according to instructions
   const renderChart = () => {
@@ -567,6 +587,23 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       </div>
 
       <SyncStatusPanel status={syncStatus} />
+
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600 flex flex-wrap gap-3">
+        <span>当前筛选周期：{format(startDate, "yyyy-MM-dd")} ~ {format(endDate, "yyyy-MM-dd")}</span>
+        {responseDateRange && (
+          <span>接口返回周期：{responseDateRange.startDate} ~ {responseDateRange.endDate}</span>
+        )}
+        <span>当前维度：{activeTab}</span>
+        <span>当前数据行数：{data.length}</span>
+        <span>状态：{dataHealth?.status || "UNKNOWN"}</span>
+        {dataHealth?.factRows !== undefined && <span>事实行数：{dataHealth.factRows}</span>}
+      </div>
+
+      {lowCountrySampleNotice && !viewNotice && !shouldShowAudienceNotice && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          {lowCountrySampleNotice}
+        </div>
+      )}
 
       {/* 📊 Core Indicators Summary Board (Direct Consumption from API) */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">

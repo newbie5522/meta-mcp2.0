@@ -104,12 +104,19 @@ export function getSyncErrorMessage(error: any): string {
 
 export function mapSyncResultToPanel(data: SyncTaskResponse) {
   const rawStatus = String(data?.status || "").toUpperCase();
+  const normalizedStatus =
+    rawStatus === "RUNNING" ? "running" as const :
+    rawStatus === "NO_NEW_DATA" || rawStatus === "NO_NEW_DATA_OR_FAILED" ? "no_new_data" as const :
+    rawStatus === "PARTIAL" || rawStatus === "PARTIAL_SUCCESS" ? "partial_success" as const :
+    "success" as const;
+  const fallbackPercent =
+    rawStatus === "RUNNING" ? 15 :
+    rawStatus === "SUCCESS" || rawStatus === "NO_NEW_DATA" || rawStatus === "NO_NEW_DATA_OR_FAILED" || rawStatus === "PARTIAL_SUCCESS" || rawStatus === "PARTIAL"
+      ? 100
+      : null;
 
   return {
-    status:
-      rawStatus === "NO_NEW_DATA" || rawStatus === "NO_NEW_DATA_OR_FAILED" ? "no_new_data" as const :
-      rawStatus === "PARTIAL" || rawStatus === "PARTIAL_SUCCESS" ? "partial_success" as const :
-      "success" as const,
+    status: normalizedStatus,
     message: formatSyncReceipt(data),
     chainId: data.chainId || null,
     taskIds: data.taskIds || null,
@@ -117,7 +124,18 @@ export function mapSyncResultToPanel(data: SyncTaskResponse) {
     recordsSaved: data.recordsSaved ?? null,
     recordsUpdated: data.recordsUpdated ?? null,
     targetAccountsCount: data.targetAccountsCount ?? null,
-    failedAccounts: data.failedAccounts || null
+    failedAccounts: data.failedAccounts || null,
+    runningTask: data.runningTask || null,
+    progressPercent: data.progressPercent ?? fallbackPercent,
+    currentStep: data.currentStep ?? null,
+    totalSteps: data.totalSteps ?? null,
+    stepLabel: data.stepLabel ?? null,
+    processedAccounts: data.processedAccounts ?? null,
+    totalAccounts: data.totalAccounts ?? data.targetAccountsCount ?? null,
+    processedDimensions: data.processedDimensions ?? null,
+    totalDimensions: data.totalDimensions ?? null,
+    startedAt: data.startedAt ?? null,
+    finishedAt: data.finishedAt ?? null
   };
 }
 
@@ -133,6 +151,16 @@ export function mapSyncErrorToPanel(error: any) {
     recordsSaved: null,
     recordsUpdated: null,
     targetAccountsCount: null,
-    failedAccounts: data.failedAccounts || null
+    failedAccounts: data.failedAccounts || null,
+    progressPercent: data.progressPercent ?? (data.status === "RUNNING" ? 15 : null),
+    currentStep: data.currentStep ?? null,
+    totalSteps: data.totalSteps ?? null,
+    stepLabel: data.stepLabel ?? (data.status === "RUNNING" ? "已有同步任务正在运行" : null),
+    processedAccounts: data.processedAccounts ?? null,
+    totalAccounts: data.totalAccounts ?? data.targetAccountsCount ?? null,
+    processedDimensions: data.processedDimensions ?? null,
+    totalDimensions: data.totalDimensions ?? null,
+    startedAt: data.startedAt ?? null,
+    finishedAt: data.finishedAt ?? null
   };
 }

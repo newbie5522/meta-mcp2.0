@@ -257,6 +257,88 @@ This commit is ready for server-side full verification, not final production sig
 
 This is a local repository implementation and build verification record. It is not a substitute for VPS real-data smoke testing.
 
+## R5-CF2 Visible Frontend Fix
+
+### Ad Hierarchy Date Linkage
+
+- Modified `src/components/CampaignStructureDashboard.tsx`.
+- Account level continues to read `/api/data-center/ad-hierarchy/accounts`.
+- Campaign, AdSet, and Ad levels now read `/api/data-center/ad-hierarchy/campaigns`, `/api/data-center/ad-hierarchy/adsets`, and `/api/data-center/ad-hierarchy/ads` instead of the broad structure endpoint.
+- Requests include `startDate`, `endDate`, `includeZeroSpend`, account/campaign/adset ids, and a visible `_requestKey`.
+- The page shows a status strip with current selected range, API returned range, row count, fact rows, structure rows, health status, and hierarchy level.
+- Date switches do not reuse old `lastGoodData` for a new date key unless the API returns a mismatched date range.
+
+API verification commands for VPS:
+
+```text
+curl -s "http://127.0.0.1:3000/api/data-center/ad-hierarchy/accounts?startDate=2026-07-07&endDate=2026-07-07&includeZeroSpend=true" | head -c 2000
+curl -s "http://127.0.0.1:3000/api/data-center/ad-hierarchy/accounts?startDate=2026-07-01&endDate=2026-07-07&includeZeroSpend=true" | head -c 2000
+```
+
+Both responses should show different `dateRange` values and visible `dataHealth.factRows`.
+
+### Sync Progress Percent
+
+- Modified `src/components/common/SyncStatusPanel.tsx`.
+- Modified `src/lib/sync-trigger.ts`.
+- Modified `src/server/routes/sync.routes.ts`.
+- `SyncPanelStatus` now supports `progressPercent`, `currentStep`, `totalSteps`, `stepLabel`, account progress, dimension progress, `startedAt`, and `finishedAt`.
+- The panel renders a visible progress bar, step count, account progress, dimension progress, `chainId`, `runningTask`, task ids, and fetched/saved/updated counters.
+- Sync responses now include task-level progress for `sync_meta_accounts`, `sync_meta_structure`, `sync_meta_insights`, `sync_meta_audience`, `sync_meta_creatives`, store order sync, and ledger refresh tasks.
+- RUNNING conflicts return `progressPercent: 15`, `stepLabel: "已有同步任务正在运行"`, and `runningTask`.
+
+### Creative Account Names
+
+- Modified `src/server/services/creative-insights.service.ts`.
+- Modified `src/components/CreativeIntelligenceDashboard.tsx`.
+- Creative aggregation now returns `accountName`, `accountNames`, and `fb_account_name` from `AdAccount.fb_account_name`.
+- Creative tables and the detail drawer pass `name` into `MetaAccountDisplay`.
+- If the account id exists but no name is stored, the page shows `账户名称未同步` instead of `未命名 Meta 账号`.
+
+API verification command for VPS:
+
+```text
+curl -s "http://127.0.0.1:3000/api/data-center/creative-insights?startDate=2026-07-01&endDate=2026-07-07&pageSize=5&includeZeroSpend=true" | head -c 3000
+```
+
+The response should include `accountId` plus `accountName` or `fb_account_name`.
+
+### Audience And Country Status
+
+- Modified `src/components/AudienceAnalysisDashboard.tsx`.
+- Modified `src/components/CountryAnalyticsDashboard.tsx`.
+- Modified `/api/data-center/audience` in `src/server/routes/data-center.routes.ts`.
+- Audience requests include selected account and dimension type.
+- Audience API `dataHealth` now includes `factRows` and `dateRange`.
+- Audience page shows current selected range, returned range, current dimension, row count, health status, and fact rows.
+- RUNNING audience sync is shown as waiting/running, not as a failed sync.
+- NO_NEW_DATA remains neutral.
+- If country samples are too small, the page shows one neutral sample-size notice.
+- Country page shows the same visible date/range/row/status strip.
+
+### Product Visible Range State
+
+- Modified `src/server/routes/data-center.routes.ts`.
+- Modified `src/components/ProductIntelligenceDashboard.tsx`.
+- `/api/data-center/products` now includes a `dataHealth` block with status, fact rows, date range, and source.
+- Product page shows current selected range, returned range, row count, and health status.
+
+### AI Entry
+
+- `CampaignStructureDashboard` already dispatches `open-ai-context`.
+- `CreativeIntelligenceDashboard` now dispatches `open-ai-context` from the primary row action `问 AI 分析该素材`.
+- The creative prompt includes account, campaign, adset, ad, spend, impressions, purchases, ROAS, CTR, CPC, CPM, frequency, and current date range.
+- Clipboard copy remains as fallback.
+
+### R5-CF2 Verification
+
+| Command | Result |
+| --- | --- |
+| `npm run lint` | Passed |
+| `npm run build` | Passed |
+
+This is a GitHub code-layer fix. VPS still needs pull, build, restart, and screenshot/curl verification.
+
 ## R5 Data Trust Recovery
 
 ### Runtime Error Fix

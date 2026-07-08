@@ -85,6 +85,9 @@ interface CreativeData {
   trendStatus: string;
   aiSuggestion?: string;
   accountId?: string;
+  accountName?: string;
+  accountNames?: string[];
+  fb_account_name?: string;
   adsetId?: string;
   adId?: string;
   adName?: string;
@@ -139,6 +142,7 @@ export function CreativeIntelligenceDashboard({
   const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
   const [lastGoodData, setLastGoodData] = useState<any | null>(null);
   const [viewNotice, setViewNotice] = useState<string | null>(null);
+  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string } | null>(null);
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [creativeDataHealth, setCreativeDataHealth] = useState<any>(null);
 
@@ -147,7 +151,13 @@ export function CreativeIntelligenceDashboard({
     const syncToast = toast.loading("正在同步数据...");
     setSyncStatus({
       status: "running",
-      message: "正在同步 Meta 素材结构与素材表现数据..."
+      message: "正在同步 Meta 素材结构与素材表现数据...",
+      progressPercent: 15,
+      currentStep: 1,
+      totalSteps: 3,
+      stepLabel: "素材结构同步：1 / 3",
+      processedAccounts: 0,
+      totalAccounts: selectedAccountFilter !== "all" ? 1 : null
     });
 
     try {
@@ -178,8 +188,13 @@ export function CreativeIntelligenceDashboard({
       });
       await fetchCreatives();
     } catch (err: any) {
-      setSyncStatus(mapSyncErrorToPanel(err));
-      toast.error(err?.data?.message || err?.response?.data?.message || err.message || "同步数据失败", { id: syncToast });
+      const panel = mapSyncErrorToPanel(err);
+      setSyncStatus(panel);
+      if (panel.status === "running") {
+        toast.info("已有同步任务正在运行，请稍后查看进度", { id: syncToast });
+      } else {
+        toast.error(err?.data?.message || err?.response?.data?.message || err.message || "同步数据失败", { id: syncToast });
+      }
     } finally {
       setSyncing(false);
     }
@@ -330,6 +345,8 @@ export function CreativeIntelligenceDashboard({
         ...item,
         type: item.type || "IMAGE"
       }));
+      const nextResponseRange = resGrouped.data?.dateRange || resGrouped.data?.appliedFilters || null;
+      setResponseDateRange(nextResponseRange);
 
       if (!responseDateRangeMatches(resGrouped.data, startStr, endStr) && lastGoodData) {
         setCreatives(lastGoodData.creatives || []);
@@ -406,6 +423,65 @@ export function CreativeIntelligenceDashboard({
     } finally {
       setAiLoading(false);
     }
+  };
+
+  const getCreativeAccountName = (creative: CreativeData | null | undefined) => {
+    if (!creative) return "";
+    return creative.accountName || creative.fb_account_name || (creative.accountId ? "账户名称未同步" : "");
+  };
+
+  const handleAskCreativeAI = (creative: CreativeData) => {
+    const accountName = getCreativeAccountName(creative);
+    const prompt = `请分析这个 Meta 素材在当前筛选周期内的表现，并给出下一步投放动作。
+
+素材名称：${creative.creativeName}
+素材 ID：${creative.id}
+广告账户：${accountName || creative.accountId || "未知账户"}
+账户 ID：${creative.accountId || "N/A"}
+广告 ID：${creative.adId || "N/A"}
+广告组 ID：${creative.adsetId || "N/A"}
+广告系列 ID：${creative.campaignId || "N/A"}
+花费：${creative.spend}
+曝光：${creative.impressions}
+点击率：${creative.ctr}
+购买：${creative.purchases}
+ROAS：${creative.roas}
+CPM：${creative.cpm}
+频次：${creative.frequency}
+日期范围：${startStrKey} ~ ${endStrKey}`;
+
+    window.dispatchEvent(new CustomEvent("open-ai-context", {
+      detail: {
+        source: "creative_intelligence",
+        title: `分析素材：${creative.creativeName || creative.id}`,
+        prompt,
+        context: {
+          creativeId: creative.id,
+          creativeName: creative.creativeName,
+          accountId: creative.accountId,
+          accountName,
+          campaignId: creative.campaignId,
+          adsetId: creative.adsetId,
+          adId: creative.adId,
+          spend: creative.spend,
+          impressions: creative.impressions,
+          clicks: (creative as any).clicks,
+          purchases: creative.purchases,
+          roas: creative.roas,
+          ctr: creative.ctr,
+          cpc: creative.cpc,
+          cpm: creative.cpm,
+          frequency: creative.frequency,
+          dateRange: {
+            startDate: startStrKey,
+            endDate: endStrKey
+          }
+        }
+      }
+    }));
+
+    navigator.clipboard.writeText(prompt).catch(() => undefined);
+    toast.success("已打开 AI 上下文，并已复制该素材分析提示词。");
   };
 
   // Reset or pre-load cached reporting on material change selection
@@ -1007,6 +1083,17 @@ export function CreativeIntelligenceDashboard({
 
       <SyncStatusPanel status={syncStatus} />
 
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600 flex flex-wrap gap-3">
+        <span>当前筛选周期：{startStrKey || "--"} ~ {endStrKey || "--"}</span>
+        {responseDateRange && (
+          <span>接口返回周期：{responseDateRange.startDate} ~ {responseDateRange.endDate}</span>
+        )}
+        <span>当前数据行数：{creatives.length}</span>
+        <span>素材数量：{creatives.length}</span>
+        <span>状态：{creativeDataHealth?.status || "UNKNOWN"}</span>
+        <span>当前排序：{activeSubTab === "metrics" ? metricsSortField : previewSortField} / {activeSubTab === "metrics" ? metricsSortOrder : previewSortOrder}</span>
+      </div>
+
       {/* Aggregate KPI Panels connected with parent filters */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="p-4 bg-white border border-slate-100 shadow-sm rounded-xl">
@@ -1245,6 +1332,7 @@ export function CreativeIntelligenceDashboard({
                                 <div className="flex items-center gap-1.5">
                                   <span className="px-1 py-0.2 text-[8px] font-extrabold bg-slate-100 text-slate-500 rounded border border-slate-200">账户</span>
                                   <MetaAccountDisplay
+                                    name={getCreativeAccountName(c)}
                                     accountId={c.accountId}
                                     nameClassName="text-slate-600 font-medium truncate"
                                     idClassName="text-[10px] text-slate-500 font-mono truncate"
@@ -1306,12 +1394,9 @@ export function CreativeIntelligenceDashboard({
                                 size="sm"
                                 variant="outline"
                                 className="h-8 text-xs font-bold border-slate-200 text-slate-700 hover:bg-slate-50 cursor-pointer"
-                                onClick={() => {
-                                  setSelectedPreviewCreative(c);
-                                  setPreviewModalOpen(true);
-                                }}
+                                onClick={() => handleAskCreativeAI(c)}
                               >
-                                深度诊断
+                                问 AI 分析该素材
                               </Button>
                             </TableCell>
                           </TableRow>
@@ -1456,6 +1541,7 @@ export function CreativeIntelligenceDashboard({
                             {/* 1. 广告账户 */}
                             <TableCell className="py-3 whitespace-nowrap">
                               <MetaAccountDisplay
+                                name={getCreativeAccountName(c)}
                                 accountId={c.accountId}
                                 nameClassName="text-[11px] font-semibold text-slate-700 truncate"
                                 idClassName="text-[10px] text-slate-500 font-mono truncate"
@@ -1775,6 +1861,7 @@ export function CreativeIntelligenceDashboard({
                   <div className="bg-white px-3 py-2 rounded border border-slate-100 flex items-center justify-between gap-2">
                     <span className="text-[10px] font-semibold text-slate-400">广告账户:</span>
                     <MetaAccountDisplay
+                      name={getCreativeAccountName(selectedPreviewCreative)}
                       accountId={selectedPreviewCreative.accountId}
                       className="text-right min-w-0"
                       nameClassName="font-bold text-slate-850 truncate"
@@ -1837,7 +1924,7 @@ export function CreativeIntelligenceDashboard({
                 <div className="flex items-center justify-between border-b pb-2">
                   <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-indigo-600 animate-pulse" />
-                    离线规则素材深度诊断
+                    素材规则风险复核
                   </span>
                   {aiReport && (
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -1908,14 +1995,14 @@ export function CreativeIntelligenceDashboard({
                 ) : (
                   <div className="p-3 bg-white border border-dashed border-slate-200 rounded-lg text-center space-y-2.5">
                     <p className="text-xs text-slate-500 font-medium leading-relaxed">
-                      本素材当前尚未生成离线规则深度性能诊断。点击下方按钮即可一键调配底层转化数据，对转化漏斗、文案痛点、视觉衰减进行智能规则审计。
+                      本素材当前尚未生成规则风险复核。需要离线规则辅助时，可运行一次底层转化数据复核。
                     </p>
                     <Button
                       onClick={() => handleTriggerAiAnalysis(selectedPreviewCreative.id)}
                       className="w-full h-9 bg-indigo-600 text-white hover:bg-slate-900 text-xs font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5"
                     >
                       <Sparkles className="w-4 h-4" />
-                      生成离线规则诊断
+                      运行规则复核
                     </Button>
                   </div>
                 )}

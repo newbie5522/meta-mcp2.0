@@ -94,6 +94,7 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
   const [selectedRow, setSelectedRow] = useState<CountryAnalyticsRecord | null>(null);
   const [lastGoodData, setLastGoodData] = useState<CountryAnalyticsData | null>(null);
   const [viewNotice, setViewNotice] = useState<string | null>(null);
+  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string } | null>(null);
 
   const fetchCountryData = async () => {
     setLoading(true);
@@ -110,6 +111,7 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
       const startStr = format(startDate, "yyyy-MM-dd");
       const endStr = format(endDate, "yyyy-MM-dd");
       const rows = res.data?.rows || [];
+      setResponseDateRange(res.data?.dateRange || res.data?.appliedFilters || null);
       if (!responseDateRangeMatches(res.data, startStr, endStr) && lastGoodData) {
         setData(lastGoodData);
         setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
@@ -157,9 +159,23 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
   };
 
   const countryRows = data?.rows || [];
+  const countryHealthStatus =
+    data?.dataHealth?.metaCountryAvailable
+      ? "READY"
+      : countryRows.length > 0
+        ? "PARTIAL"
+        : "MISSING_META_BREAKDOWN";
 
   return (
     <div className="space-y-6">
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600 flex flex-wrap gap-3">
+        <span>当前筛选周期：{format(startDate, "yyyy-MM-dd")} ~ {format(endDate, "yyyy-MM-dd")}</span>
+        {responseDateRange && (
+          <span>接口返回周期：{responseDateRange.startDate} ~ {responseDateRange.endDate}</span>
+        )}
+        <span>当前数据行数：{countryRows.length}</span>
+        <span>状态：{countryHealthStatus}</span>
+      </div>
       {viewNotice && (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
           {viewNotice}

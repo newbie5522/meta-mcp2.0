@@ -18,6 +18,14 @@ export type SyncPanelStatus = {
   } | null;
   startedAt?: string | null;
   finishedAt?: string | null;
+  progressPercent?: number | null;
+  currentStep?: number | null;
+  totalSteps?: number | null;
+  stepLabel?: string | null;
+  processedAccounts?: number | null;
+  totalAccounts?: number | null;
+  processedDimensions?: number | null;
+  totalDimensions?: number | null;
 };
 
 export function SyncStatusPanel({ status }: { status: SyncPanelStatus }) {
@@ -35,11 +43,49 @@ export function SyncStatusPanel({ status }: { status: SyncPanelStatus }) {
     status.recordsFetched !== null && status.recordsFetched !== undefined ||
     status.recordsSaved !== null && status.recordsSaved !== undefined ||
     status.recordsUpdated !== null && status.recordsUpdated !== undefined;
+  const percent =
+    typeof status.progressPercent === "number"
+      ? Math.max(0, Math.min(100, Math.round(status.progressPercent)))
+      : status.status === "running"
+        ? 10
+        : status.status === "success" || status.status === "no_new_data" || status.status === "partial_success"
+          ? 100
+          : null;
+
+  const hasStep =
+    status.currentStep !== null &&
+    status.currentStep !== undefined &&
+    status.totalSteps !== null &&
+    status.totalSteps !== undefined;
+  const hasAccountProgress =
+    status.processedAccounts !== null &&
+    status.processedAccounts !== undefined &&
+    status.totalAccounts !== null &&
+    status.totalAccounts !== undefined;
+  const hasDimensionProgress =
+    status.processedDimensions !== null &&
+    status.processedDimensions !== undefined &&
+    status.totalDimensions !== null &&
+    status.totalDimensions !== undefined;
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-sm space-y-1">
       <div className="font-bold text-slate-900">{title}</div>
       {status.message && <div>{status.message}</div>}
+      {percent !== null && (
+        <div className="space-y-1 pt-1">
+          <div className="flex justify-between text-[11px] text-slate-500">
+            <span>{status.stepLabel || "同步进度"}</span>
+            <span>{percent}%</span>
+          </div>
+          <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-slate-900 transition-all"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+        </div>
+      )}
       {status.chainId && <div className="font-mono text-slate-400">chainId: {status.chainId}</div>}
       {status.runningTask && (
         <div className="rounded-lg bg-slate-50 border border-slate-100 p-2 font-mono text-[11px] text-slate-500 space-y-0.5">
@@ -55,6 +101,15 @@ export function SyncStatusPanel({ status }: { status: SyncPanelStatus }) {
         <div className="font-mono text-slate-400">
           fetched: {status.recordsFetched ?? "--"} / saved: {status.recordsSaved ?? "--"} / updated: {status.recordsUpdated ?? "--"}
         </div>
+      )}
+      {hasStep && (
+        <div className="font-mono text-slate-400">step: {status.currentStep}/{status.totalSteps}</div>
+      )}
+      {hasAccountProgress && (
+        <div className="font-mono text-slate-400">accounts: {status.processedAccounts}/{status.totalAccounts}</div>
+      )}
+      {hasDimensionProgress && (
+        <div className="font-mono text-slate-400">dimensions: {status.processedDimensions}/{status.totalDimensions}</div>
       )}
       {status.targetAccountsCount !== null && status.targetAccountsCount !== undefined && (
         <div className="font-mono text-slate-400">targetAccounts: {status.targetAccountsCount}</div>

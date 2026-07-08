@@ -133,6 +133,28 @@ function buildLimitReceipt(rawLimit: any, targetCount: number) {
   };
 }
 
+function buildProgressReceipt(input: {
+  progressPercent?: number;
+  currentStep?: number;
+  totalSteps?: number;
+  stepLabel?: string;
+  processedAccounts?: number | null;
+  totalAccounts?: number | null;
+  processedDimensions?: number | null;
+  totalDimensions?: number | null;
+}) {
+  return {
+    progressPercent: input.progressPercent ?? null,
+    currentStep: input.currentStep ?? null,
+    totalSteps: input.totalSteps ?? null,
+    stepLabel: input.stepLabel ?? null,
+    processedAccounts: input.processedAccounts ?? null,
+    totalAccounts: input.totalAccounts ?? null,
+    processedDimensions: input.processedDimensions ?? null,
+    totalDimensions: input.totalDimensions ?? null
+  };
+}
+
 function deriveSyncStatus(summary: any) {
   if (summary.hasFailedTask || summary.failedAccounts?.length > 0) {
     return summary.recordsFetched > 0 || summary.recordsSaved > 0 || summary.recordsUpdated > 0
@@ -466,6 +488,14 @@ router.post("/sync/trigger", async (req, res) => {
         recordsUpdated: summary.recordsUpdated,
         failedAccounts: summary.failedAccounts,
         ...limitReceipt,
+        ...buildProgressReceipt({
+          progressPercent: 100,
+          currentStep: targets.length,
+          totalSteps: Math.max(1, targets.length),
+          stepLabel: "Meta 广告成效同步完成",
+          processedAccounts: targets.length,
+          totalAccounts: targets.length
+        }),
         startDate: range.startDate,
         endDate: range.endDate
       } as SyncTriggerResponse);
@@ -520,6 +550,14 @@ router.post("/sync/trigger", async (req, res) => {
         recordsSaved: summary.recordsSaved,
         recordsUpdated: summary.recordsUpdated,
         failedAccounts: summary.failedAccounts,
+        ...buildProgressReceipt({
+          progressPercent: 100,
+          currentStep: targets.length,
+          totalSteps: Math.max(1, targets.length),
+          stepLabel: "店铺订单同步完成",
+          processedAccounts: targets.length,
+          totalAccounts: targets.length
+        }),
         startDate: range.startDate,
         endDate: range.endDate
       } as SyncTriggerResponse);
@@ -560,6 +598,14 @@ router.post("/sync/trigger", async (req, res) => {
         recordsUpdated: summary.recordsUpdated,
         failedAccounts: summary.failedAccounts,
         ...limitReceipt,
+        ...buildProgressReceipt({
+          progressPercent: 100,
+          currentStep: 1,
+          totalSteps: 1,
+          stepLabel: "Meta 广告结构同步完成",
+          processedAccounts: summary.targetAccountsCount || null,
+          totalAccounts: summary.targetAccountsCount || null
+        }),
         startDate: startDate || null,
         endDate: endDate || null
       } as SyncTriggerResponse);
@@ -632,6 +678,14 @@ router.post("/sync/trigger", async (req, res) => {
         targetAccountsCount: summary.targetAccountsCount || targets.length,
         failedAccounts: summary.failedAccounts,
         ...limitReceipt,
+        ...buildProgressReceipt({
+          progressPercent: 100,
+          currentStep: 2 + targets.length,
+          totalSteps: 2 + targets.length,
+          stepLabel: "素材结构与广告成效同步完成",
+          processedAccounts: targets.length,
+          totalAccounts: targets.length
+        }),
         startDate: range.startDate,
         endDate: range.endDate
       } as SyncTriggerResponse);
@@ -654,6 +708,14 @@ router.post("/sync/trigger", async (req, res) => {
         recordsUpdated: summary.recordsUpdated,
         targetAccountsCount: summary.targetAccountsCount,
         failedAccounts: summary.failedAccounts,
+        ...buildProgressReceipt({
+          progressPercent: 100,
+          currentStep: 2,
+          totalSteps: 2,
+          stepLabel: "Meta 账户列表与活跃状态同步完成",
+          processedAccounts: summary.targetAccountsCount ?? null,
+          totalAccounts: summary.targetAccountsCount ?? null
+        }),
         startDate: startDate || null,
         endDate: endDate || null
       } as SyncTriggerResponse);
@@ -718,6 +780,19 @@ router.post("/sync/trigger", async (req, res) => {
         dimensionsRequested: summary.dimensionsRequested || ["country", "age", "gender", "publisher_platform"],
         dimensionsSynced: summary.dimensionsSynced || [],
         ...limitReceipt,
+        ...buildProgressReceipt({
+          progressPercent: 100,
+          currentStep: targets.length,
+          totalSteps: Math.max(1, targets.length),
+          stepLabel:
+            status === "NO_NEW_DATA"
+              ? "受众拆分同步完成，无新增数据"
+              : "受众拆分同步完成",
+          processedAccounts: targets.length,
+          totalAccounts: targets.length,
+          processedDimensions: Array.isArray(summary.dimensionsSynced) ? summary.dimensionsSynced.length : null,
+          totalDimensions: Array.isArray(summary.dimensionsRequested) ? summary.dimensionsRequested.length : 4
+        }),
         startDate: range.startDate,
         endDate: range.endDate
       } as SyncTriggerResponse);
@@ -767,6 +842,12 @@ router.post("/sync/trigger", async (req, res) => {
         recordsFetched: orderCount,
         recordsSaved: result.snapshots?.length || 0,
         recordsUpdated: 0,
+        ...buildProgressReceipt({
+          progressPercent: 100,
+          currentStep: 1,
+          totalSteps: 1,
+          stepLabel: "店铺数据中心账本刷新完成"
+        }),
         startDate,
         endDate
       } as SyncTriggerResponse);
@@ -821,6 +902,14 @@ router.post("/sync/trigger", async (req, res) => {
         recordsUpdated,
         failedAccounts: result.failedAccounts || [],
         taskIds: [],
+        ...buildProgressReceipt({
+          progressPercent: 100,
+          currentStep: 1,
+          totalSteps: 1,
+          stepLabel: "Meta 数据中心账本刷新完成",
+          processedAccounts: metaLedgerAccountIds.length,
+          totalAccounts: metaLedgerAccountIds.length
+        }),
         startDate,
         endDate,
         ...result
@@ -852,6 +941,12 @@ router.post("/sync/trigger", async (req, res) => {
           taskChainId: runningTask.taskChainId,
           startedAt: runningTask.startedAt
         } : null,
+        ...buildProgressReceipt({
+          progressPercent: 15,
+          currentStep: 1,
+          totalSteps: 1,
+          stepLabel: "已有同步任务正在运行"
+        }),
         startDate: startDate || null,
         endDate: endDate || null
       } as SyncTriggerResponse);

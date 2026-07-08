@@ -10,6 +10,9 @@ export interface AggregatedCreative {
   campaignIds: string[];
   adsetIds: string[];
   accountIds: string[];
+  accountName: string;
+  accountNames: string[];
+  fb_account_name: string;
   storeId: number | null;
   storeName: string;
   creativeName: string;
@@ -187,7 +190,9 @@ export async function getAggregatedCreativeInsights(params: {
     }
   });
   const adAccounts = await prisma.adAccount.findMany();
+  const accountNameMap = new Map<string, string>();
   adAccounts.forEach(a => {
+    accountNameMap.set(normalizeMetaAccountId(a.fb_account_id), a.fb_account_name || "");
     if (a.storeId) {
       accountToStoreIdMap.set(normalizeMetaAccountId(a.fb_account_id), a.storeId);
     }
@@ -247,6 +252,7 @@ export async function getAggregatedCreativeInsights(params: {
         campaignIds: new Set<string>(),
         adsetIds: new Set<string>(),
         accountIds: new Set<string>(),
+        accountNames: new Set<string>(),
         storeId,
         storeName,
         creativeName: creative?.name || `Creative ${creativeId || adId}`,
@@ -271,6 +277,8 @@ export async function getAggregatedCreativeInsights(params: {
     if (campaignId) item.campaignIds.add(campaignId);
     if (adsetId) item.adsetIds.add(adsetId);
     if (accountId) item.accountIds.add(accountId);
+    const accountName = accountNameMap.get(normalizeMetaAccountId(accountId)) || "";
+    if (accountName) item.accountNames.add(accountName);
 
     item.spend += metrics.spend;
     item.impressions += metrics.impressions;
@@ -359,6 +367,9 @@ export async function getAggregatedCreativeInsights(params: {
           campaignIds: [...new Set(associatedAds.map(a => a.adSet?.campaignId || "").filter(Boolean))],
           adsetIds: [...new Set(associatedAds.map(a => a.adsetId).filter(Boolean))],
           accountIds: [normalizeMetaAccountId(c.fbAccountId)],
+          accountNames: c.fbAccountId
+            ? [accountNameMap.get(normalizeMetaAccountId(c.fbAccountId)) || ""].filter(Boolean)
+            : [],
           storeId,
           storeName,
           creativeName: c.name || `Creative ${c.creativeId}`,
@@ -392,7 +403,8 @@ export async function getAggregatedCreativeInsights(params: {
           adIds: new Set(item.adIds),
           campaignIds: new Set(item.campaignIds),
           adsetIds: new Set(item.adsetIds),
-          accountIds: new Set(item.accountIds)
+          accountIds: new Set(item.accountIds),
+          accountNames: new Set(item.accountNames)
         });
       }
     });
@@ -405,6 +417,7 @@ export async function getAggregatedCreativeInsights(params: {
     const campaignIdsList = Array.from(item.campaignIds as Set<string>);
     const adsetIdsList = Array.from(item.adsetIds as Set<string>);
     const accountIdsList = Array.from(item.accountIds as Set<string>);
+    const accountNamesList = Array.from(item.accountNames as Set<string>).filter(Boolean);
 
     const ctrVal = item.impressions > 0 ? (item.clicks / item.impressions) * 100 : 0;
     const cpcVal = item.clicks > 0 ? item.spend / item.clicks : 0;
@@ -438,6 +451,9 @@ export async function getAggregatedCreativeInsights(params: {
       campaignIds: campaignIdsList,
       adsetIds: adsetIdsList,
       accountIds: accountIdsList,
+      accountName: accountNamesList[0] || "",
+      accountNames: accountNamesList,
+      fb_account_name: accountNamesList[0] || "",
       storeId: item.storeId,
       storeName: item.storeName,
       creativeName: item.creativeName,

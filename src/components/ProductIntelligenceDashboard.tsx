@@ -60,6 +60,8 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
   const [selectedProduct, setSelectedProduct] = useState<ProductIntelligenceRecord | null>(null);
   const [lastGoodData, setLastGoodData] = useState<ProductIntelligenceRecord[] | null>(null);
   const [viewNotice, setViewNotice] = useState<string | null>(null);
+  const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string } | null>(null);
+  const [dataHealthStatus, setDataHealthStatus] = useState<string>("UNKNOWN");
 
   const fetchProducts = async () => {
     setLoading(true);
@@ -81,6 +83,8 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
 
       const startStr = format(startDate, "yyyy-MM-dd");
       const endStr = format(endDate, "yyyy-MM-dd");
+      setResponseDateRange(res.data?.dateRange || res.data?.appliedFilters || null);
+      setDataHealthStatus(res.data?.dataHealth?.status || (rows.length > 0 ? "READY" : "EMPTY"));
       if (!responseDateRangeMatches(res.data, startStr, endStr) && lastGoodData) {
         setProducts(lastGoodData);
         setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
@@ -142,6 +146,14 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
 
   return (
   <div className="space-y-6">
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600 flex flex-wrap gap-3">
+        <span>当前筛选周期：{format(startDate, "yyyy-MM-dd")} ~ {format(endDate, "yyyy-MM-dd")}</span>
+        {responseDateRange && (
+          <span>接口返回周期：{responseDateRange.startDate} ~ {responseDateRange.endDate}</span>
+        )}
+        <span>当前数据行数：{products.length}</span>
+        <span>状态：{dataHealthStatus}</span>
+      </div>
       {viewNotice && (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
           {viewNotice}

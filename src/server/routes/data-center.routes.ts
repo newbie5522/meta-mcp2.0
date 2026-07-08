@@ -563,7 +563,9 @@ router.get("/audience", async (req, res) => {
           status: "MISSING_META_BREAKDOWN",
           warnings: [],
           missing: ["该店铺未绑定任何广告账户，无法加载广告受众数据。"],
-          source: "FactAudienceBreakdown"
+          source: "FactAudienceBreakdown",
+          factRows: 0,
+          dateRange: buildDateRange(startStr, endStr)
         },
         dataSourceExplain: {
           dateFilterApplied: true,
@@ -756,7 +758,9 @@ router.get("/audience", async (req, res) => {
           reason: "META_AUDIENCE_BREAKDOWN_MISSING",
           missing: ["当前日期范围没有 Meta 受众拆分数据。请在同步中心同步受众 breakdown。"],
           warnings: [],
-          source: "FactAudienceBreakdown"
+          source: "FactAudienceBreakdown",
+          factRows: dbRows.length,
+          dateRange: buildDateRange(startStr, endStr)
         },
         appliedFilters,
         dateRange: buildDateRange(startStr, endStr),
@@ -797,7 +801,9 @@ router.get("/audience", async (req, res) => {
         status: healthStatus,
         warnings,
         missing,
-        source: "FactAudienceBreakdown"
+        source: "FactAudienceBreakdown",
+        factRows: dbRows.length,
+        dateRange: buildDateRange(startStr, endStr)
       },
       appliedFilters,
       dateRange: buildDateRange(startStr, endStr),
@@ -890,6 +896,12 @@ router.get("/products", async (req, res) => {
       data: products,
       products,
       count: products.length,
+      dataHealth: {
+        status: products.length > 0 ? "READY" : "EMPTY",
+        factRows: products.length,
+        dateRange: buildDateRange(startStr, endStr),
+        source: "Order"
+      },
       appliedFilters,
       dateRange: buildDateRange(startStr, endStr),
       dataSourceExplain: {
@@ -2113,9 +2125,15 @@ router.get("/ad-hierarchy/accounts", async (req, res) => {
         structureRows: adAccounts.length,
         dateRange: {
           startDate: startStr,
-          endDate: endStr
+          endDate: endStr,
+          timezone: DATA_CENTER_TIMEZONE
         },
-        accountId: ""
+        accountId: "",
+        queryDebug: {
+          level: "account",
+          includeZeroSpend: showAll,
+          accountId: null
+        }
       },
       appliedFilters,
       dateRange: buildDateRange(startStr, endStr),
@@ -2272,9 +2290,15 @@ router.get("/ad-hierarchy/campaigns", async (req, res) => {
         structureRows: structuralCamps.length,
         dateRange: {
           startDate: startStr,
-          endDate: endStr
+          endDate: endStr,
+          timezone: DATA_CENTER_TIMEZONE
         },
-        accountId: normAccountId
+        accountId: normAccountId,
+        queryDebug: {
+          level: "campaign",
+          includeZeroSpend: showAll,
+          accountId: normAccountId
+        }
       },
       appliedFilters,
       dateRange: buildDateRange(startStr, endStr),
@@ -2436,9 +2460,16 @@ router.get("/ad-hierarchy/adsets", async (req, res) => {
         structureRows: structuralAdsets.length,
         dateRange: {
           startDate: startStr,
-          endDate: endStr
+          endDate: endStr,
+          timezone: DATA_CENTER_TIMEZONE
         },
-        accountId: normAccountId
+        accountId: normAccountId,
+        queryDebug: {
+          level: "adset",
+          includeZeroSpend: showAll,
+          accountId: normAccountId,
+          campaignId: String(campaignId)
+        }
       },
       appliedFilters,
       dateRange: buildDateRange(startStr, endStr),
@@ -2609,9 +2640,16 @@ router.get("/ad-hierarchy/ads", async (req, res) => {
         structureRows: structuralAds.length,
         dateRange: {
           startDate: startStr,
-          endDate: endStr
+          endDate: endStr,
+          timezone: DATA_CENTER_TIMEZONE
         },
-        accountId: normAccountId
+        accountId: normAccountId,
+        queryDebug: {
+          level: "ad",
+          includeZeroSpend: showAll,
+          accountId: normAccountId,
+          adsetId: String(adsetId)
+        }
       },
       appliedFilters,
       dateRange: buildDateRange(startStr, endStr),
