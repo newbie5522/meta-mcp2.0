@@ -194,18 +194,32 @@ export function CreativeIntelligenceDashboard({
       }
 
       const result = await triggerSyncTask(payload);
+      const status = String(result?.status || "").toUpperCase();
       setSyncStatus(mapSyncResultToPanel(result));
-      toast.success(result.message || "同步数据已完成，正在刷新页面数据。", {
-        id: syncToast,
-      });
+
+      if (status === "RUNNING") {
+        toast.info("已有素材同步任务正在运行，请稍后刷新查看。", { id: syncToast });
+        window.setTimeout(() => fetchCreatives(), 5000);
+        return;
+      }
+
+      if (status === "NO_NEW_DATA") {
+        toast.info("素材同步完成，但当前日期范围暂无新的素材成效数据。", { id: syncToast });
+      } else if (status === "PARTIAL_SUCCESS") {
+        toast.warning("素材同步部分完成，正在刷新已同步数据。", { id: syncToast });
+      } else {
+        toast.success("素材视图同步完成，正在刷新数据。", { id: syncToast });
+      }
       await fetchCreatives();
     } catch (err: any) {
       const panel = mapSyncErrorToPanel(err);
       setSyncStatus(panel);
       if (panel.status === "running") {
-        toast.info("已有同步任务正在运行，请稍后查看进度", { id: syncToast });
+        toast.info("已有素材同步任务正在运行，请稍后刷新查看。", { id: syncToast });
+        window.setTimeout(() => fetchCreatives(), 5000);
+        return;
       } else {
-        toast.error(err?.data?.message || err?.response?.data?.message || err.message || "同步数据失败", { id: syncToast });
+        toast.error("素材同步失败：" + (panel.message || err?.data?.message || err?.response?.data?.message || err.message), { id: syncToast });
       }
     } finally {
       setSyncing(false);
@@ -1032,25 +1046,6 @@ CPM：${creative.cpm}
 
   return (
     <div className="flex flex-col h-full space-y-4">
-      {/* Data Health & Sync Status Header */}
-      <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 flex flex-wrap items-center justify-between gap-4 text-xs shadow-sm">
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-md font-semibold font-mono text-[11px]">
-            <span>数据源: 广告成效数据 + 素材结构</span>
-          </div>
-          <p className="text-slate-500 font-medium">
-            <span className={creativeHealthStatus === "OK" ? "text-emerald-700 font-bold" : "text-slate-700 font-bold"}>
-              {creativeHealthMessage}
-            </span>
-          </p>
-        </div>
-        <div className="flex items-center gap-4 text-slate-400">
-          <span className="text-[11px]">疲劳评级: <strong className="text-slate-600 font-semibold">4维智能疲劳打分引擎</strong></span>
-          <span className="w-[1px] h-3 bg-slate-200"></span>
-          <span className="text-[11px]">同步监测: <strong className="text-slate-600 font-semibold">自动同步 (近24小时)</strong></span>
-        </div>
-      </div>
-
       {viewNotice && (
         <div className="bg-slate-50 border border-slate-200 text-slate-700 rounded-xl p-4 text-sm">
           {viewNotice}
@@ -1070,7 +1065,8 @@ CPM：${creative.cpm}
       )}
 
       {/* Dynamic coupled BI Header */}
-      <div className="bg-white px-6 py-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-end">
+      <div className="bg-white px-6 py-4 rounded-xl border border-gray-100 shadow-sm flex flex-wrap items-center justify-between gap-3">
+        <span className="text-xs text-slate-400">素材 Meta 成效口径，按 Ad / Creative 聚合</span>
         
         {/* Date Selector Indicator, Store selection dropdown, & Export block */}
         <div className="flex flex-wrap items-center gap-2.5">
@@ -1165,6 +1161,7 @@ CPM：${creative.cpm}
       <SyncStatusPanel status={syncStatus} />
 
       <DataViewTraceBar
+        compactScopeLabel="素材 Meta 成效口径"
         currentStartDate={startStrKey || "--"}
         currentEndDate={endStrKey || "--"}
         responseStartDate={responseDateRange?.startDate}
@@ -1176,8 +1173,8 @@ CPM：${creative.cpm}
         status={creativeDataHealth?.status || "UNKNOWN"}
         level={activeSubTab}
         queryDebug={creativeDataHealth?.queryDebug}
-        source="广告成效数据 + 素材结构"
-        extra={<span>当前排序：{activeSubTab === "metrics" ? metricsSortField : previewSortField} / {activeSubTab === "metrics" ? metricsSortOrder : previewSortOrder}</span>}
+        source="FactMetaPerformance + AdCreative"
+        scope={selectedAccountFilter !== "all" ? "current_account" : "all_accounts"}
       />
 
       <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
@@ -1208,7 +1205,7 @@ CPM：${creative.cpm}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="p-4 bg-white border border-slate-100 shadow-sm rounded-xl">
           <div className="flex justify-between items-center text-slate-400 mb-1">
-            <span className="text-[11px] font-bold tracking-wider uppercase">总营销消耗 Expenditure</span>
+            <span className="text-[11px] font-bold tracking-wider uppercase">素材消耗</span>
             <DollarSign className="w-4 h-4 text-emerald-500" />
           </div>
           <p className="text-lg font-extrabold text-slate-900 font-mono">${totalSpend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
@@ -1220,19 +1217,19 @@ CPM：${creative.cpm}
 
         <Card className="p-4 bg-white border border-slate-100 shadow-sm rounded-xl">
           <div className="flex justify-between items-center text-slate-400 mb-1">
-            <span className="text-[11px] font-bold tracking-wider uppercase">追踪回报价值 Revenue</span>
+            <span className="text-[11px] font-bold tracking-wider uppercase">Meta转化价值</span>
             <TrendUpIcon className="w-4 h-4 text-blue-500" />
           </div>
           <p className="text-lg font-extrabold text-slate-900 font-mono">${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           <div className="flex items-center gap-1.5 mt-2">
-            <span className="text-[9px] bg-blue-50 text-blue-700 font-bold px-1.5 py-0.5 rounded">购买转化</span>
-            <span className="text-[9px] text-slate-500 font-semibold font-mono">订单量: {totalPurchases}</span>
+            <span className="text-[9px] bg-blue-50 text-blue-700 font-bold px-1.5 py-0.5 rounded">Meta购买数</span>
+            <span className="text-[9px] text-slate-500 font-semibold font-mono">{totalPurchases}</span>
           </div>
         </Card>
 
         <Card className="p-4 bg-white border border-slate-100 shadow-sm rounded-xl">
           <div className="flex justify-between items-center text-slate-400 mb-1">
-            <span className="text-[11px] font-bold tracking-wider uppercase">整体产出比 ROAS</span>
+            <span className="text-[11px] font-bold tracking-wider uppercase">素材ROAS</span>
             <Award className="w-4 h-4 text-indigo-505" />
           </div>
           <p className={`text-lg font-extrabold font-mono ${avgROAS >= 2.0 ? 'text-blue-600' : avgROAS >= 1.2 ? 'text-slate-800' : 'text-red-500'}`}>{avgROAS.toFixed(2)}x</p>

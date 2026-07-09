@@ -273,16 +273,34 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         limit: 200
       });
 
+      const status = String(result?.status || "").toUpperCase();
       setSyncStatus(mapSyncResultToPanel(result));
+
+      if (status === "RUNNING") {
+        toast.info("已有受众同步任务正在运行，请稍后刷新查看。");
+        window.setTimeout(() => fetchAudienceInsights(), 5000);
+        return;
+      }
+
+      if (status === "NO_NEW_DATA") {
+        toast.info("Meta受众同步完成，但当前日期范围暂无新的受众 breakdown 数据。");
+      } else if (status === "PARTIAL_SUCCESS") {
+        toast.warning("受众同步部分完成，正在刷新已同步数据。");
+      } else {
+        toast.success("受众/国家视图同步完成，正在刷新数据。");
+      }
       await fetchAudienceInsights();
     } catch (error: any) {
       const panel = mapSyncErrorToPanel(error);
-      setSyncStatus({
-        ...panel,
-        message: panel.status === "running"
-          ? "已有受众同步任务正在运行，正在等待当前任务完成。"
-          : panel.message
-      });
+      setSyncStatus(panel);
+
+      if (panel.status === "running") {
+        toast.info("已有受众同步任务正在运行，请稍后刷新查看。");
+        window.setTimeout(() => fetchAudienceInsights(), 5000);
+        return;
+      }
+
+      toast.error("受众同步失败：" + (panel.message || error.message));
     } finally {
       setSyncing(false);
     }
@@ -381,19 +399,48 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   };
 
   // Safe Getters for Core Summary Cards (direct consumption from API)
-  const totalSpend = summary?.totalSpend ?? 0;
-  const totalImpressions = summary?.totalImpressions ?? 0;
-  const totalClicks = summary?.totalClicks ?? 0;
-  const totalPurchases = summary?.totalPurchases ?? 0;
-  const totalPurchaseValue = summary?.totalPurchaseValue ?? 0;
-  const ctrVal = (summary?.ctr ?? 0) * 100;
-  const cpcVal = summary?.cpc ?? 0;
-  const cpmVal = summary?.cpm ?? 0;
-  const cpaVal = summary?.cpa ?? 0;
-  const roasVal = summary?.roas ?? 0;
+  const visibleMetaCountryRows = useMemo(() => data.filter(row =>
+    activeTab !== "country" ||
+      Number(row.spend || 0) > 0 ||
+      Number(row.impressions || 0) > 0 ||
+      Number(row.clicks || 0) > 0 ||
+      Number(row.purchases || row.metaPurchases || 0) > 0
+  ), [data, activeTab]);
+  const visibleOrderCountryRows = useMemo(() => orderCountryRows.filter(row =>
+    Number(row.orderCount || row.orders || 0) > 0 ||
+      Number(row.revenue || row.totalRevenue || row.orderRevenue || 0) > 0
+  ), [orderCountryRows]);
+  const metaSummary = summary?.meta || {
+    spend: summary?.totalSpend ?? 0,
+    impressions: summary?.totalImpressions ?? 0,
+    clicks: summary?.totalClicks ?? 0,
+    purchases: summary?.totalPurchases ?? 0,
+    purchaseValue: summary?.totalPurchaseValue ?? 0,
+    ctr: summary?.ctr ?? 0,
+    cpc: summary?.cpc ?? 0,
+    cpm: summary?.cpm ?? 0,
+    cpa: summary?.cpa ?? 0,
+    roas: summary?.roas ?? 0
+  };
+  const storeSummary = summary?.store || {
+    orderCount: visibleOrderCountryRows.reduce((sum, row) => sum + Number(row.orderCount || row.orders || 0), 0),
+    revenue: visibleOrderCountryRows.reduce((sum, row) => sum + Number(row.revenue || row.totalRevenue || row.orderRevenue || 0), 0),
+    averageOrderValue: 0,
+    countryCount: visibleOrderCountryRows.length
+  };
+  const totalSpend = metaSummary.spend ?? 0;
+  const totalImpressions = metaSummary.impressions ?? 0;
+  const totalClicks = metaSummary.clicks ?? 0;
+  const totalPurchases = metaSummary.purchases ?? 0;
+  const totalPurchaseValue = metaSummary.purchaseValue ?? 0;
+  const ctrVal = (metaSummary.ctr ?? 0) * 100;
+  const cpcVal = metaSummary.cpc ?? 0;
+  const cpmVal = metaSummary.cpm ?? 0;
+  const cpaVal = metaSummary.cpa ?? 0;
+  const roasVal = metaSummary.roas ?? 0;
 
   // Unified data source for both charts and table (limited to Top 10 for country to prevent label skipping/overlap)
-  const tableRows = data;
+  const tableRows = activeTab === "country" ? visibleMetaCountryRows : data;
 
   const chartRows = useMemo(() => {
     if (activeTab === "country") {
@@ -410,13 +457,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     dataHealth?.status &&
     !["READY", "OK"].includes(String(dataHealth.status).toUpperCase());
   const audienceNoticeMessage =
-    syncStatus.status === "no_new_data"
-      ? syncStatus.message || "Meta API 当前日期范围未返回受众 breakdown 数据。请扩大日期范围或检查 Meta 账户是否有足够投放数据。"
-      : dataHealth?.message || "当前日期范围暂无 Meta 受众 breakdown 数据。";
-  const lowCountrySampleNotice =
-    activeTab === "country" && data.length > 0 && data.length <= 1
-      ? "当前国家拆分数据样本较少，请扩大日期范围或确认该账户是否有国家级 breakdown 返回。"
-      : null;
+    dataHealth?.message || "当前日期范围暂无 Meta 受众 breakdown 数据。";
 
   // Chart Rendering Logic according to instructions
   const renderChart = () => {
@@ -658,6 +699,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       <SyncStatusPanel status={syncStatus} />
 
       <DataViewTraceBar
+        compactScopeLabel={activeTab === "country" ? "Meta受众国家口径" : "Meta受众 breakdown 口径"}
         currentStartDate={format(startDate, "yyyy-MM-dd")}
         currentEndDate={format(endDate, "yyyy-MM-dd")}
         responseStartDate={responseDateRange?.startDate}
@@ -668,29 +710,17 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         status={dataHealth?.status || "UNKNOWN"}
         level={activeTab}
         queryDebug={dataHealth?.queryDebug}
-        extra={
-          <>
-            <span>花费：${Number(summary?.totalSpend || 0).toFixed(2)}</span>
-            <span>展示：{Number(summary?.totalImpressions || 0).toLocaleString()}</span>
-            <span>点击：{Number(summary?.totalClicks || 0).toLocaleString()}</span>
-            <span>购买：{Number(summary?.totalPurchases || 0).toLocaleString()}</span>
-          </>
-        }
-        source="受众拆分事实数据"
+        source="FactAudienceBreakdown"
+        scope={selectedAccount !== "all" ? "current_account" : selectedStore !== "all" ? "current_store" : "all_accounts"}
+        includeZeroSpend={includeZeroSpend}
       />
-
-      {lowCountrySampleNotice && !viewNotice && !shouldShowAudienceNotice && (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-          {lowCountrySampleNotice}
-        </div>
-      )}
 
       {/* 📊 Core Indicators Summary Board (Direct Consumption from API) */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         
         <Card className="border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
           <CardContent className="p-4">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">总花费 (Spend)</p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Meta消耗</p>
             <h3 className="text-lg font-black text-slate-800 font-mono mt-1">${totalSpend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
           </CardContent>
         </Card>
@@ -711,15 +741,29 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
         <Card className="border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
           <CardContent className="p-4">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">总购买 (Purchases)</p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Meta购买数</p>
             <h3 className="text-lg font-black text-slate-800 font-mono mt-1">{totalPurchases} 单</h3>
           </CardContent>
         </Card>
 
         <Card className="border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
           <CardContent className="p-4">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">总购买价值 (Value)</p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Meta转化价值</p>
             <h3 className="text-lg font-black text-slate-800 font-mono mt-1">${totalPurchaseValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+          </CardContent>
+        </Card>
+
+        <Card className="border-emerald-200/80 bg-emerald-50/10 shadow-xs hover:border-emerald-300 transition-all">
+          <CardContent className="p-4">
+            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">店铺订单数</p>
+            <h3 className="text-lg font-black text-emerald-700 font-mono mt-1">{Number(storeSummary.orderCount || 0).toLocaleString()} 单</h3>
+          </CardContent>
+        </Card>
+
+        <Card className="border-emerald-200/80 bg-emerald-50/10 shadow-xs hover:border-emerald-300 transition-all">
+          <CardContent className="p-4">
+            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">店铺收入</p>
+            <h3 className="text-lg font-black text-emerald-700 font-mono mt-1">${Number(storeSummary.revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
           </CardContent>
         </Card>
 
@@ -753,7 +797,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
         <Card className="border-indigo-200 bg-indigo-50/10 shadow-xs hover:border-indigo-300 transition-all">
           <CardContent className="p-4">
-            <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">大盘综合 ROAS</p>
+            <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Meta ROAS</p>
             <h3 className="text-lg font-black text-indigo-600 font-mono mt-1">{roasVal.toFixed(3)}</h3>
           </CardContent>
         </Card>
@@ -843,7 +887,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                     <TableHead className="text-slate-700 font-semibold text-right">千次 CPM</TableHead>
                     <TableHead className="text-slate-700 font-semibold text-right cursor-pointer hover:bg-slate-100/50" onClick={() => handleSortToggle("purchases")}>
                       <div className="flex items-center justify-end gap-1 select-none">
-                        购买单数 {sortBy === "purchases" && <span className="text-indigo-600 font-extrabold font-mono">↓</span>}
+                        Meta购买数 {sortBy === "purchases" && <span className="text-indigo-600 font-extrabold font-mono">↓</span>}
                       </div>
                     </TableHead>
                     <TableHead className="text-slate-700 font-semibold text-right cursor-pointer hover:bg-slate-100/50" onClick={() => handleSortToggle("cpa")}>
@@ -968,7 +1012,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
               </p>
             </div>
             <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 px-3 py-1 rounded-full font-mono">
-              对应订单收货国家: {orderCountryRows.length} 个
+              店铺订单收货国家: {visibleOrderCountryRows.length} 个
             </span>
           </CardHeader>
           <CardContent className="p-0">
@@ -977,7 +1021,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                 <Loader2 className="w-6 h-6 animate-spin text-emerald-500 mb-2" />
                 <p className="text-xs font-semibold">主站订单国家数据分析中...</p>
               </div>
-            ) : (countriesHealth?.status === "ORDER_COUNTRY_BACKFILL_REQUIRED" || orderCountryRows.length === 0) ? (
+            ) : (countriesHealth?.status === "ORDER_COUNTRY_BACKFILL_REQUIRED" || visibleOrderCountryRows.length === 0) ? (
               <div className="p-12 text-center text-slate-500 bg-slate-50/20 rounded-xl my-4 flex flex-col items-center justify-center max-w-lg mx-auto border border-dashed border-slate-200">
                 <AlertTriangle className="w-8 h-8 text-slate-400 mb-2" />
                 <p className="text-xs font-bold text-slate-700">订单国家/地区属性需要回填/校验</p>
@@ -1001,7 +1045,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {orderCountryRows.map((row) => {
+                    {visibleOrderCountryRows.map((row) => {
                       const formattedFirst = row.orderFirstAt ? format(new Date(row.orderFirstAt), "yyyy-MM-dd HH:mm") : "-";
                       const formattedLast = row.orderLastAt ? format(new Date(row.orderLastAt), "yyyy-MM-dd HH:mm") : "-";
                       return (

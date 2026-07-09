@@ -17,8 +17,7 @@ import {
   Search, 
   TrendingUp, 
   Sparkles,
-  AlertTriangle,
-  Info
+  AlertTriangle
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -31,7 +30,6 @@ import {
 } from "@/lib/sync-trigger";
 import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountDisplay";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
-import { DataViewTraceBar } from "./common/DataViewTraceBar";
 import {
   buildDataViewRequestKey,
   getSafeLastGoodData,
@@ -72,6 +70,33 @@ function makeEmptyAccountsPerformanceData(status: string, message: string, dataH
     },
     dataHealth
   };
+}
+
+function DataHealthAlert({ dataHealth }: { dataHealth: any }) {
+  if (!dataHealth) return null;
+  const status = String(dataHealth.status || "").toUpperCase();
+  if (["READY", "OK", "SUCCESS"].includes(status)) return null;
+
+  return (
+    <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+      <div className="font-medium flex items-center gap-2">
+        <AlertTriangle className="w-4 h-4" />
+        数据健康提醒
+      </div>
+      <div className="mt-1 text-xs leading-relaxed">
+        {dataHealth.message || dataHealth.reason || dataHealth.missingReason || "当前数据可能不完整，请检查同步状态。"}
+      </div>
+    </div>
+  );
+}
+
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 text-lg font-semibold text-slate-900">{value}</div>
+    </div>
+  );
 }
 
 export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboardProps) {
@@ -330,8 +355,6 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   };
 
   const allAccountsCount = data.accountsInventoryCount ?? data.summary?.totalAccounts ?? data.accounts?.length ?? 0;
-  const totalAdAccountsInventoryCount = data.totalAdAccountsInventoryCount ?? allAccountsCount;
-  const hiddenHistoricalAccountsCount = data.hiddenHistoricalAccountsCount ?? 0;
   const accountDisplayScope = data.accountDisplayScope || data.dataSourceExplain?.accountDisplayScope || "active_only";
   const accountsWithFactsCount = data.accountsWithFactsCount ?? data.accounts?.filter(a => a.lastSyncedAt || (a.impressions || 0) > 0 || (a.clicks || 0) > 0).length ?? 0;
   const withSpendCount = data.accountsWithSpendCount ?? data.summary?.spendAccounts ?? data.accounts?.filter(a => (a.spend || 0) > 0).length ?? 0;
@@ -340,11 +363,32 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const hasAccountInventoryWithoutFacts = allAccountsCount > 0 && factRowsCount === 0;
   const appliedStartDate = data.appliedFilters?.startDate || format(startDate, "yyyy-MM-dd");
   const appliedEndDate = data.appliedFilters?.endDate || format(endDate, "yyyy-MM-dd");
-  const filteredSpend = filteredAccounts.reduce((sum, item) => sum + Number(item.spend || 0), 0);
-  const filteredImpressions = filteredAccounts.reduce((sum, item) => sum + Number(item.impressions || 0), 0);
-  const filteredClicks = filteredAccounts.reduce((sum, item) => sum + Number(item.clicks || 0), 0);
-  const filteredPurchases = filteredAccounts.reduce((sum, item) => sum + Number(item.purchases || 0), 0);
   const displayScopeText = accountDisplayScope === "historical_all" ? "全部历史账户" : "当前日期范围内活跃账户";
+  const accountTotals = useMemo(() => {
+    const rows = filteredAccounts || [];
+    const spend = rows.reduce((sum, item) => sum + Number(item.spend || 0), 0);
+    const impressions = rows.reduce((sum, item) => sum + Number(item.impressions || 0), 0);
+    const clicks = rows.reduce((sum, item) => sum + Number(item.clicks || 0), 0);
+    const purchases = rows.reduce((sum, item) => sum + Number(item.purchases || item.metaPurchases || 0), 0);
+    const purchaseValue = rows.reduce((sum, item) => sum + Number(item.purchaseValue || item.purchase_value || 0), 0);
+    const cpc = clicks > 0 ? spend / clicks : 0;
+    const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
+    const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+    const roas = spend > 0 ? purchaseValue / spend : 0;
+
+    return {
+      accountCount: rows.length,
+      spend,
+      impressions,
+      clicks,
+      purchases,
+      purchaseValue,
+      cpc,
+      cpm,
+      ctr,
+      roas
+    };
+  }, [filteredAccounts]);
 
   // Formatting date safely
   const formatTimeStr = (rawVal: any) => {
@@ -359,58 +403,52 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   };
 
   const lastSyncTimeVal = formatTimeStr(data.health?.lastSyncTime);
+  const pageDataHealth = (() => {
+    const sourceHealth = data.dataHealth || data.health || null;
+    const sourceStatus = String(sourceHealth?.status || "").toUpperCase();
+    if (sourceHealth && !["READY", "OK", "SUCCESS"].includes(sourceStatus)) {
+      return sourceHealth;
+    }
+    if (data.metaFreshness?.warning || (data.metaFreshness?.secondsSinceLatestSync !== null && data.metaFreshness?.secondsSinceLatestSync > 1800)) {
+      return {
+        status: "WARNING",
+        message: data.metaFreshness.warning || "Meta 消耗数据已过期，建议触发同步数据。"
+      };
+    }
+    if (unboundWithSpendCount > 0) {
+      return {
+        status: "WARNING",
+        message: `当前有 ${unboundWithSpendCount} 个未绑定店铺但有消耗的账户。该问题只影响店铺级 ROAS 归因，不影响账户级 Meta 表现查看。`
+      };
+    }
+    if (withSpendCount === 0 && !loading) {
+      return {
+        status: hasAccountInventoryWithoutFacts ? "EMPTY_FACTS" : "EMPTY",
+        message: hasAccountInventoryWithoutFacts
+          ? "账户已存在，但当前日期范围暂无广告表现事实数据。"
+          : "当前日期范围内没有有消耗账户。"
+      };
+    }
+    if (data.health?.status === "SYNC_FAILED") {
+      return {
+        status: "SYNC_FAILED",
+        message: data.health?.lastFailedSync?.errorMessage || data.health?.missingReason || "最近一次 Meta 同步失败。"
+      };
+    }
+    return null;
+  })();
 
   return (
     <div className="flex flex-col gap-6" id="data-details-viewer">
       
-      {/* Sleek Mini Footprint Status Info Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 font-medium">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 font-medium">
-          <div className="flex items-center gap-1.5">
-            <span className={cn(
-              "w-1.5 h-1.5 rounded-full animate-pulse",
-              (data.metaFreshness?.secondsSinceLatestSync !== null && data.metaFreshness?.secondsSinceLatestSync > 1800)
-                ? "bg-orange-500"
-                : "bg-blue-500"
-            )}></span>
-            <span>
-              最近同步时间: <strong className="text-slate-800 font-mono">{lastSyncTimeVal}</strong>
-              {autoRefreshPolling && (
-                <span className="ml-2 text-blue-600 font-semibold">
-                  后台刷新中，页面将自动更新
-                </span>
-              )}
-            </span>
-          </div>
-          <div>
-            <span>
-              当前显示账户数: <strong className="text-slate-800 font-mono">{allAccountsCount}</strong>
-            </span>
-            <span className="mx-2 text-slate-300">|</span>
-            <span>
-              有消耗账户数量: <strong className="text-blue-600 font-mono">{withSpendCount}</strong>
-            </span>
-            <span className="mx-2 text-slate-300">|</span>
-            <span>
-              展示范围:
-              <strong className={cn(
-                "ml-1 font-mono",
-                accountDisplayScope === "historical_all" ? "text-purple-700" : "text-emerald-700"
-              )}>
-                {displayScopeText}
-              </strong>
-            </span>
-            <span className="mx-2 text-slate-300">|</span>
-            <span>
-              当前统计期间: <strong className="text-slate-800 font-mono">{appliedStartDate}</strong> 至 <strong className="text-slate-800 font-mono">{appliedEndDate}</strong>
-            </span>
-          </div>
-          {data.metaFreshness?.latestFactDate && (
-            <div>
-              <span className="text-slate-300">|</span>
-              <span className="ml-2">最新事实日期: <strong className="text-emerald-700 font-mono">{data.metaFreshness.latestFactDate}</strong></span>
-            </div>
-          )}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="text-[11px] text-slate-400 flex flex-wrap items-center gap-2">
+          <span>Meta广告口径</span>
+          <span>账户级成效</span>
+          <span>{displayScopeText}</span>
+          <span>{appliedStartDate} 至 {appliedEndDate}</span>
+          {autoRefreshPolling && <span className="text-blue-600 font-semibold">后台刷新中</span>}
+          {lastSyncTimeVal !== "无记录" && <span>最近同步：{lastSyncTimeVal}</span>}
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -439,100 +477,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
 
       <SyncStatusPanel status={syncStatus} />
 
-      <DataViewTraceBar
-        currentStartDate={format(startDate, "yyyy-MM-dd")}
-        currentEndDate={format(endDate, "yyyy-MM-dd")}
-        responseStartDate={data.dateRange?.startDate || data.appliedFilters?.startDate}
-        responseEndDate={data.dateRange?.endDate || data.appliedFilters?.endDate}
-        timezone={data.dateRange?.timezone || data.appliedFilters?.timezone || "America/Los_Angeles"}
-        rowCount={data.accounts?.length || 0}
-        factRows={factRowsCount}
-        status={data.health?.status || "UNKNOWN"}
-        level="account"
-        queryDebug={data.dataHealth?.queryDebug}
-        extra={
-          <>
-            <span>花费：${filteredSpend.toFixed(2)}</span>
-            <span>展示：{filteredImpressions.toLocaleString()}</span>
-            <span>点击：{filteredClicks.toLocaleString()}</span>
-            <span>购买：{filteredPurchases.toLocaleString()}</span>
-          </>
-        }
-        source="广告成效数据 + 广告账户"
-      />
-
-      {/* Meta Freshness Warning Alert Box */}
-      {data.metaFreshness && (data.metaFreshness.warning || (data.metaFreshness.secondsSinceLatestSync !== null && data.metaFreshness.secondsSinceLatestSync > 1800)) && (
-        <div className="flex items-start gap-3 p-4 bg-orange-50/60 border border-orange-200 rounded-xl text-slate-850 text-xs shadow-sm">
-          <AlertTriangle className="w-4 h-4 text-orange-500 shrink-0 mt-0.5 animate-pulse" />
-          <div className="space-y-1 text-left flex-1">
-            <h5 className="font-bold text-orange-950">Meta 消耗数据过期提醒</h5>
-            <p className="text-orange-900 font-medium leading-relaxed">
-              {data.metaFreshness.warning || "Meta 消耗数据已过期，建议立即触发实时刷新。"}
-            </p>
-            <p className="text-slate-500 leading-relaxed text-[11.5px]">
-              说明：由于 Meta API 有频控，本功能将直接对 Meta 广告账户并发请求 account level 增量成效数据，直接使用 Meta 提供的 API 起始日 date_start 覆写 SOT。为了安全与性能，建议高频更新时限定为单店铺或限定账户。
-              {(data.metaFreshness.secondsSinceLatestSync !== null) && ` (当前已延迟 ${Math.floor(data.metaFreshness.secondsSinceLatestSync / 60)} 分钟)`}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Dynamic Critical warning panel of mSpend unmapped accounts */}
-      {unboundWithSpendCount > 0 && (
-        <div className="flex items-start gap-3 p-4 bg-rose-50 border border-rose-200 rounded-xl text-slate-800 text-xs shadow-sm">
-          <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
-          <div className="space-y-1 text-left">
-            <h5 className="font-bold text-rose-900">数据健康提醒：存在未绑定且有消耗账户</h5>
-            <p className="text-rose-700 leading-relaxed">
-              当前有 <strong className="font-mono text-red-700">{unboundWithSpendCount}</strong> 个未绑定店铺但有消耗的账户。该问题只影响店铺级 ROAS 归因，不影响账户级 Meta 表现查看。请在数据健康检测中处理映射关系。
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Warning banner of missing/empty metrics if no accounts have spend */}
-      {withSpendCount === 0 && !loading && (
-        <div className="flex items-start gap-3 p-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 text-xs shadow-sm">
-          <AlertTriangle className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
-          <div>
-            <h5 className="font-bold text-slate-900 mb-0.5">
-              {hasAccountInventoryWithoutFacts ? "账户已存在，但当前日期范围暂无广告表现事实数据" : "当前日期范围内没有有消耗账户"}
-            </h5>
-            <p className="text-slate-600 leading-relaxed">
-              {hasAccountInventoryWithoutFacts ? (
-                <>
-                  配置中心已保存 <strong className="font-mono">{allAccountsCount}</strong> 个 Meta 广告账户，但所选日期范围
-                  (<strong>{appliedStartDate}</strong> 至 <strong>{appliedEndDate}</strong>)
-                  暂无广告成效事实记录。下方仍展示账户库存，花费、展示、点击、购买和 ROAS 按 0 展示。
-                </>
-              ) : (
-                <>
-                  系统在选定的日期范围内 (<strong>{appliedStartDate}</strong> 至 <strong>{appliedEndDate}</strong>)
-                  未发现具有广告花费的活跃账户。请前往“<strong>数据同步中心</strong>”手动对 Meta 资产成效数据执行一次强制提取与加载。
-                </>
-              )}
-            </p>
-            {data.health?.lastFailedSync?.errorMessage && (
-              <p className="mt-2 text-rose-700 leading-relaxed">
-                最近同步失败原因：{data.health.lastFailedSync.errorMessage}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {data.health?.status === "SYNC_FAILED" && withSpendCount > 0 && !loading && (
-        <div className="flex items-start gap-3 p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs shadow-sm">
-          <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
-          <div>
-            <h5 className="font-bold text-rose-900 mb-0.5">最近一次 Meta 同步失败</h5>
-            <p className="text-rose-700 leading-relaxed">
-              {data.health?.lastFailedSync?.errorMessage || data.health?.missingReason || "后端同步失败，但未返回具体错误。"}
-            </p>
-          </div>
-        </div>
-      )}
+      <DataHealthAlert dataHealth={pageDataHealth} />
 
       {/* Primary Filtering controls */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
@@ -618,29 +563,15 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
         </div>
       </div>
 
-      <div className={cn(
-        "flex items-start gap-3 p-3 rounded-xl border text-xs shadow-sm",
-        showHistoricalAccounts
-          ? "bg-purple-50 border-purple-200 text-purple-900"
-          : "bg-emerald-50 border-emerald-200 text-emerald-900"
-      )}>
-        <Info className={cn(
-          "w-4 h-4 shrink-0 mt-0.5",
-          showHistoricalAccounts ? "text-purple-600" : "text-emerald-600"
-        )} />
-        <div className="leading-relaxed">
-          {showHistoricalAccounts ? (
-            <>
-        当前正在展示全部历史账户库存，仅用于排查绑定、命名和历史资料。系统不会因为打开此视图而同步全部账户，也不会把无消耗历史账户纳入 Data Center 默认计算。
-           </>
-          ) : (
-            <>
-              当前默认只展示近 90 天活跃账户，隐藏了
-              <strong className="mx-1 font-mono">{hiddenHistoricalAccountsCount}</strong>
-              个历史无活跃账户，以降低页面负担和 Meta API 同步压力。需要排查历史账户时，可点击“查看全部历史账户”。
-            </>
-          )}
-        </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+        <MetricCard label="账户数" value={accountTotals.accountCount.toLocaleString()} />
+        <MetricCard label="总消耗" value={`$${accountTotals.spend.toFixed(2)}`} />
+        <MetricCard label="展示" value={accountTotals.impressions.toLocaleString()} />
+        <MetricCard label="点击" value={accountTotals.clicks.toLocaleString()} />
+        <MetricCard label="购买" value={accountTotals.purchases.toLocaleString()} />
+        <MetricCard label="转化价值" value={`$${accountTotals.purchaseValue.toFixed(2)}`} />
+        <MetricCard label="CTR" value={`${accountTotals.ctr.toFixed(2)}%`} />
+        <MetricCard label="ROAS" value={accountTotals.roas.toFixed(2)} />
       </div>
 
       {loading ? (

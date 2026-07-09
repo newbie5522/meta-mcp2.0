@@ -1,8 +1,10 @@
 import React from "react";
 
 export type DataViewTraceBarProps = {
-  currentStartDate: string;
-  currentEndDate: string;
+  debug?: boolean;
+  compactScopeLabel?: string;
+  currentStartDate?: string;
+  currentEndDate?: string;
   responseStartDate?: string | null;
   responseEndDate?: string | null;
   timezone?: string | null;
@@ -43,6 +45,8 @@ function boolLabel(value: unknown) {
 }
 
 export function DataViewTraceBar({
+  debug = false,
+  compactScopeLabel,
   currentStartDate,
   currentEndDate,
   responseStartDate,
@@ -63,23 +67,41 @@ export function DataViewTraceBar({
   queryDebug,
   extra
 }: DataViewTraceBarProps) {
-  const debug = queryDebug || {};
-  const resolvedSource = source || debug.source;
-  const resolvedScope = scope || debug.scope;
-  const resolvedMappedOnly = mappedOnly ?? debug.mappedOnly ?? false;
-  const resolvedIncludeUnmapped = includeUnmapped ?? debug.includeUnmapped ?? !resolvedMappedOnly;
-  const resolvedIncludeZeroSpend = includeZeroSpend ?? debug.includeZeroSpend ?? false;
-  const resolvedStoreId = storeId ?? debug.storeId;
-  const resolvedAccountId = accountId ?? debug.accountId;
+  const trace = queryDebug || {};
+  const resolvedSource = source || trace.source;
+  const resolvedScope = scope || trace.scope;
+  const resolvedMappedOnly = mappedOnly ?? trace.mappedOnly ?? false;
+  const resolvedIncludeUnmapped = includeUnmapped ?? trace.includeUnmapped;
+  const resolvedIncludeZeroSpend = includeZeroSpend ?? trace.includeZeroSpend;
+  const resolvedStoreId = storeId ?? trace.storeId;
+  const resolvedAccountId = accountId ?? trace.accountId;
+
+  if (!debug) {
+    if (!compactScopeLabel && !resolvedSource && !resolvedScope) return null;
+
+    return (
+      <div className="text-[11px] text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-1 leading-5">
+        {compactScopeLabel ? <span>{compactScopeLabel}</span> : null}
+        {resolvedSource ? <span>数据源：{resolvedSource}</span> : null}
+        {resolvedScope ? <span>口径：{getScopeLabel(resolvedScope)}</span> : null}
+        {resolvedIncludeUnmapped !== null && resolvedIncludeUnmapped !== undefined ? (
+          <span>{resolvedIncludeUnmapped && !resolvedMappedOnly ? "含未绑定账户" : "仅绑定账户"}</span>
+        ) : null}
+        {resolvedIncludeZeroSpend !== null && resolvedIncludeZeroSpend !== undefined ? (
+          <span>{resolvedIncludeZeroSpend ? "含零消耗对象" : "仅有消耗对象"}</span>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600 flex flex-wrap gap-x-4 gap-y-2">
-      <span>当前筛选周期：{currentStartDate} ~ {currentEndDate}</span>
+    <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 flex flex-wrap gap-x-4 gap-y-2">
+      <span>当前筛选周期：{clean(currentStartDate)} ~ {clean(currentEndDate)}</span>
       <span>接口返回周期：{clean(responseStartDate)} ~ {clean(responseEndDate)}</span>
       <span>时区：{clean(timezone)}</span>
       <span>数据口径：{getScopeLabel(resolvedScope)}</span>
-      <span>未绑定账户：{boolLabel(resolvedIncludeUnmapped && !resolvedMappedOnly)}</span>
-      <span>零消耗对象：{boolLabel(resolvedIncludeZeroSpend)}</span>
+      <span>未绑定账户：{boolLabel(Boolean(resolvedIncludeUnmapped && !resolvedMappedOnly))}</span>
+      <span>零消耗对象：{boolLabel(Boolean(resolvedIncludeZeroSpend))}</span>
       <span>数据行数：{rowCount ?? 0}</span>
       {factRows !== null && factRows !== undefined && <span>事实行数：{factRows}</span>}
       {structureRows !== null && structureRows !== undefined && <span>结构行数：{structureRows}</span>}

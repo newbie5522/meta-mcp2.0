@@ -388,9 +388,16 @@ export async function getCountryAnalytics(
     })
     // Filter out rows by minSpend or minOrders parameter
     .filter(row => {
+      const hasData =
+        Number(row.orderCount || 0) > 0 ||
+        Number(row.orderRevenue || 0) > 0 ||
+        Number(row.metaSpend || 0) > 0 ||
+        Number(row.metaImpressions || 0) > 0 ||
+        Number(row.metaClicks || 0) > 0 ||
+        Number(row.metaPurchases || 0) > 0;
       const spendOk = row.metaSpend >= minSpend;
       const ordersOk = (row.orderCount || 0) >= minOrders;
-      return spendOk && ordersOk;
+      return hasData && spendOk && ordersOk;
     });
 
   // Sort rows by metaSpend or orderRevenue descending

@@ -509,10 +509,21 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         limit: selectedAccount ? undefined : 200
       });
 
+      const status = String(result?.status || "").toUpperCase();
       setSyncStatus(mapSyncResultToPanel(result));
 
-      if (String(result?.status || "").toUpperCase() === "RUNNING") {
-        toast.info("广告层级同步任务正在运行，请稍后查看进度。", { id: tId });
+      if (status === "RUNNING") {
+        toast.info("已有广告层级同步任务正在运行，请稍后刷新查看。", { id: tId });
+        window.setTimeout(() => {
+          fetchData();
+        }, 5000);
+        return;
+      }
+
+      if (status === "NO_NEW_DATA") {
+        toast.info("同步完成，但当前日期范围暂无新的广告层级数据。", { id: tId });
+      } else if (status === "PARTIAL_SUCCESS") {
+        toast.warning("同步部分完成，正在刷新已同步数据。", { id: tId });
       } else {
         toast.success("广告层级视图同步完成，正在刷新页面数据。", { id: tId });
       }
@@ -522,9 +533,13 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
       const panel = mapSyncErrorToPanel(err);
       setSyncStatus(panel);
       if (panel.status === "running") {
-        toast.info("已有同步任务正在运行，请稍后查看进度", { id: tId });
+        toast.info("已有广告层级同步任务正在运行，请稍后刷新查看。", { id: tId });
+        window.setTimeout(() => {
+          fetchData();
+        }, 5000);
+        return;
       } else {
-        toast.error("同步数据失败: " + (data?.message || data?.details || data?.error || err.message), { id: tId });
+        toast.error("同步数据失败: " + (panel.message || data?.message || data?.details || data?.error || err.message), { id: tId });
       }
     } finally {
       setSyncing(false);
@@ -710,6 +725,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
       <SyncStatusPanel status={syncStatus} />
 
       <DataViewTraceBar
+        compactScopeLabel="Meta广告层级口径"
         currentStartDate={startStrKey}
         currentEndDate={endStrKey}
         responseStartDate={responseDateRange?.startDate}
@@ -721,16 +737,9 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         status={dataHealth?.status || structureSummary?.health?.status || "UNKNOWN"}
         level={viewLevel}
         queryDebug={dataHealth?.queryDebug || structureSummary?.dataHealth?.queryDebug || structureSummary?.health?.queryDebug}
-        extra={
-          <>
-            <span>花费：${totalSpend.toFixed(2)}</span>
-            <span>展示：{totalImpressions.toLocaleString()}</span>
-            <span>点击：{totalClicks.toLocaleString()}</span>
-            <span>购买：{totalPurchases.toLocaleString()}</span>
-            <span>说明：同一层级行数可能不变，请以指标和事实行数判断日期差异。</span>
-          </>
-        }
-        source="广告层级结构 + 广告成效数据"
+        source="FactMetaPerformance"
+        scope={includeZeroSpend ? "全部广告结构" : "仅有消耗广告结构"}
+        includeZeroSpend={includeZeroSpend}
       />
 
       {viewNotice && (

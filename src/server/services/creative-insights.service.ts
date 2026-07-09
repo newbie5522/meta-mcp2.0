@@ -614,6 +614,17 @@ export async function getAggregatedCreativeInsights(params: {
     total: totalCount,
     page: pageNum,
     pageSize: sizeNum,
+    dataScope: {
+      page: "creative-insights",
+      primarySource: "FactMetaPerformance + AdCreative",
+      metaScope: "素材页按 Ad / Creative 维度聚合 Meta 花费、展示、点击、购买和转化价值",
+      storeScope: "不直接统计店铺订单；店铺订单请看店铺数据或商品数据页面",
+      dateField: "FactMetaPerformance.date",
+      timezone: "America/Los_Angeles",
+      accountId: params.accountId || "all",
+      storeId: params.storeId || "all",
+      includeZeroSpend: includeZero
+    },
     diagnostics: {
       hasAdLevelInsights,
       hasAdCreativeLinks,

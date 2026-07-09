@@ -263,6 +263,7 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
       <SyncStatusPanel status={syncStatus} />
 
       <DataViewTraceBar
+        compactScopeLabel="商品订单口径"
         currentStartDate={startStrKey}
         currentEndDate={endStrKey}
         responseStartDate={responseDateRange?.startDate}
@@ -273,15 +274,8 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
         factRows={dataHealth?.factRows}
         structureRows={dataHealth?.structureRows}
         queryDebug={dataHealth?.queryDebug}
-        extra={
-          <>
-            <span>花费：-</span>
-            <span>展示：-</span>
-            <span>点击：-</span>
-            <span>购买：{totalOrders.toLocaleString()}</span>
-          </>
-        }
         source="Order"
+        scope="all_stores"
       />
       {viewNotice && (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
@@ -306,7 +300,7 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
           {/* Top stats boxes */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
-              <span className="text-sm text-slate-500 font-medium">聚合有效总营收</span>
+              <span className="text-sm text-slate-500 font-medium">商品销售额</span>
               <h3 className="text-2xl font-bold text-slate-900 mt-1">{currency(totalRevenue)}</h3>
               <p className="text-xs text-slate-400 mt-2 flex items-center gap-1">
                 <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -315,19 +309,19 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
             </div>
             
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
-              <span className="text-sm text-slate-500 font-medium">有效销售订单</span>
+              <span className="text-sm text-slate-500 font-medium">商品订单数</span>
               <h3 className="text-2xl font-bold text-slate-900 mt-1">{totalOrders} 笔</h3>
               <p className="text-xs text-slate-400 mt-2">已剔除未支付及退款订单</p>
             </div>
 
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
-              <span className="text-sm text-slate-500 font-medium">预估商品净利润</span>
+              <span className="text-sm text-slate-500 font-medium">商品毛利</span>
               <h3 className="text-2xl font-bold text-slate-950 mt-1">{currency(totalProfit)}</h3>
               <p className="text-xs text-slate-400 mt-2">基于订单实付与生产成本差额</p>
             </div>
 
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
-              <span className="text-sm text-slate-500 font-medium">平均订单退款率</span>
+              <span className="text-sm text-slate-500 font-medium">商品退款率</span>
               <h3 className="text-2xl font-bold text-slate-900 mt-1">{percentage(avgRefundRate)}</h3>
               <p className="text-xs text-slate-400 mt-2">退款订单 / 进件总订单比例</p>
             </div>
@@ -358,8 +352,8 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
                   <tr>
                     <th className="px-6 py-3.5 font-semibold text-slate-700">商品名称与标识</th>
                     <th className="px-6 py-3.5 font-semibold text-slate-700">类目 / 店铺</th>
-                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-right">有效订单</th>
-                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-right">销售额</th>
+                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-right">商品订单</th>
+                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-right">商品销售额</th>
                     <th className="px-6 py-3.5 font-semibold text-slate-700 text-right">净利润</th>
                     <th className="px-6 py-3.5 font-semibold text-slate-700 text-right">退款率</th>
                     <th className="px-6 py-3.5 font-semibold text-slate-700 text-right">广告花费 (adSpend)</th>

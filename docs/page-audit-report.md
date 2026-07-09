@@ -176,6 +176,32 @@ Verification:
 
 This commit is ready for server-side full verification, not final production sign-off.
 
+## R5-UX-SCOPE-SYNC-CF Clean UI and Data Scope
+
+### Cause
+
+R5 unified verification showed that the date filters were mostly usable, but data-center pages still had noisy always-on explanation panels, unclear metric scopes, and sync buttons that treated RUNNING or NO_NEW_DATA as user-facing failures.
+
+### Scope Fixed
+
+- Reduced `DataViewTraceBar` to a compact one-line scope label by default; the full trace only renders with `debug={true}`.
+- Kept the account data page focused on the data health alert and added filtered account metric totals.
+- Split audience metrics into Meta audience facts and store-order facts so Meta purchases are not presented as store orders.
+- Filtered country analytics to countries with real order or Meta activity instead of returning a padded country list.
+- Clarified creative KPIs as creative Meta performance metrics.
+- Clarified store and product KPIs as store/product order metrics.
+- Normalized RUNNING, NO_NEW_DATA, and PARTIAL_SUCCESS sync results so they no longer appear as failed syncs.
+- Added `dataScope` metadata to data-center responses used by detail, audience, countries, products, stores, accounts performance, hierarchy, and creative views.
+
+### Verification Criteria
+
+- Normal data-center pages should not show large debug/source/trace panels.
+- The account data page now has account totals based on the currently filtered account list.
+- Audience pages expose separate Meta and store summaries.
+- Country rows only include countries with data in the selected range.
+- Ad hierarchy, audience, and creative sync buttons use view-level sync tasks and treat RUNNING / NO_NEW_DATA as neutral states.
+- Product sync behavior remains on the existing `sync_view_products` path.
+
 ## R5-ROOT-FIX-CF Date State Completion
 
 ### 修复原因

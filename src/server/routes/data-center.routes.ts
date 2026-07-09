@@ -157,6 +157,41 @@ function buildQueryDebug(input: {
   };
 }
 
+function buildDataScope(input: {
+  page: string;
+  primarySource: string;
+  metaScope?: string;
+  storeScope?: string;
+  dateField?: string | Record<string, string>;
+  includeUnmapped?: boolean;
+  includeZeroSpend?: boolean;
+  mappedOnly?: boolean;
+  storeId?: unknown;
+  accountId?: unknown;
+  scope?: string;
+}) {
+  const mappedOnly = Boolean(input.mappedOnly);
+  return {
+    page: input.page,
+    primarySource: input.primarySource,
+    metaScope: input.metaScope || "",
+    storeScope: input.storeScope || "",
+    dateField: input.dateField || "date",
+    timezone: DATA_CENTER_TIMEZONE,
+    includeUnmapped: input.includeUnmapped ?? !mappedOnly,
+    includeZeroSpend: Boolean(input.includeZeroSpend),
+    mappedOnly,
+    storeId: isSpecificFilter(input.storeId) ? input.storeId : "all",
+    accountId: isSpecificFilter(input.accountId) ? normalizeMetaAccountId(String(input.accountId)) : "all",
+    scope: resolveDataScope({
+      scope: input.scope,
+      storeId: input.storeId,
+      accountId: input.accountId,
+      mappedOnly
+    })
+  };
+}
+
 /**
  * GET /api/data-center/detail
  * Returns raw advertising and order details, filters list, and health metrics.
@@ -374,6 +409,21 @@ router.get("/detail", async (req, res) => {
           structureRows: accountsInventoryCount
         })
       },
+      dataScope: buildDataScope({
+        page: "detail",
+        primarySource: "FactMetaPerformance + Order",
+        metaScope: "Meta account-level facts from FactMetaPerformance.",
+        storeScope: "Store orders from Order.store_local_date; legacy createdAt fallback is opt-in only.",
+        dateField: {
+          meta: "FactMetaPerformance.date",
+          store: "Order.store_local_date"
+        },
+        storeId,
+        accountId,
+        includeUnmapped: true,
+        includeZeroSpend: true,
+        mappedOnly: false
+      }),
       dataSourceExplain: {
         dateFilterApplied: true,
         primarySource: "FactMetaPerformance + Order",
@@ -440,6 +490,18 @@ router.get("/structure", async (req, res) => {
             structureRows: 0
           })
         },
+        dataScope: buildDataScope({
+          page: "structure",
+          primarySource: "Campaign + AdSet + Ad + FactMetaPerformance",
+          metaScope: "Ad hierarchy structure plus hierarchy-level Meta facts.",
+          storeScope: "Store mapping is filter context only; store orders are not mixed into hierarchy metrics.",
+          dateField: "FactMetaPerformance.date",
+          accountId: targetAccount,
+          includeUnmapped: true,
+          includeZeroSpend: true,
+          mappedOnly: false,
+          scope: "current_account"
+        }),
         health: {
           status: "EMPTY_STRUCTURE",
           missingReason: "当前账户没有广告结构数据，请先同步广告结构。"
@@ -573,6 +635,18 @@ router.get("/structure", async (req, res) => {
           structureRows: structureRowsCount
         })
       },
+      dataScope: buildDataScope({
+        page: "structure",
+        primarySource: "Campaign + AdSet + Ad + FactMetaPerformance",
+        metaScope: "Ad hierarchy structure plus hierarchy-level Meta facts.",
+        storeScope: "Store mapping is filter context only; store orders are not mixed into hierarchy metrics.",
+        dateField: "FactMetaPerformance.date",
+        accountId: targetAccount,
+        includeUnmapped: true,
+        includeZeroSpend: true,
+        mappedOnly: false,
+        scope: "current_account"
+      }),
       appliedFilters: buildAppliedFilters({ startStr, endStr, selectedAccount: targetAccount }),
       dateRange: buildDateRange(startStr, endStr),
       dataSourceExplain: {
@@ -615,6 +689,44 @@ router.get("/audience", async (req, res) => {
     const allowedDimensionTypes = ["country", "age", "gender", "publisher_platform"];
     const currentDimType = allowedDimensionTypes.includes(requestedDimType) ? requestedDimType : "country";
     const appliedFilters = buildAppliedFilters({ startStr, endStr, storeId, accountId, dimensionType: currentDimType });
+    const audienceDataScope = buildDataScope({
+      page: "audience",
+      primarySource: "FactAudienceBreakdown",
+      metaScope: "Meta受众 breakdown，花费/展示/点击/购买来自 Meta API",
+      storeScope: "店铺订单按收货国家统计，订单数/收入来自订单事实表",
+      dateField: {
+        meta: "FactAudienceBreakdown.date",
+        store: "Order.store_local_date"
+      },
+      storeId,
+      accountId,
+      includeUnmapped: true,
+      includeZeroSpend: queryFlag(includeZeroSpend),
+      mappedOnly: false
+    });
+    const storeOrderSummary = await getStoreOrderSummary({
+      startDate: startStr,
+      endDate: endStr,
+      storeId: isSpecificFilter(storeId) ? String(storeId) : undefined,
+      includeLegacyCreatedAtFallback: false
+    });
+    const buildStoreSummary = () => ({
+      orderCount: storeOrderSummary.ordersCount || 0,
+      revenue: Number((storeOrderSummary.totalSales || 0).toFixed(4)),
+      averageOrderValue: Number((storeOrderSummary.aov || 0).toFixed(4)),
+      countryCount: 0
+    });
+    const emptyMetaSummary = {
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      purchases: 0,
+      purchaseValue: 0,
+      roas: 0,
+      ctr: 0,
+      cpc: 0,
+      cpm: 0
+    };
 
     // 1. Store filtering: resolve store mapped accounts
     let filterAccountIds: string[] | null = null;
@@ -661,8 +773,11 @@ router.get("/audience", async (req, res) => {
           cpc: 0,
           cpm: 0,
           cpa: 0,
-          roas: 0
+          roas: 0,
+          meta: emptyMetaSummary,
+          store: buildStoreSummary()
         },
+        dataScope: audienceDataScope,
         filters: { startDate: startStr, endDate: endStr, storeId, accountId, campaignId, adsetId, adId, dimensionType: currentDimType },
         pagination: { page: Number(page || 1), pageSize: Number(pageSize || 50), totalItems: 0, totalPages: 0 },
         dataHealth: {
@@ -841,7 +956,20 @@ router.get("/audience", async (req, res) => {
       cpc: Number(summaryCpc.toFixed(4)),
       cpm: Number(summaryCpm.toFixed(4)),
       cpa: Number(summaryCpa.toFixed(4)),
-      roas: Number(summaryRoas.toFixed(4))
+      roas: Number(summaryRoas.toFixed(4)),
+      meta: {
+        spend: Number(summarySpend.toFixed(4)),
+        impressions: summaryImpressions,
+        clicks: summaryClicks,
+        purchases: summaryPurchases,
+        purchaseValue: Number(summaryPurchaseValue.toFixed(4)),
+        roas: Number(summaryRoas.toFixed(4)),
+        ctr: Number(summaryCtr.toFixed(6)),
+        cpc: Number(summaryCpc.toFixed(4)),
+        cpm: Number(summaryCpm.toFixed(4)),
+        cpa: Number(summaryCpa.toFixed(4))
+      },
+      store: buildStoreSummary()
     };
 
     // 10. Data Health & Warning/Missing Messages
@@ -868,8 +996,11 @@ router.get("/audience", async (req, res) => {
           cpc: 0,
           cpm: 0,
           cpa: 0,
-          roas: 0
+          roas: 0,
+          meta: emptyMetaSummary,
+          store: buildStoreSummary()
         },
+        dataScope: audienceDataScope,
         dataHealth: {
           status: "MISSING_META_BREAKDOWN",
           reason: "META_AUDIENCE_BREAKDOWN_MISSING",
@@ -907,6 +1038,7 @@ router.get("/audience", async (req, res) => {
       data: paginatedRows,
       rows: paginatedRows,
       summary,
+      dataScope: audienceDataScope,
       filters: {
         startDate: startStr,
         endDate: endStr,
@@ -993,15 +1125,40 @@ router.get("/countries", async (req, res) => {
       minO,
       incUnmapped
     );
+    const visibleCountryRows = Array.isArray(result.rows)
+      ? result.rows.filter((row: any) =>
+        Number(row.orderCount || row.orders || 0) > 0 ||
+          Number(row.revenue || row.totalRevenue || row.orderRevenue || 0) > 0 ||
+          Number(row.spend || row.metaSpend || 0) > 0 ||
+          Number(row.impressions || row.metaImpressions || 0) > 0 ||
+          Number(row.clicks || row.metaClicks || 0) > 0 ||
+          Number(row.purchases || row.metaPurchases || 0) > 0
+      )
+      : [];
 
     res.json({
       ...result,
+      rows: visibleCountryRows,
       appliedFilters,
       dateRange: buildDateRange(startStr, endStr),
+      dataScope: buildDataScope({
+        page: "countries",
+        primarySource: "FactAudienceBreakdown + Order",
+        metaScope: "Meta 国家指标来自受众 country breakdown",
+        storeScope: "店铺订单国家按 Order.store_local_date 和收货/账单国家统计",
+        dateField: {
+          meta: "FactAudienceBreakdown.date",
+          store: "Order.store_local_date"
+        },
+        storeId,
+        includeUnmapped: incUnmapped,
+        includeZeroSpend: minS <= 0,
+        mappedOnly: !incUnmapped
+      }),
       dataHealth: {
         ...(result.dataHealth || {}),
         source: "FactAudienceBreakdown + Order",
-        factRows: Array.isArray(result.rows) ? result.rows.length : 0,
+        factRows: visibleCountryRows.length,
         structureRows: 0,
         dateRange: buildDateRange(startStr, endStr),
         queryDebug: buildQueryDebug({
@@ -1010,7 +1167,7 @@ router.get("/countries", async (req, res) => {
           includeUnmapped: incUnmapped,
           includeZeroSpend: minS <= 0,
           mappedOnly: !incUnmapped,
-          factRows: Array.isArray(result.rows) ? result.rows.length : 0,
+          factRows: visibleCountryRows.length,
           structureRows: 0
         })
       },
@@ -1051,6 +1208,17 @@ router.get("/products", async (req, res) => {
       data: products,
       products,
       count: products.length,
+      dataScope: buildDataScope({
+        page: "products",
+        primarySource: "Order",
+        metaScope: "商品页不直接使用 Meta 购买口径；若展示广告花费必须明确标为 Meta",
+        storeScope: "商品销售额和商品订单数来自订单事实，按 store_local_date 统计",
+        dateField: "Order.store_local_date",
+        includeUnmapped: false,
+        includeZeroSpend: true,
+        mappedOnly: false,
+        scope: "all_stores"
+      }),
       dataHealth: {
         status: products.length > 0 ? "READY" : "EMPTY",
         factRows: products.length,
@@ -1391,6 +1559,21 @@ router.get("/stores", async (req, res) => {
       endDate: endStr,
       appliedFilters,
       dateRange: buildDateRange(startStr, endStr),
+      dataScope: buildDataScope({
+        page: "stores",
+        primarySource: "DataCenterStoreDaily",
+        metaScope: "映射广告花费来自 DataCenterMetaAccountDaily，仅用于店铺 ROAS 分母",
+        storeScope: "店铺订单数、销售额、AOV 来自 DataCenterStoreDaily，按 store_local_date 统计",
+        dateField: {
+          meta: "DataCenterMetaAccountDaily.date",
+          store: "DataCenterStoreDaily.date"
+        },
+        storeId,
+        includeUnmapped: true,
+        includeZeroSpend: true,
+        mappedOnly: false,
+        scope: storeId ? "current_store" : "all_stores"
+      }),
       stores: storesList,
       ordersCount: totalOrders,
       revenue: totalRevenue,
@@ -2024,6 +2207,17 @@ router.get("/accounts-performance", async (req, res) => {
       endDate: endStr,
       appliedFilters,
       dateRange: buildDateRange(startStr, endStr),
+      dataScope: buildDataScope({
+        page: "accounts-performance",
+        primarySource: "DataCenterMetaAccountDaily",
+        metaScope: "账户数据页按 Meta account-level 成效账目聚合花费、展示、点击、购买和转化价值",
+        storeScope: "店铺字段仅用于账户映射筛选，不参与账户级 Meta 指标计算",
+        dateField: "DataCenterMetaAccountDaily.date",
+        storeId: storeIdParam,
+        includeUnmapped: storeIdParam === "all",
+        includeZeroSpend: true,
+        mappedOnly: storeIdParam !== "all"
+      }),
       accounts: results,
       accountsInventoryCount: results.length,
       totalAdAccountsInventoryCount,
@@ -2313,6 +2507,18 @@ router.get("/ad-hierarchy/accounts", async (req, res) => {
       },
       appliedFilters,
       dateRange: buildDateRange(startStr, endStr),
+      dataScope: buildDataScope({
+        page: "ad-hierarchy-accounts",
+        primarySource: "FactMetaPerformance + AdAccount + AccountMapping",
+        metaScope: "Ad hierarchy account rows use hierarchy-level Meta facts and structural inventory.",
+        storeScope: "Store mapping is filter context only; store orders are not mixed into hierarchy metrics.",
+        dateField: "FactMetaPerformance.date",
+        storeId,
+        includeUnmapped: true,
+        includeZeroSpend: showAll,
+        mappedOnly: false,
+        scope: "all_accounts"
+      }),
       dataSourceExplain: {
         dateFilterApplied: true,
         primarySource: "FactMetaPerformance + AdAccount + AccountMapping",
@@ -3024,6 +3230,17 @@ router.get("/creative-insights", async (req, res) => {
       ...result,
       appliedFilters,
       dateRange: buildDateRange(startStr, endStr),
+      dataScope: result.dataScope || buildDataScope({
+        page: "creative-insights",
+        primarySource: "FactMetaPerformance + AdCreative",
+        metaScope: "素材页按 Ad / Creative 维度聚合 Meta 花费、展示、点击、购买和转化价值",
+        storeScope: "不直接统计店铺订单；店铺订单请看店铺数据或商品数据页面",
+        dateField: "FactMetaPerformance.date",
+        storeId: storeId || storeFilter || "all",
+        accountId: accountId || "all",
+        includeZeroSpend: queryFlag(includeZeroSpend),
+        mappedOnly: isSpecificFilter(storeId || storeFilter)
+      }),
       dataHealth: creativeHealth,
       dataSourceExplain: {
         ...(result.dataSourceExplain || {}),

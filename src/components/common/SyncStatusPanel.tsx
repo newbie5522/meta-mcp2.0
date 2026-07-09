@@ -1,9 +1,10 @@
 import React from "react";
 
 export type SyncPanelStatus = {
-  status: "idle" | "running" | "success" | "no_new_data" | "partial_success" | "error";
+  status: "idle" | "running" | "success" | "warning" | "no_new_data" | "partial_success" | "error";
   message?: string;
   chainId?: string | null;
+  taskType?: string | null;
   taskIds?: string[] | null;
   recordsFetched?: number | null;
   recordsSaved?: number | null;
@@ -29,11 +30,14 @@ export type SyncPanelStatus = {
 };
 
 export function SyncStatusPanel({ status }: { status: SyncPanelStatus }) {
+  const [showDetails, setShowDetails] = React.useState(false);
+
   if (!status || status.status === "idle") return null;
 
   const title =
     status.status === "running" ? "同步任务正在运行" :
     status.status === "success" ? "同步完成" :
+    status.status === "warning" ? "部分同步完成" :
     status.status === "partial_success" ? "部分同步完成" :
     status.status === "no_new_data" ? "同步完成，但没有新数据" :
     status.status === "error" ? "同步失败" :
@@ -49,6 +53,8 @@ export function SyncStatusPanel({ status }: { status: SyncPanelStatus }) {
       : status.status === "running"
         ? 10
         : status.status === "success" || status.status === "no_new_data" || status.status === "partial_success"
+          ? 100
+          : status.status === "warning"
           ? 100
           : null;
 
@@ -67,6 +73,13 @@ export function SyncStatusPanel({ status }: { status: SyncPanelStatus }) {
     status.processedDimensions !== undefined &&
     status.totalDimensions !== null &&
     status.totalDimensions !== undefined;
+  const hasTechnicalDetails = Boolean(
+    status.chainId ||
+      status.taskType ||
+      (Array.isArray(status.taskIds) && status.taskIds.length > 0) ||
+      status.runningTask ||
+      (Array.isArray(status.failedAccounts) && status.failedAccounts.length > 0)
+  );
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-sm space-y-1">
@@ -86,44 +99,45 @@ export function SyncStatusPanel({ status }: { status: SyncPanelStatus }) {
           </div>
         </div>
       )}
-      {status.chainId && <div className="font-mono text-slate-400">chainId: {status.chainId}</div>}
-      {status.runningTask && (
-        <div className="rounded-lg bg-slate-50 border border-slate-100 p-2 font-mono text-[11px] text-slate-500 space-y-0.5">
-          <div>runningTask: {status.runningTask.taskType || "unknown"}</div>
-          {status.runningTask.id && <div>taskId: {status.runningTask.id}</div>}
-          {status.runningTask.startedAt && <div>startedAt: {String(status.runningTask.startedAt)}</div>}
-        </div>
-      )}
-      {Array.isArray(status.taskIds) && status.taskIds.length > 0 && (
-        <div className="font-mono text-slate-400">taskIds: {status.taskIds.join(", ")}</div>
-      )}
       {hasCounters && (
-        <div className="font-mono text-slate-400">
-          fetched: {status.recordsFetched ?? "--"} / saved: {status.recordsSaved ?? "--"} / updated: {status.recordsUpdated ?? "--"}
+        <div className="text-slate-500">
+          拉取 {status.recordsFetched ?? "--"} / 写入 {status.recordsSaved ?? "--"} / 更新 {status.recordsUpdated ?? "--"}
         </div>
       )}
       {hasStep && (
-        <div className="font-mono text-slate-400">step: {status.currentStep}/{status.totalSteps}</div>
+        <div className="text-slate-500">步骤：{status.currentStep}/{status.totalSteps}</div>
       )}
       {hasAccountProgress && (
-        <div className="font-mono text-slate-400">accounts: {status.processedAccounts}/{status.totalAccounts}</div>
+        <div className="text-slate-500">账户：{status.processedAccounts}/{status.totalAccounts}</div>
       )}
       {hasDimensionProgress && (
-        <div className="font-mono text-slate-400">dimensions: {status.processedDimensions}/{status.totalDimensions}</div>
+        <div className="text-slate-500">维度：{status.processedDimensions}/{status.totalDimensions}</div>
       )}
       {status.targetAccountsCount !== null && status.targetAccountsCount !== undefined && (
-        <div className="font-mono text-slate-400">targetAccounts: {status.targetAccountsCount}</div>
+        <div className="text-slate-500">目标账户：{status.targetAccountsCount}</div>
       )}
-      {Array.isArray(status.failedAccounts) && status.failedAccounts.length > 0 && (
-        <details className="mt-2">
-          <summary className="cursor-pointer font-semibold text-rose-700">
-            失败账户 {status.failedAccounts.length} 个
-          </summary>
-          <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-rose-50 p-2 text-[10px] text-rose-800">
-            {JSON.stringify(status.failedAccounts.slice(0, 10), null, 2)}
+      {hasTechnicalDetails ? (
+        <div className="pt-1">
+          <button
+            type="button"
+            className="text-xs text-slate-400 underline"
+            onClick={() => setShowDetails((value) => !value)}
+          >
+            {showDetails ? "隐藏技术详情" : "查看技术详情"}
+          </button>
+        </div>
+      ) : null}
+      {showDetails ? (
+        <pre className="mt-2 max-h-40 overflow-auto rounded bg-slate-950 p-3 text-[11px] text-slate-100">
+            {JSON.stringify({
+              chainId: status.chainId,
+              taskType: status.taskType,
+              taskIds: status.taskIds,
+              runningTask: status.runningTask,
+              failedAccounts: status.failedAccounts
+            }, null, 2)}
           </pre>
-        </details>
-      )}
+      ) : null}
     </div>
   );
 }

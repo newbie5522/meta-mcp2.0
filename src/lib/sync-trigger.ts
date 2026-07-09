@@ -71,20 +71,23 @@ export function formatSyncReceipt(data: SyncTaskResponse): string {
   const targetAccounts = data.targetAccountsCount ?? "--";
   const status = String(data.status || "SUCCESS").toUpperCase();
 
+  if (status === "RUNNING" || data.error === "SYNC_ALREADY_RUNNING") {
+    return data.message || "已有同步任务正在运行，请稍后刷新查看。";
+  }
+
   if (status === "NO_NEW_DATA" || status === "NO_NEW_DATA_OR_FAILED") {
     return data.message || `同步完成，但当前日期范围没有新数据。目标账户 ${targetAccounts} 个，拉取 ${fetched} 条，写入 ${saved} 条。`;
   }
 
+  if (status === "PARTIAL_SUCCESS" || status === "PARTIAL") {
+    return data.message || `同步部分完成：目标账户 ${targetAccounts} 个，拉取 ${fetched} 条，写入 ${saved} 条。`;
+  }
+
   const parts = [
     data.message || `同步完成：目标账户 ${targetAccounts} 个，拉取 ${fetched} 条，写入 ${saved} 条，更新 ${updated} 条。`,
-    status ? `状态: ${status}` : "",
-    data.chainId ? `chainId: ${data.chainId}` : "",
-    Array.isArray(data.taskIds) && data.taskIds.length > 0
-      ? `taskIds: ${data.taskIds.join(", ")}`
-      : "",
-    data.recordsFetched !== undefined ? `fetched: ${data.recordsFetched}` : "",
-    data.recordsSaved !== undefined ? `saved: ${data.recordsSaved}` : "",
-    data.recordsUpdated !== undefined ? `updated: ${data.recordsUpdated}` : ""
+    data.recordsFetched !== undefined ? `拉取 ${data.recordsFetched}` : "",
+    data.recordsSaved !== undefined ? `写入 ${data.recordsSaved}` : "",
+    data.recordsUpdated !== undefined ? `更新 ${data.recordsUpdated}` : ""
   ].filter(Boolean);
 
   return parts.join(" | ");
@@ -92,6 +95,11 @@ export function formatSyncReceipt(data: SyncTaskResponse): string {
 
 export function getSyncErrorMessage(error: any): string {
   const data = error?.data || error?.response;
+  const normalized = String(data?.status || data?.error || data?.code || "").toUpperCase();
+
+  if (normalized === "RUNNING" || normalized === "SYNC_ALREADY_RUNNING") {
+    return data?.message || "已有同步任务正在运行，请稍后刷新查看。";
+  }
 
   return (
     data?.message ||
@@ -105,19 +113,19 @@ export function getSyncErrorMessage(error: any): string {
 function normalizePanelStatus(raw?: string) {
   const value = String(raw || "").toUpperCase();
   if (value === "SUCCESS") return "success" as const;
-  if (value === "NO_NEW_DATA" || value === "NO_NEW_DATA_OR_FAILED") return "no_new_data" as const;
-  if (value === "PARTIAL" || value === "PARTIAL_SUCCESS") return "partial_success" as const;
-  if (value === "RUNNING") return "running" as const;
+  if (value === "NO_NEW_DATA" || value === "NO_NEW_DATA_OR_FAILED") return "success" as const;
+  if (value === "PARTIAL" || value === "PARTIAL_SUCCESS") return "warning" as const;
+  if (value === "RUNNING" || value === "SYNC_ALREADY_RUNNING") return "running" as const;
   if (value === "FAILED" || value === "ERROR") return "error" as const;
   return "success" as const;
 }
 
 export function mapSyncResultToPanel(data: SyncTaskResponse) {
-  const rawStatus = String(data?.status || "").toUpperCase();
+  const rawStatus = String(data?.status || data?.error || "").toUpperCase();
   const normalizedStatus = normalizePanelStatus(rawStatus);
   const fallbackPercent =
     normalizedStatus === "running" ? 15 :
-    ["success", "no_new_data", "partial_success"].includes(normalizedStatus) ? 100 :
+    ["success", "warning"].includes(normalizedStatus) ? 100 :
     normalizedStatus === "error" ? 0 : null;
 
   return {
@@ -148,11 +156,12 @@ export function mapSyncErrorToPanel(error: any) {
   const data = error?.response?.data || error?.data || error?.response || {};
   const code = data?.error || data?.code;
   const message = String(data?.message || error?.message || "");
+  const normalized = String(data?.status || code || "").toUpperCase();
   const isRunning =
     error?.response?.status === 409 ||
     error?.status === 409 ||
-    data?.status === "RUNNING" ||
-    code === "SYNC_ALREADY_RUNNING" ||
+    normalized === "RUNNING" ||
+    normalized === "SYNC_ALREADY_RUNNING" ||
     message.includes("SYNC_ALREADY_RUNNING") ||
     message.includes("already running") ||
     message.includes("正在运行");

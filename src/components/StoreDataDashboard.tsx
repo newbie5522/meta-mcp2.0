@@ -433,9 +433,19 @@ setAiReport(reportText || "未返回分析报告");
         limit: 200
       });
 
+      const status = String(result?.status || "").toUpperCase();
       setViewSyncStatus(mapSyncResultToPanel(result));
-      if (String(result?.status || "").toUpperCase() === "RUNNING") {
-        toast.info("店铺同步任务正在运行，请稍后查看进度。", { id: toastId });
+
+      if (status === "RUNNING") {
+        toast.info("已有店铺同步任务正在运行，请稍后刷新查看。", { id: toastId });
+        window.setTimeout(() => fetchStoresData(true), 5000);
+        return;
+      }
+
+      if (status === "NO_NEW_DATA") {
+        toast.info("店铺同步完成，但当前日期范围暂无新的店铺订单数据。", { id: toastId });
+      } else if (status === "PARTIAL_SUCCESS") {
+        toast.warning("店铺同步部分完成，正在刷新已同步数据。", { id: toastId });
       } else {
         toast.success(result.message || "店铺视图同步完成，正在刷新页面数据。", { id: toastId });
       }
@@ -445,9 +455,11 @@ setAiReport(reportText || "未返回分析报告");
       const data = error.data || error.response?.data || error.response;
       setViewSyncStatus(panel);
       if (panel.status === "running") {
-        toast.info("已有同步任务正在运行，请稍后查看进度。", { id: toastId });
+        toast.info("已有店铺同步任务正在运行，请稍后刷新查看。", { id: toastId });
+        window.setTimeout(() => fetchStoresData(true), 5000);
+        return;
       } else {
-        toast.error("同步数据失败: " + (data?.message || data?.details || data?.error || error.message), { id: toastId });
+        toast.error("同步数据失败: " + (panel.message || data?.message || data?.details || data?.error || error.message), { id: toastId });
       }
     } finally {
       setSyncing(false);
@@ -491,6 +503,7 @@ setAiReport(reportText || "未返回分析报告");
       <SyncStatusPanel status={viewSyncStatus} />
 
       <DataViewTraceBar
+        compactScopeLabel="店铺订单口径，按 store_local_date 统计"
         currentStartDate={formattedStartDate}
         currentEndDate={formattedEndDate}
         responseStartDate={appliedDateRange?.startDate}
@@ -502,15 +515,8 @@ setAiReport(reportText || "未返回分析报告");
         status={dataHealth.status}
         level="store"
         queryDebug={(dataHealth as any)?.queryDebug}
-        extra={
-          <>
-            <span>花费：${aggregatedStats.totalSpend.toFixed(2)}</span>
-            <span>展示：-</span>
-            <span>点击：-</span>
-            <span>购买：{aggregatedStats.totalOrders.toLocaleString()}</span>
-          </>
-        }
         source="店铺订单 + 店铺配置"
+        scope="all_stores"
       />
 
       {/* 📊 KPI summary banner */}
@@ -534,7 +540,7 @@ setAiReport(reportText || "未返回分析报告");
 
         <Card className="border-none shadow-[0_1px_3px_rgba(0,0,0,0.06)] bg-white rounded-xl">
           <CardContent className="p-4 flex flex-col justify-between min-h-[96px]">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">店铺抓取订单</span>
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">店铺订单数</span>
             <div className="flex items-center justify-between mt-2">
               <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">
                 {aggregatedStats.totalOrders.toLocaleString()} <span className="text-xs font-normal text-slate-400">单</span>
@@ -546,7 +552,7 @@ setAiReport(reportText || "未返回分析报告");
 
         <Card className="border-none shadow-[0_1px_3px_rgba(0,0,0,0.06)] bg-white rounded-xl">
           <CardContent className="p-4 flex flex-col justify-between min-h-[96px]">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">店铺汇总销售额</span>
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">店铺销售额</span>
             <div className="flex items-center justify-between mt-2">
               <h3 className="text-lg font-extrabold text-emerald-600 tracking-tight">
                 ${aggregatedStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
@@ -558,7 +564,7 @@ setAiReport(reportText || "未返回分析报告");
 
         <Card className="border-none shadow-[0_1px_3px_rgba(0,0,0,0.06)] bg-white rounded-xl">
           <CardContent className="p-4 flex flex-col justify-between min-h-[96px]">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">综合结算客单价</span>
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">平均订单金额</span>
             <div className="flex items-center justify-between mt-2">
               <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">
                 ${aggregatedStats.averageAOV.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -582,7 +588,7 @@ setAiReport(reportText || "未返回分析报告");
 
         <Card className="border-none shadow-[0_1px_3px_rgba(0,0,0,0.06)] bg-white rounded-xl">
           <CardContent className="p-4 flex flex-col justify-between min-h-[96px]">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">真实全局整店 ROAS</span>
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">店铺 ROAS</span>
             <div className="flex items-center justify-between mt-2">
               <h3 className="text-md font-extrabold text-indigo-600 tracking-tight">
                 {aggregatedStats.totalSpend > 0 ? `${aggregatedStats.realGlobalROAS.toFixed(2)}x` : "—"}
