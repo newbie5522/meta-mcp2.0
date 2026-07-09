@@ -24,8 +24,11 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { MetaAccountDisplay } from "./common/MetaAccountDisplay";
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
+import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
+import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 import {
   buildDataViewRequestKey,
+  getSafeLastGoodData,
   isDateRangeMismatch,
   makeLastGoodData
 } from "@/lib/data-view-state";
@@ -155,6 +158,8 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
   const [unmappedExpanded, setUnmappedExpanded] = useState<boolean>(false);
   const [lastGoodData, setLastGoodData] = useState<any | null>(null);
   const [viewNotice, setViewNotice] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState<boolean>(false);
+  const [viewSyncStatus, setViewSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
 
   // Reconciliation state
   const [selectedStoreForRecon, setSelectedStoreForRecon] = useState<StoreMetric | null>(null);
@@ -179,6 +184,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
 
   useEffect(() => {
     setViewNotice(null);
+    setViewSyncStatus({ status: "idle" });
   }, [currentRequestKey]);
 
   // 1. Fetch Store Metrics and Summaries
@@ -193,11 +199,12 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
       });
       
       if (isDateRangeMismatch(response.data, formattedStartDate, formattedEndDate)) {
-        if (lastGoodData?.requestKey === currentRequestKey) {
-          setStores(lastGoodData.stores || []);
-          setUnmappedSummary(lastGoodData.unmappedAccountsSummary || { count: 0, spend: 0, message: "" });
-          setDataHealth(lastGoodData.dataHealth || { status: "EMPTY", message: "" });
-          setAppliedDateRange(lastGoodData.appliedDateRange || null);
+        const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
+        if (safeLastGoodData) {
+          setStores(safeLastGoodData.stores || []);
+          setUnmappedSummary(safeLastGoodData.unmappedAccountsSummary || { count: 0, spend: 0, message: "" });
+          setDataHealth(safeLastGoodData.dataHealth || { status: "EMPTY", message: "" });
+          setAppliedDateRange(safeLastGoodData.appliedDateRange || null);
         } else {
           setStores([]);
           setUnmappedSummary({ count: 0, spend: 0, message: "" });
@@ -234,6 +241,27 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
       }
     } catch (error: any) {
       console.error("Failed to load stores analytics:", error);
+      const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
+      if (safeLastGoodData) {
+        setStores(safeLastGoodData.stores || []);
+        setUnmappedSummary(safeLastGoodData.unmappedAccountsSummary || { count: 0, spend: 0, message: "" });
+        setDataHealth(safeLastGoodData.dataHealth || { status: "EMPTY", message: "" });
+        setAppliedDateRange(safeLastGoodData.appliedDateRange || null);
+        setViewNotice("当前店铺筛选周期请求失败，已保留同一请求下的上次成功数据。");
+      } else {
+        setStores([]);
+        setUnmappedSummary({ count: 0, spend: 0, message: "" });
+        setDataHealth({
+          status: "REQUEST_FAILED",
+          message: "当前店铺筛选周期请求失败，未使用其他日期周期的旧店铺数据。",
+          warnings: ["FETCH_FAILED_FOR_CURRENT_REQUEST"]
+        });
+        setAppliedDateRange({
+          startDate: formattedStartDate,
+          endDate: formattedEndDate
+        });
+        setViewNotice("当前店铺筛选周期请求失败，未展示其他日期周期的旧数据。");
+      }
       toast.error("加载店铺数据失败: " + getApiErrorMessage(error));
     } finally {
       if (!silent) setLoading(false);
@@ -382,6 +410,50 @@ setAiReport(reportText || "未返回分析报告");
   const appliedStartDate = appliedDateRange?.startDate || formattedStartDate;
   const appliedEndDate = appliedDateRange?.endDate || formattedEndDate;
 
+  const handleSyncStoreData = async () => {
+    setSyncing(true);
+    const toastId = toast.loading("正在执行店铺视图同步...");
+    const days = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000) + 1);
+
+    setViewSyncStatus({
+      status: "running",
+      message: "正在执行店铺视图同步...",
+      progressPercent: 15,
+      currentStep: 1,
+      totalSteps: 1,
+      stepLabel: "店铺视图同步"
+    });
+
+    try {
+      const result = await triggerSyncTask({
+        taskType: "sync_view_store_data",
+        startDate: formattedStartDate,
+        endDate: formattedEndDate,
+        days,
+        limit: 200
+      });
+
+      setViewSyncStatus(mapSyncResultToPanel(result));
+      if (String(result?.status || "").toUpperCase() === "RUNNING") {
+        toast.info("店铺同步任务正在运行，请稍后查看进度。", { id: toastId });
+      } else {
+        toast.success(result.message || "店铺视图同步完成，正在刷新页面数据。", { id: toastId });
+      }
+      await fetchStoresData(true);
+    } catch (error: any) {
+      const panel = mapSyncErrorToPanel(error);
+      const data = error.data || error.response?.data || error.response;
+      setViewSyncStatus(panel);
+      if (panel.status === "running") {
+        toast.info("已有同步任务正在运行，请稍后查看进度。", { id: toastId });
+      } else {
+        toast.error("同步数据失败: " + (data?.message || data?.details || data?.error || error.message), { id: toastId });
+      }
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       
@@ -392,17 +464,31 @@ setAiReport(reportText || "未返回分析报告");
           <h3 className="font-bold text-slate-900 truncate">店铺经营数据一览</h3>
           <span className="text-xs text-slate-500">| 当前统计期间：{appliedStartDate} 至 {appliedEndDate}</span>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-9 px-3 border-slate-200 text-slate-700 bg-white hover:bg-slate-50"
-          onClick={() => fetchStoresData()}
-          disabled={loading}
-        >
-          <RefreshCw className={cn("w-4 h-4 mr-2", loading && "animate-spin")} />
-          刷新页面数据
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 px-3 border-slate-200 text-slate-700 bg-white hover:bg-slate-50"
+            onClick={() => fetchStoresData()}
+            disabled={loading || syncing}
+          >
+            <RefreshCw className={cn("w-4 h-4 mr-2", loading && "animate-spin")} />
+            刷新页面数据
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 px-3 border-slate-200 text-slate-700 bg-white hover:bg-slate-50"
+            onClick={handleSyncStoreData}
+            disabled={loading || syncing}
+          >
+            <RefreshCw className={cn("w-4 h-4 mr-2", syncing && "animate-spin")} />
+            同步数据
+          </Button>
+        </div>
       </div>
+
+      <SyncStatusPanel status={viewSyncStatus} />
 
       <DataViewTraceBar
         currentStartDate={formattedStartDate}

@@ -176,6 +176,26 @@ Verification:
 
 This commit is ready for server-side full verification, not final production sign-off.
 
+## R5-ROOT-FIX-CF Date State Completion
+
+### 修复原因
+
+9f23984 已实现 requestKey preserve 和 view sync，但 catch / empty response 分支仍存在直接复用 lastGoodData 的漏口，广告层级同步 UI 仍伪造旧三步状态。
+
+### 修复范围
+
+- data-view-state 新增 getSafeLastGoodData / canUseLastGoodData。
+- 所有数据中心页面 catch / empty / mismatch 分支 requestKey 守护。
+- 广告层级同步前端移除 structureResult / insightsResult 伪造状态。
+- 全站数据中心同步按钮只调用 sync_view_xxx；SyncCenterPage 作为同步工具页保留底层任务入口。
+
+### 验收
+
+- grep set.*lastGoodData 无直接回填。
+- grep sync_meta_structure / sync_meta_insights 在数据中心业务页面无直接调用。
+- npm run lint PASS。
+- npm run build PASS。
+
 ## R5-ROOT-FIX Date State and Atomic Sync
 
 - Added request-key guarded last-good-data preservation through `buildDataViewRequestKey`, `makeLastGoodData`, and the four-argument `shouldPreserveLastGoodData`.

@@ -475,6 +475,7 @@ router.post("/sync/trigger", async (req, res) => {
       allowSameChainRunning: true
     };
 
+    // View task audit strings: sync_view_ad_hierarchy, sync_view_audience, sync_view_creatives, sync_view_account_data, sync_view_store_data, sync_view_products.
     if (taskType === SyncTaskType.SYNC_VIEW_AD_HIERARCHY) {
       const daysVal = days ? parseInt(String(days), 10) : 30;
       const range = boundedDateRange(startDate, endDate, daysVal, 3650);

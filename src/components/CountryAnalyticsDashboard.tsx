@@ -21,6 +21,7 @@ import {
   buildDataViewRequestKey,
   CURRENT_RANGE_NOT_READY_MESSAGE,
   DATE_RANGE_MISMATCH_MESSAGE,
+  getSafeLastGoodData,
   isDateRangeMismatch,
   makeLastGoodData,
   shouldPreserveLastGoodData
@@ -136,30 +137,37 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
       const rows = res.data?.rows || [];
       setResponseDateRange(res.data?.dateRange || res.data?.appliedFilters || null);
       if (isDateRangeMismatch(res.data, startStr, endStr)) {
-        if (lastGoodData?.requestKey !== requestKey) {
+        const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
+        if (!safeLastGoodData) {
           setData(null);
           setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
           return;
         }
-        setData(lastGoodData.data || null);
+        setData(safeLastGoodData.data || null);
         setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
         return;
       }
       if (shouldPreserveLastGoodData(res.data, rows, lastGoodData, requestKey)) {
-        setData(lastGoodData.data || null);
-        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-        return;
+        const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
+        if (safeLastGoodData) {
+          setData(safeLastGoodData.data || null);
+          setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+          return;
+        }
       }
       setData(res.data);
       setLastGoodData(makeLastGoodData(requestKey, res.data));
       setViewNotice(null);
     } catch (err: any) {
       console.error("Failed to load country analytics:", err);
-      if (lastGoodData) {
-        setData(lastGoodData.data || null);
+      const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
+      if (safeLastGoodData) {
+        setData(safeLastGoodData.data || null);
         setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
         setError(null);
       } else {
+        setData(null);
+        setViewNotice("当前国家筛选周期请求失败，未展示其他日期周期的旧数据。");
         setError(err.response?.data?.details || err.message || "Failed to load country analytics data");
       }
     } finally {

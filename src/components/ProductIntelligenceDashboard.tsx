@@ -15,17 +15,23 @@ import {
   ArrowRight,
   ShieldCheck,
   Percent,
-  AlertTriangle
+  AlertTriangle,
+  RefreshCw
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import {
   buildDataViewRequestKey,
   CURRENT_RANGE_NOT_READY_MESSAGE,
   DATE_RANGE_MISMATCH_MESSAGE,
+  getSafeLastGoodData,
   isDateRangeMismatch,
   makeLastGoodData,
   shouldPreserveLastGoodData
 } from "@/lib/data-view-state";
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
+import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
+import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 
 interface ProductIntelligenceRecord {
   id: string;
@@ -66,6 +72,8 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
   const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string; timezone?: string } | null>(null);
   const [dataHealthStatus, setDataHealthStatus] = useState<string>("UNKNOWN");
   const [dataHealth, setDataHealth] = useState<any | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
   const startStrKey = format(startDate, "yyyy-MM-dd");
   const endStrKey = format(endDate, "yyyy-MM-dd");
   const currentRequestKey = buildDataViewRequestKey({
@@ -79,6 +87,7 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
   useEffect(() => {
     setViewNotice(null);
     setResponseDateRange(null);
+    setSyncStatus({ status: "idle" });
   }, [currentRequestKey]);
 
   const fetchProducts = async () => {
@@ -106,19 +115,23 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
       setDataHealthStatus(res.data?.dataHealth?.status || (rows.length > 0 ? "READY" : "EMPTY"));
       setDataHealth(res.data?.dataHealth || null);
       if (isDateRangeMismatch(res.data, startStr, endStr)) {
-        if (lastGoodData?.requestKey !== requestKey) {
+        const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
+        if (!safeLastGoodData) {
           setProducts([]);
           setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
           return;
         }
-        setProducts(lastGoodData.data || []);
+        setProducts(safeLastGoodData.data || []);
         setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
         return;
       }
       if (shouldPreserveLastGoodData(res.data, rows, lastGoodData, requestKey)) {
-        setProducts(lastGoodData.data || []);
-        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-        return;
+        const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
+        if (safeLastGoodData) {
+          setProducts(safeLastGoodData.data || []);
+          setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+          return;
+        }
       }
 
       setProducts(rows);
@@ -126,11 +139,25 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
       setViewNotice(null);
     } catch (err: any) {
       console.error("Failed to load product intelligence:", err);
-      if (lastGoodData) {
-        setProducts(lastGoodData.data || []);
+      const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
+      if (safeLastGoodData) {
+        setProducts(safeLastGoodData.data || []);
         setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
         setError(null);
       } else {
+        setProducts([]);
+        setDataHealthStatus("REQUEST_FAILED");
+        setDataHealth({
+          status: "REQUEST_FAILED",
+          reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
+          message: "当前商品筛选周期请求失败，未使用其他日期周期的旧商品数据。",
+          dateRange: {
+            startDate: startStrKey,
+            endDate: endStrKey,
+            timezone: "America/Los_Angeles"
+          }
+        });
+        setViewNotice("当前商品筛选周期请求失败，未展示其他日期周期的旧数据。");
         setError(err.response?.data?.details || err.message || "Failed to load product intelligence");
       }
     } finally {
@@ -141,6 +168,50 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
   useEffect(() => {
     fetchProducts();
   }, [startDate, endDate]);
+
+  const handleSyncProducts = async () => {
+    setSyncing(true);
+    const toastId = toast.loading("正在执行商品视图同步...");
+    const days = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000) + 1);
+
+    setSyncStatus({
+      status: "running",
+      message: "正在执行商品视图同步...",
+      progressPercent: 15,
+      currentStep: 1,
+      totalSteps: 1,
+      stepLabel: "商品视图同步"
+    });
+
+    try {
+      const result = await triggerSyncTask({
+        taskType: "sync_view_products",
+        startDate: startStrKey,
+        endDate: endStrKey,
+        days,
+        limit: 200
+      });
+
+      setSyncStatus(mapSyncResultToPanel(result));
+      if (String(result?.status || "").toUpperCase() === "RUNNING") {
+        toast.info("商品同步任务正在运行，请稍后查看进度。", { id: toastId });
+      } else {
+        toast.success(result.message || "商品视图同步完成，正在刷新页面数据。", { id: toastId });
+      }
+      await fetchProducts();
+    } catch (error: any) {
+      const panel = mapSyncErrorToPanel(error);
+      const data = error.data || error.response?.data || error.response;
+      setSyncStatus(panel);
+      if (panel.status === "running") {
+        toast.info("已有同步任务正在运行，请稍后查看进度。", { id: toastId });
+      } else {
+        toast.error("同步数据失败: " + (data?.message || data?.details || data?.error || error.message), { id: toastId });
+      }
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const currency = (val: number | null) => {
     if (val === null || val === undefined) return "N/A";
@@ -171,6 +242,26 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
 
   return (
   <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white border border-slate-200/80 shadow-sm">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <PackageSearch className="w-5 h-5 text-blue-500 shrink-0" />
+          <h3 className="font-bold text-slate-900 truncate">商品经营数据一览</h3>
+          <span className="text-xs text-slate-500">| 当前统计期间：{startStrKey} 至 {endStrKey}</span>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-9 px-3 border-slate-200 text-slate-700 bg-white hover:bg-slate-50"
+          onClick={handleSyncProducts}
+          disabled={loading || syncing}
+        >
+          <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
+          同步数据
+        </Button>
+      </div>
+
+      <SyncStatusPanel status={syncStatus} />
+
       <DataViewTraceBar
         currentStartDate={startStrKey}
         currentEndDate={endStrKey}

@@ -32,6 +32,7 @@ import {
   buildDataViewRequestKey,
   CURRENT_RANGE_NOT_READY_MESSAGE,
   DATE_RANGE_MISMATCH_MESSAGE,
+  getSafeLastGoodData,
   isDateRangeMismatch,
   makeLastGoodData,
   shouldPreserveLastGoodData
@@ -165,25 +166,29 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         };
         setResponseDateRange(statePayload.dateRange || null);
         if (isDateRangeMismatch(statePayload, startStr, endStr)) {
-          if (lastGoodData?.requestKey !== requestKey) {
+          const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
+          if (!safeLastGoodData) {
             setData([]);
             setStructureSummary(null);
             setDataHealth(nextHealth);
             setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
             return;
           }
-          setData(lastGoodData.data || []);
-          setStructureSummary(lastGoodData.structureSummary || null);
-          setDataHealth(lastGoodData.dataHealth || null);
+          setData(safeLastGoodData.data || []);
+          setStructureSummary(safeLastGoodData.structureSummary || null);
+          setDataHealth(safeLastGoodData.dataHealth || null);
           setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
           return;
         }
         if (shouldPreserveLastGoodData(statePayload, rows, lastGoodData, requestKey)) {
-          setData(lastGoodData.data || []);
-          setStructureSummary(lastGoodData.structureSummary || null);
-          setDataHealth(lastGoodData.dataHealth || null);
-          setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-          return;
+          const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
+          if (safeLastGoodData) {
+            setData(safeLastGoodData.data || []);
+            setStructureSummary(safeLastGoodData.structureSummary || null);
+            setDataHealth(safeLastGoodData.dataHealth || null);
+            setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+            return;
+          }
         }
         setStructureSummary(structureRes.data || null);
         setDataHealth(nextHealth);
@@ -214,25 +219,29 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
       setResponseDateRange(hierarchyPayload.dateRange || hierarchyPayload.appliedFilters || null);
 
       if (isDateRangeMismatch(hierarchyPayload, startStr, endStr)) {
-        if (lastGoodData?.requestKey !== requestKey) {
+        const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
+        if (!safeLastGoodData) {
           setData([]);
           setStructureSummary(hierarchyPayload);
           setDataHealth(hierarchyPayload.dataHealth || hierarchyPayload.health || null);
           setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
           return;
         }
-        setData(lastGoodData.data || []);
-        setStructureSummary(lastGoodData.structureSummary || null);
-        setDataHealth(lastGoodData.dataHealth || null);
+        setData(safeLastGoodData.data || []);
+        setStructureSummary(safeLastGoodData.structureSummary || null);
+        setDataHealth(safeLastGoodData.dataHealth || null);
         setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
         return;
       }
       if (shouldPreserveLastGoodData(hierarchyPayload, nextData, lastGoodData, requestKey)) {
-        setData(lastGoodData.data || []);
-        setStructureSummary(lastGoodData.structureSummary || null);
-        setDataHealth(lastGoodData.dataHealth || null);
-        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-        return;
+        const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
+        if (safeLastGoodData) {
+          setData(safeLastGoodData.data || []);
+          setStructureSummary(safeLastGoodData.structureSummary || null);
+          setDataHealth(safeLastGoodData.dataHealth || null);
+          setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+          return;
+        }
       }
       setStructureSummary(hierarchyPayload);
       setDataHealth(hierarchyPayload.dataHealth || hierarchyPayload.health || null);
@@ -242,11 +251,26 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
     } catch (e: any) {
       console.error("Failed to fetch ad hierarchy details:", e);
       toast.error("获取层级数据失败: " + (e.response?.data?.error || e.message));
-      if (lastGoodData) {
-        setData(lastGoodData.data || []);
-        setStructureSummary(lastGoodData.structureSummary || null);
-        setDataHealth(lastGoodData.dataHealth || null);
+      const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
+      if (safeLastGoodData) {
+        setData(safeLastGoodData.data || []);
+        setStructureSummary(safeLastGoodData.structureSummary || null);
+        setDataHealth(safeLastGoodData.dataHealth || null);
         setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+      } else {
+        setData([]);
+        setStructureSummary(null);
+        setDataHealth({
+          status: "REQUEST_FAILED",
+          reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
+          message: "当前筛选周期请求失败，未使用其他日期周期的旧数据。",
+          dateRange: {
+            startDate: startStrKey,
+            endDate: endStrKey,
+            timezone: "America/Los_Angeles"
+          }
+        });
+        setViewNotice("当前筛选周期请求失败，未展示其他日期周期的旧数据。");
       }
     } finally {
       setLoading(false);
@@ -466,17 +490,17 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
     setSyncStatus({
       status: "running",
-      message: "正在同步 Meta 账户列表...",
+      message: "正在执行广告层级视图同步...",
       progressPercent: 10,
       currentStep: 1,
-      totalSteps: 3,
-      stepLabel: "账户列表同步：1 / 3",
+      totalSteps: 1,
+      stepLabel: "广告层级视图同步",
       processedAccounts: 0,
       totalAccounts: selectedAccount ? 1 : null
     });
 
     try {
-      const accountsResult = await triggerSyncTask({
+      const result = await triggerSyncTask({
         taskType: "sync_view_ad_hierarchy",
         accountId: selectedAccount || undefined,
         startDate: startStr,
@@ -485,43 +509,13 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         limit: selectedAccount ? undefined : 200
       });
 
-      const structureResult = accountsResult;
+      setSyncStatus(mapSyncResultToPanel(result));
 
-      setSyncStatus({
-        status: "running",
-        message: "广告结构已同步，正在同步当前日期范围广告成效...",
-        chainId: structureResult.chainId || accountsResult.chainId || null,
-        taskIds: [
-          ...(accountsResult.taskIds || []),
-          ...(structureResult.taskIds || [])
-        ],
-        recordsFetched: structureResult.recordsFetched ?? null,
-        recordsSaved: structureResult.recordsSaved ?? null,
-        recordsUpdated: structureResult.recordsUpdated ?? null,
-        targetAccountsCount: structureResult.targetAccountsCount ?? null,
-        failedAccounts: structureResult.failedAccounts || null,
-        progressPercent: 60,
-        currentStep: 2,
-        totalSteps: 3,
-        stepLabel: "广告结构同步：2 / 3",
-        processedAccounts: structureResult.processedAccounts ?? null,
-        totalAccounts: structureResult.totalAccounts ?? structureResult.targetAccountsCount ?? null
-      });
-
-      const insightsResult = accountsResult;
-
-      setSyncStatus(mapSyncResultToPanel({
-        ...insightsResult,
-        taskIds: [
-          ...(accountsResult.taskIds || []),
-          ...(structureResult.taskIds || []),
-          ...(insightsResult.taskIds || [])
-        ],
-        targetAccountsCount: insightsResult.targetAccountsCount ?? structureResult.targetAccountsCount,
-        failedAccounts: insightsResult.failedAccounts || structureResult.failedAccounts || null
-      }));
-
-      toast.success("同步数据任务已完成，正在刷新页面数据。", { id: tId });
+      if (String(result?.status || "").toUpperCase() === "RUNNING") {
+        toast.info("广告层级同步任务正在运行，请稍后查看进度。", { id: tId });
+      } else {
+        toast.success("广告层级视图同步完成，正在刷新页面数据。", { id: tId });
+      }
       await fetchData();
     } catch (err: any) {
       const data = err.data || err.response?.data || err.response;

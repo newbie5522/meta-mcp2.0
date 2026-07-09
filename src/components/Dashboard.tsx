@@ -3,12 +3,10 @@ import { DateFilter } from './DateFilter';
 import { DateRangeType } from '../types';
 import { Filter, Search } from 'lucide-react';
 import axios from 'axios';
-import { toast } from 'sonner';
 import dayjs from 'dayjs';
 import {
   getBusinessDateRange,
-  businessDateStringToSafeDate,
-  safeDateToDateString
+  businessDateStringToSafeDate
 } from "../shared/business-time";
 
 import { OverviewDashboard } from './OverviewDashboard';
@@ -32,18 +30,6 @@ import { ProductDiagnosisPage } from './diagnosis/ProductDiagnosisPage';
 import { DataHealthDiagnosisPage } from './diagnosis/DataHealthDiagnosisPage';
 import { PrescriptionCenterPage } from './prescription/PrescriptionCenterPage';
 import { PrescriptionReviewPage } from './prescription/PrescriptionReviewPage';
-
-function getApiErrorMessage(error: any): string {
-  const data = error?.response?.data;
-  const code = data?.error || data?.code;
-  if (code === "MANUAL_SYNC_DISABLED") {
-    return "该同步任务被安全开关拦截。普通数据同步请使用受限同步入口。";
-  }
-  if (!error?.response) {
-    return `后端服务未连接或请求失败：${error?.message || "network error"}`;
-  }
-  return data?.message || data?.details || data?.error || error?.message || "同步请求失败";
-}
 
 export function StandardPageHeader({ 
   title, 
@@ -93,7 +79,6 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
   const [data, setData] = useState<any[]>([]);
   const [mappings, setMappings] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
 
   // 默认日期只由 getBusinessDateRange("past_30") 决定。
   // /api/data-center/max-date 只能用于数据健康提示，不允许自动覆盖用户筛选日期。
@@ -122,30 +107,6 @@ export function DashboardContainer({ title, tabId }: { title: string, tabId: str
       console.error("fetchData error:", error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleSync = async () => {
-    setSyncing(true);
-    const syncToast = toast.loading("正在同步 Meta 数据...");
-    try {
-      const response = await axios.post("/api/sync/trigger", {
-        taskType: "sync_meta_insights",
-        startDate: safeDateToDateString(startDate),
-        endDate: safeDateToDateString(endDate),
-        days: 30
-      });
-      if (response.data?.status === "NO_NEW_DATA") {
-        toast.warning(response.data.message || "同步完成，但当前日期范围暂无新的广告表现数据。", { id: syncToast });
-      } else {
-        toast.success(response.data?.message || `同步成功: ${response.data?.recordsSaved || response.data?.count || 0} 条记录`, { id: syncToast });
-      }
-      fetchData();
-    } catch (error: any) {
-      toast.error(getApiErrorMessage(error), { id: syncToast });
-      return;
-    } finally {
-      setSyncing(false);
     }
   };
 

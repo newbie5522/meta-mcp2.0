@@ -34,6 +34,7 @@ import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel"
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
 import {
   buildDataViewRequestKey,
+  getSafeLastGoodData,
   isDateRangeMismatch,
   makeLastGoodData
 } from "@/lib/data-view-state";
@@ -55,6 +56,22 @@ function getApiErrorMessage(error: any): string {
     return `后端服务未连接或请求失败：${error?.message || "network error"}`;
   }
   return data?.message || data?.details || data?.error || error?.message || "请求失败";
+}
+
+function makeEmptyAccountsPerformanceData(status: string, message: string, dataHealth: any = null) {
+  return {
+    metaInsights: [],
+    accounts: [],
+    filters: { stores: [], adAccounts: [], mappings: [] },
+    health: {
+      status,
+      missingReason: message,
+      lastSyncTime: null,
+      lastSyncTimeStr: "N/A",
+      isSyncActive: false
+    },
+    dataHealth
+  };
 }
 
 export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboardProps) {
@@ -120,16 +137,15 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       });
 
       if (isDateRangeMismatch(response.data, startStr, endStr)) {
-        if (lastGoodData?.requestKey === currentRequestKey) {
-          setData(lastGoodData.data);
+        const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
+        if (safeLastGoodData) {
+          setData(safeLastGoodData.data);
         } else {
-          setData({
-            metaInsights: [],
-            accounts: [],
-            filters: { stores: [], adAccounts: [], mappings: [] },
-            health: { status: "DATE_RANGE_MISMATCH", missingReason: "Response date range mismatch", lastSyncTime: null, lastSyncTimeStr: "N/A", isSyncActive: false },
-            dataHealth: response.data?.dataHealth || null
-          });
+          setData(makeEmptyAccountsPerformanceData(
+            "DATE_RANGE_MISMATCH",
+            "接口返回周期与当前筛选周期不一致，未使用其他日期周期的旧账户数据。",
+            response.data?.dataHealth || null
+          ));
         }
         return;
       }
@@ -139,8 +155,24 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
     } catch (error: any) {
       console.error("Load Accounts Performance error:", error);
 
-      if (lastGoodData) {
-        setData(lastGoodData.data || lastGoodData);
+      const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
+      if (safeLastGoodData) {
+        setData(safeLastGoodData.data || safeLastGoodData);
+      } else {
+        setData(makeEmptyAccountsPerformanceData(
+          "REQUEST_FAILED",
+          "当前账户筛选周期请求失败，未使用其他日期周期的旧账户数据。",
+          {
+            status: "REQUEST_FAILED",
+            reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
+            message: "当前账户筛选周期请求失败，未使用其他日期周期的旧账户数据。",
+            dateRange: {
+              startDate: startStrKey,
+              endDate: endStrKey,
+              timezone: "America/Los_Angeles"
+            }
+          }
+        ));
       }
 
       if (!silent) {
@@ -246,11 +278,11 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
 
     setSyncStatus({
       status: "running",
-      message: "正在同步 Meta 账户列表..."
+      message: "正在执行账户表现视图同步..."
     });
 
     try {
-      const accountsResult = await triggerSyncTask({
+      const result = await triggerSyncTask({
         taskType: "sync_view_account_data",
         startDate: startStr,
         endDate: endStr,
@@ -259,52 +291,11 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
         limit: 200
       });
 
-      setSyncStatus({
-        status: "running",
-        message: "账户列表已同步，正在拉取当前日期范围广告表现...",
-        chainId: accountsResult.chainId || null,
-        taskIds: accountsResult.taskIds || null,
-        recordsFetched: accountsResult.recordsFetched ?? null,
-        recordsSaved: accountsResult.recordsSaved ?? null,
-        recordsUpdated: accountsResult.recordsUpdated ?? null,
-        targetAccountsCount: accountsResult.targetAccountsCount ?? null,
-        failedAccounts: accountsResult.failedAccounts || null
-      });
-
-      const insightsResult = accountsResult;
-
-      setSyncStatus({
-        status: "running",
-        message: "Meta 广告表现已同步，正在刷新 DataCenter 账本...",
-        chainId: insightsResult.chainId || null,
-        taskIds: insightsResult.taskIds || null,
-        recordsFetched: insightsResult.recordsFetched ?? null,
-        recordsSaved: insightsResult.recordsSaved ?? null,
-        recordsUpdated: insightsResult.recordsUpdated ?? null,
-        targetAccountsCount: insightsResult.targetAccountsCount ?? null,
-        failedAccounts: insightsResult.failedAccounts || null
-      });
-
-      const ledgerResult = accountsResult;
-
-      const panelResult = mapSyncResultToPanel({
-        ...ledgerResult,
-        chainId: ledgerResult.chainId || insightsResult.chainId || accountsResult.chainId,
-        taskIds: [
-          ...(accountsResult.taskIds || []),
-          ...(insightsResult.taskIds || []),
-          ...(ledgerResult.taskIds || [])
-        ],
-        recordsFetched: ledgerResult.recordsFetched ?? insightsResult.recordsFetched,
-        recordsSaved: ledgerResult.recordsSaved ?? insightsResult.recordsSaved,
-        recordsUpdated: ledgerResult.recordsUpdated ?? insightsResult.recordsUpdated,
-        targetAccountsCount: insightsResult.targetAccountsCount ?? accountsResult.targetAccountsCount,
-        failedAccounts: insightsResult.failedAccounts || ledgerResult.failedAccounts || null
-      });
+      const panelResult = mapSyncResultToPanel(result);
       setSyncStatus(panelResult);
 
       toast.success(formatSyncReceipt({
-        ...ledgerResult,
+        ...result,
         recordsFetched: panelResult.recordsFetched ?? undefined,
         recordsSaved: panelResult.recordsSaved ?? undefined,
         recordsUpdated: panelResult.recordsUpdated ?? undefined,

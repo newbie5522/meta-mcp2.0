@@ -22,6 +22,7 @@ import {
   buildDataViewRequestKey,
   CURRENT_RANGE_NOT_READY_MESSAGE,
   DATE_RANGE_MISMATCH_MESSAGE,
+  getSafeLastGoodData,
   isDateRangeMismatch,
   makeLastGoodData,
   shouldPreserveLastGoodData
@@ -125,25 +126,29 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         const requestKey = currentRequestKey;
         setResponseDateRange(res.data.dateRange || res.data.appliedFilters || null);
         if (isDateRangeMismatch(res.data, startStr, endStr)) {
-          if (lastGoodData?.requestKey !== requestKey) {
+          const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
+          if (!safeLastGoodData) {
             setData([]);
             setSummary(null);
             setDataHealth(res.data.dataHealth || null);
             setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
             return;
           }
-          setData(lastGoodData.rows || []);
-          setSummary(lastGoodData.summary || null);
-          setDataHealth(lastGoodData.dataHealth || null);
+          setData(safeLastGoodData.rows || []);
+          setSummary(safeLastGoodData.summary || null);
+          setDataHealth(safeLastGoodData.dataHealth || null);
           setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
           return;
         }
         if (shouldPreserveLastGoodData(res.data, rows, lastGoodData, requestKey)) {
-          setData(lastGoodData.rows || []);
-          setSummary(lastGoodData.summary || null);
-          setDataHealth(lastGoodData.dataHealth || null);
-          setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-          return;
+          const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
+          if (safeLastGoodData) {
+            setData(safeLastGoodData.rows || []);
+            setSummary(safeLastGoodData.summary || null);
+            setDataHealth(safeLastGoodData.dataHealth || null);
+            setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+            return;
+          }
         }
         setData(rows);
         setSummary(res.data.summary || null);
@@ -155,10 +160,27 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         }));
         setViewNotice(null);
       } else {
-        setData(lastGoodData?.rows || []);
-        setSummary(lastGoodData?.summary || null);
-        setDataHealth(lastGoodData?.dataHealth || null);
-        setViewNotice(lastGoodData ? CURRENT_RANGE_NOT_READY_MESSAGE : null);
+        const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
+        if (safeLastGoodData) {
+          setData(safeLastGoodData.rows || []);
+          setSummary(safeLastGoodData.summary || null);
+          setDataHealth(safeLastGoodData.dataHealth || null);
+          setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+        } else {
+          setData([]);
+          setSummary(null);
+          setDataHealth({
+            status: "EMPTY_RESPONSE",
+            reason: "NO_PAYLOAD_FOR_CURRENT_REQUEST",
+            message: "当前受众筛选周期没有返回有效数据，未使用其他日期周期的旧数据。",
+            dateRange: {
+              startDate: startStrKey,
+              endDate: endStrKey,
+              timezone: "America/Los_Angeles"
+            }
+          });
+          setViewNotice("当前受众筛选周期没有返回有效数据。");
+        }
       }
 
       // If active tab is country, load order countries list from database
@@ -195,11 +217,26 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
     } catch (err: any) {
       console.error("Failed to fetch audience insights", err);
-      if (lastGoodData) {
-        setData(lastGoodData.rows || []);
-        setSummary(lastGoodData.summary || null);
-        setDataHealth(lastGoodData.dataHealth || null);
+      const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
+      if (safeLastGoodData) {
+        setData(safeLastGoodData.rows || []);
+        setSummary(safeLastGoodData.summary || null);
+        setDataHealth(safeLastGoodData.dataHealth || null);
         setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+      } else {
+        setData([]);
+        setSummary(null);
+        setDataHealth({
+          status: "REQUEST_FAILED",
+          reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
+          message: "当前受众筛选周期请求失败，未使用其他日期周期的旧数据。",
+          dateRange: {
+            startDate: startStrKey,
+            endDate: endStrKey,
+            timezone: "America/Los_Angeles"
+          }
+        });
+        setViewNotice("当前受众筛选周期请求失败，未展示其他日期周期的旧数据。");
       }
       toast.error("加载受众成效分析发生错误");
     } finally {

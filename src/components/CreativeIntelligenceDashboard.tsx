@@ -55,6 +55,7 @@ import {
   buildDataViewRequestKey,
   CURRENT_RANGE_NOT_READY_MESSAGE,
   DATE_RANGE_MISMATCH_MESSAGE,
+  getSafeLastGoodData,
   isDateRangeMismatch,
   makeLastGoodData,
   shouldPreserveLastGoodData
@@ -370,26 +371,30 @@ export function CreativeIntelligenceDashboard({
       const requestKey = currentRequestKey;
 
       if (isDateRangeMismatch(resGrouped.data, startStr, endStr)) {
-        if (lastGoodData?.requestKey !== requestKey) {
+        const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
+        if (!safeLastGoodData) {
           setCreatives([]);
           setDiagnostics(resGrouped.data?.diagnostics || null);
           setCreativeDataHealth(resGrouped.data?.dataHealth || null);
           setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
           return;
         }
-        setCreatives(lastGoodData.creatives || []);
-        setDiagnostics(lastGoodData.diagnostics || null);
-        setCreativeDataHealth(lastGoodData.dataHealth || null);
+        setCreatives(safeLastGoodData.creatives || []);
+        setDiagnostics(safeLastGoodData.diagnostics || null);
+        setCreativeDataHealth(safeLastGoodData.dataHealth || null);
         setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
         return;
       }
 
       if (shouldPreserveLastGoodData(resGrouped.data, formattedGrouped, lastGoodData, requestKey)) {
-        setCreatives(lastGoodData.creatives || []);
-        setDiagnostics(lastGoodData.diagnostics || null);
-        setCreativeDataHealth(lastGoodData.dataHealth || null);
-        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-        return;
+        const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
+        if (safeLastGoodData) {
+          setCreatives(safeLastGoodData.creatives || []);
+          setDiagnostics(safeLastGoodData.diagnostics || null);
+          setCreativeDataHealth(safeLastGoodData.dataHealth || null);
+          setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+          return;
+        }
       }
 
       setCreatives(formattedGrouped);
@@ -412,11 +417,26 @@ export function CreativeIntelligenceDashboard({
       }
     } catch (err: any) {
       toast.error("加载素材分析数据失败");
-      if (lastGoodData) {
-        setCreatives(lastGoodData.creatives || []);
-        setDiagnostics(lastGoodData.diagnostics || null);
-        setCreativeDataHealth(lastGoodData.dataHealth || null);
+      const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
+      if (safeLastGoodData) {
+        setCreatives(safeLastGoodData.creatives || []);
+        setDiagnostics(safeLastGoodData.diagnostics || null);
+        setCreativeDataHealth(safeLastGoodData.dataHealth || null);
         setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+      } else {
+        setCreatives([]);
+        setDiagnostics(null);
+        setCreativeDataHealth({
+          status: "REQUEST_FAILED",
+          reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
+          message: "当前素材筛选周期请求失败，未使用其他日期周期的旧素材数据。",
+          dateRange: {
+            startDate: startStrKey,
+            endDate: endStrKey,
+            timezone: "America/Los_Angeles"
+          }
+        });
+        setViewNotice("当前素材筛选周期请求失败，未展示其他日期周期的旧数据。");
       }
     } finally {
       setLoading(false);

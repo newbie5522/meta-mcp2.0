@@ -68,6 +68,18 @@ export function makeLastGoodData(
   };
 }
 
+export function canUseLastGoodData(lastGoodData: any, currentRequestKey: string) {
+  return Boolean(
+    lastGoodData &&
+      currentRequestKey &&
+      lastGoodData.requestKey === currentRequestKey
+  );
+}
+
+export function getSafeLastGoodData(lastGoodData: any, currentRequestKey: string) {
+  return canUseLastGoodData(lastGoodData, currentRequestKey) ? lastGoodData : null;
+}
+
 export function responseDateRangeMatches(payload: any, startDate: string, endDate: string) {
   const responseStart =
     payload?.appliedFilters?.startDate ||
