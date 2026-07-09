@@ -29,9 +29,11 @@ import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel"
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 import {
+  buildDataViewRequestKey,
   CURRENT_RANGE_NOT_READY_MESSAGE,
   DATE_RANGE_MISMATCH_MESSAGE,
-  responseDateRangeMatches,
+  isDateRangeMismatch,
+  makeLastGoodData,
   shouldPreserveLastGoodData
 } from "@/lib/data-view-state";
 
@@ -81,6 +83,24 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
   const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string; timezone?: string } | null>(null);
   const startStrKey = format(startDate, "yyyy-MM-dd");
   const endStrKey = format(endDate, "yyyy-MM-dd");
+  const currentRequestKey = buildDataViewRequestKey({
+    page: "ad-hierarchy",
+    startDate: startStrKey,
+    endDate: endStrKey,
+    level: viewLevel,
+    accountId: selectedAccount || "all",
+    campaignId: selectedCampaignId || "all",
+    adsetId: selectedAdSetId || "all",
+    includeZeroSpend,
+    search: searchQuery,
+    sort: sortConfig ? `${sortConfig.key}:${sortConfig.direction}` : "none"
+  });
+
+  useEffect(() => {
+    setViewNotice(null);
+    setResponseDateRange(null);
+    setSyncStatus({ status: "idle" });
+  }, [currentRequestKey]);
 
   // Manage initial load with URL parameters (deep linkage from Account Performance page or Creative Insights tab)
   useEffect(() => {
@@ -114,7 +134,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
     try {
       const startStr = startStrKey;
       const endStr = endStrKey;
-      const requestKey = `${startStr}_${endStr}_${viewLevel}_${selectedAccount}_${selectedCampaignId}_${selectedAdSetId}_${includeZeroSpend}`;
+      const requestKey = currentRequestKey;
       const structureParams: any = {
         selectedAccount: selectedAccount || undefined,
         startDate: startStr,
@@ -137,21 +157,28 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
         const rows = accountsRes.data?.success ? (accountsRes.data.data || []) : [];
         const nextHealth = accountsRes.data?.dataHealth || structureRes.data?.health || null;
-        const payloadForState = {
+        const statePayload = {
           ...(accountsRes.data || {}),
           health: nextHealth,
           appliedFilters: accountsRes.data?.appliedFilters || structureRes.data?.appliedFilters,
           dateRange: accountsRes.data?.dateRange || structureRes.data?.dateRange
         };
-        setResponseDateRange(payloadForState.dateRange || null);
-        if (!responseDateRangeMatches(payloadForState, startStr, endStr) && lastGoodData) {
+        setResponseDateRange(statePayload.dateRange || null);
+        if (isDateRangeMismatch(statePayload, startStr, endStr)) {
+          if (lastGoodData?.requestKey !== requestKey) {
+            setData([]);
+            setStructureSummary(null);
+            setDataHealth(nextHealth);
+            setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
+            return;
+          }
           setData(lastGoodData.data || []);
           setStructureSummary(lastGoodData.structureSummary || null);
           setDataHealth(lastGoodData.dataHealth || null);
           setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
           return;
         }
-        if (lastGoodData?.requestKey === requestKey && shouldPreserveLastGoodData(payloadForState, rows, lastGoodData)) {
+        if (shouldPreserveLastGoodData(statePayload, rows, lastGoodData, requestKey)) {
           setData(lastGoodData.data || []);
           setStructureSummary(lastGoodData.structureSummary || null);
           setDataHealth(lastGoodData.dataHealth || null);
@@ -161,7 +188,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         setStructureSummary(structureRes.data || null);
         setDataHealth(nextHealth);
         setData(rows);
-        setLastGoodData({ requestKey, data: rows, structureSummary: structureRes.data || null, dataHealth: nextHealth });
+        setLastGoodData(makeLastGoodData(requestKey, rows, { structureSummary: structureRes.data || null, dataHealth: nextHealth }));
         setViewNotice(null);
         return;
       }
@@ -182,28 +209,35 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         _requestKey: requestKey
       };
       const res = await axios.get(hierarchyEndpoint, { params: hierarchyParams });
-      const payload = res.data || {};
-      let nextData: any[] = payload.data || [];
-      setResponseDateRange(payload.dateRange || payload.appliedFilters || null);
+      const hierarchyPayload = res.data || {};
+      let nextData: any[] = hierarchyPayload.data || [];
+      setResponseDateRange(hierarchyPayload.dateRange || hierarchyPayload.appliedFilters || null);
 
-      if (!responseDateRangeMatches(payload, startStr, endStr) && lastGoodData) {
+      if (isDateRangeMismatch(hierarchyPayload, startStr, endStr)) {
+        if (lastGoodData?.requestKey !== requestKey) {
+          setData([]);
+          setStructureSummary(hierarchyPayload);
+          setDataHealth(hierarchyPayload.dataHealth || hierarchyPayload.health || null);
+          setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
+          return;
+        }
         setData(lastGoodData.data || []);
         setStructureSummary(lastGoodData.structureSummary || null);
         setDataHealth(lastGoodData.dataHealth || null);
         setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
         return;
       }
-      if (lastGoodData?.requestKey === requestKey && shouldPreserveLastGoodData(payload, nextData, lastGoodData)) {
+      if (shouldPreserveLastGoodData(hierarchyPayload, nextData, lastGoodData, requestKey)) {
         setData(lastGoodData.data || []);
         setStructureSummary(lastGoodData.structureSummary || null);
         setDataHealth(lastGoodData.dataHealth || null);
         setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
         return;
       }
-      setStructureSummary(payload);
-      setDataHealth(payload.dataHealth || payload.health || null);
+      setStructureSummary(hierarchyPayload);
+      setDataHealth(hierarchyPayload.dataHealth || hierarchyPayload.health || null);
       setData(nextData);
-      setLastGoodData({ requestKey, data: nextData, structureSummary: payload, dataHealth: payload.dataHealth || payload.health || null });
+      setLastGoodData(makeLastGoodData(requestKey, nextData, { structureSummary: hierarchyPayload, dataHealth: hierarchyPayload.dataHealth || hierarchyPayload.health || null }));
       setViewNotice(null);
     } catch (e: any) {
       console.error("Failed to fetch ad hierarchy details:", e);
@@ -443,14 +477,15 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
     try {
       const accountsResult = await triggerSyncTask({
-        taskType: "sync_meta_accounts"
-      });
-
-      const structureResult = await triggerSyncTask({
-        taskType: "sync_meta_structure",
+        taskType: "sync_view_ad_hierarchy",
         accountId: selectedAccount || undefined,
+        startDate: startStr,
+        endDate: endStr,
+        days,
         limit: selectedAccount ? undefined : 200
       });
+
+      const structureResult = accountsResult;
 
       setSyncStatus({
         status: "running",
@@ -473,14 +508,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         totalAccounts: structureResult.totalAccounts ?? structureResult.targetAccountsCount ?? null
       });
 
-      const insightsResult = await triggerSyncTask({
-        taskType: "sync_meta_insights",
-        accountId: selectedAccount || undefined,
-        startDate: startStr,
-        endDate: endStr,
-        days,
-        limit: selectedAccount ? undefined : 200
-      });
+      const insightsResult = accountsResult;
 
       setSyncStatus(mapSyncResultToPanel({
         ...insightsResult,
@@ -698,6 +726,16 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         structureRows={dataHealth?.structureRows}
         status={dataHealth?.status || structureSummary?.health?.status || "UNKNOWN"}
         level={viewLevel}
+        queryDebug={dataHealth?.queryDebug || structureSummary?.dataHealth?.queryDebug || structureSummary?.health?.queryDebug}
+        extra={
+          <>
+            <span>花费：${totalSpend.toFixed(2)}</span>
+            <span>展示：{totalImpressions.toLocaleString()}</span>
+            <span>点击：{totalClicks.toLocaleString()}</span>
+            <span>购买：{totalPurchases.toLocaleString()}</span>
+            <span>说明：同一层级行数可能不变，请以指标和事实行数判断日期差异。</span>
+          </>
+        }
         source="广告层级结构 + 广告成效数据"
       />
 

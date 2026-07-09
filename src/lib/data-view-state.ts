@@ -10,10 +10,27 @@ export const DATA_VIEW_PRESERVE_STATUSES = new Set([
 ]);
 
 export const DATE_RANGE_MISMATCH_MESSAGE =
-  "返回数据日期范围与当前筛选不一致，已保留上次成功数据。";
+  "接口返回周期与当前筛选周期不一致，已保留同一请求下的上次成功数据。";
 
 export const CURRENT_RANGE_NOT_READY_MESSAGE =
-  "当前周期数据未就绪，仍展示上次成功数据。";
+  "当前请求暂无可展示的新数据，已保留同一请求下的上次成功数据。";
+
+type RequestKeyParts = Record<string, unknown>;
+
+function normalizeRequestKeyValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "all";
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(normalizeRequestKeyValue).join(",");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+export function buildDataViewRequestKey(parts: RequestKeyParts) {
+  return Object.keys(parts)
+    .sort()
+    .map((key) => `${key}:${normalizeRequestKeyValue(parts[key])}`)
+    .join("|");
+}
 
 export function getPayloadStatus(payload: any) {
   return String(
@@ -24,9 +41,31 @@ export function getPayloadStatus(payload: any) {
   ).toUpperCase();
 }
 
-export function shouldPreserveLastGoodData(payload: any, rows: any[], lastGoodData: any) {
+export function shouldPreserveLastGoodData(
+  payload: any,
+  rows: any[],
+  lastGoodData: any,
+  currentRequestKey: string
+) {
   const status = getPayloadStatus(payload);
-  return Boolean(lastGoodData && rows.length === 0 && DATA_VIEW_PRESERVE_STATUSES.has(status));
+  return Boolean(
+    lastGoodData &&
+      lastGoodData.requestKey === currentRequestKey &&
+      rows.length === 0 &&
+      DATA_VIEW_PRESERVE_STATUSES.has(status)
+  );
+}
+
+export function makeLastGoodData(
+  requestKey: string,
+  data: any,
+  meta: Record<string, unknown> = {}
+) {
+  return {
+    requestKey,
+    data,
+    ...meta
+  };
 }
 
 export function responseDateRangeMatches(payload: any, startDate: string, endDate: string) {
@@ -45,4 +84,8 @@ export function responseDateRangeMatches(payload: any, startDate: string, endDat
 
   if (!responseStart || !responseEnd) return true;
   return String(responseStart) === startDate && String(responseEnd) === endDate;
+}
+
+export function isDateRangeMismatch(payload: any, startDate: string, endDate: string) {
+  return !responseDateRangeMatches(payload, startDate, endDate);
 }

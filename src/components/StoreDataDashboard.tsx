@@ -24,6 +24,11 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { MetaAccountDisplay } from "./common/MetaAccountDisplay";
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
+import {
+  buildDataViewRequestKey,
+  isDateRangeMismatch,
+  makeLastGoodData
+} from "@/lib/data-view-state";
 
 // Types matching API structure
 interface StoreMetric {
@@ -148,6 +153,8 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
   const [sortField, setSortField] = useState<SortField>("totalSales");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [unmappedExpanded, setUnmappedExpanded] = useState<boolean>(false);
+  const [lastGoodData, setLastGoodData] = useState<any | null>(null);
+  const [viewNotice, setViewNotice] = useState<string | null>(null);
 
   // Reconciliation state
   const [selectedStoreForRecon, setSelectedStoreForRecon] = useState<StoreMetric | null>(null);
@@ -161,6 +168,18 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
 
   const formattedStartDate = format(startDate, "yyyy-MM-dd");
   const formattedEndDate = format(endDate, "yyyy-MM-dd");
+  const currentRequestKey = buildDataViewRequestKey({
+    page: "stores",
+    startDate: formattedStartDate,
+    endDate: formattedEndDate,
+    search: searchTerm,
+    sort: `${sortField}:${sortOrder}`,
+    scope: "all_stores"
+  });
+
+  useEffect(() => {
+    setViewNotice(null);
+  }, [currentRequestKey]);
 
   // 1. Fetch Store Metrics and Summaries
   const fetchStoresData = async (silent = false) => {
@@ -173,6 +192,21 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
         }
       });
       
+      if (isDateRangeMismatch(response.data, formattedStartDate, formattedEndDate)) {
+        if (lastGoodData?.requestKey === currentRequestKey) {
+          setStores(lastGoodData.stores || []);
+          setUnmappedSummary(lastGoodData.unmappedAccountsSummary || { count: 0, spend: 0, message: "" });
+          setDataHealth(lastGoodData.dataHealth || { status: "EMPTY", message: "" });
+          setAppliedDateRange(lastGoodData.appliedDateRange || null);
+        } else {
+          setStores([]);
+          setUnmappedSummary({ count: 0, spend: 0, message: "" });
+          setDataHealth(response.data?.dataHealth || { status: "DATE_RANGE_MISMATCH", message: "Response date range mismatch" });
+        }
+        setViewNotice("接口返回周期与当前筛选周期不一致，未使用跨周期旧数据。");
+        return;
+      }
+
       const { stores: fetchedStores, unmappedAccountsSummary, dataHealth: fetchedHealth } = response.data;
       setStores(fetchedStores || []);
       setUnmappedSummary(unmappedAccountsSummary || { count: 0, spend: 0, message: "" });
@@ -181,6 +215,15 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
         startDate: formattedStartDate,
         endDate: formattedEndDate
       });
+      setLastGoodData(makeLastGoodData(currentRequestKey, fetchedStores || [], {
+        stores: fetchedStores || [],
+        unmappedAccountsSummary: unmappedAccountsSummary || { count: 0, spend: 0, message: "" },
+        dataHealth: fetchedHealth || { status: "EMPTY", message: "" },
+        appliedDateRange: response.data.appliedFilters || response.data.dateRange || {
+          startDate: formattedStartDate,
+          endDate: formattedEndDate
+        }
+      }));
 
       // Keep reconciliation in-sync if one is selected
       if (selectedStoreForRecon) {
@@ -372,10 +415,25 @@ setAiReport(reportText || "未返回分析报告");
         structureRows={stores.length}
         status={dataHealth.status}
         level="store"
+        queryDebug={(dataHealth as any)?.queryDebug}
+        extra={
+          <>
+            <span>花费：${aggregatedStats.totalSpend.toFixed(2)}</span>
+            <span>展示：-</span>
+            <span>点击：-</span>
+            <span>购买：{aggregatedStats.totalOrders.toLocaleString()}</span>
+          </>
+        }
         source="店铺订单 + 店铺配置"
       />
 
       {/* 📊 KPI summary banner */}
+      {viewNotice && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          {viewNotice}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         
         <Card className="border-none shadow-[0_1px_3px_rgba(0,0,0,0.06)] bg-white rounded-xl">

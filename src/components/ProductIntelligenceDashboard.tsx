@@ -18,9 +18,11 @@ import {
   AlertTriangle
 } from "lucide-react";
 import {
+  buildDataViewRequestKey,
   CURRENT_RANGE_NOT_READY_MESSAGE,
   DATE_RANGE_MISMATCH_MESSAGE,
-  responseDateRangeMatches,
+  isDateRangeMismatch,
+  makeLastGoodData,
   shouldPreserveLastGoodData
 } from "@/lib/data-view-state";
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
@@ -59,10 +61,25 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<ProductIntelligenceRecord | null>(null);
-  const [lastGoodData, setLastGoodData] = useState<ProductIntelligenceRecord[] | null>(null);
+  const [lastGoodData, setLastGoodData] = useState<any | null>(null);
   const [viewNotice, setViewNotice] = useState<string | null>(null);
   const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string; timezone?: string } | null>(null);
   const [dataHealthStatus, setDataHealthStatus] = useState<string>("UNKNOWN");
+  const [dataHealth, setDataHealth] = useState<any | null>(null);
+  const startStrKey = format(startDate, "yyyy-MM-dd");
+  const endStrKey = format(endDate, "yyyy-MM-dd");
+  const currentRequestKey = buildDataViewRequestKey({
+    page: "products",
+    startDate: startStrKey,
+    endDate: endStrKey,
+    scope: "all_stores",
+    includeZeroSpend: true
+  });
+
+  useEffect(() => {
+    setViewNotice(null);
+    setResponseDateRange(null);
+  }, [currentRequestKey]);
 
   const fetchProducts = async () => {
     setLoading(true);
@@ -70,8 +87,8 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
     try {
       const res = await axios.get("/api/data-center/products", {
         params: {
-          startDate: format(startDate, "yyyy-MM-dd"),
-          endDate: format(endDate, "yyyy-MM-dd")
+          startDate: startStrKey,
+          endDate: endStrKey
         }
       });
      const rows = Array.isArray(res.data?.data)
@@ -82,28 +99,35 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
       ? res.data
       : [];
 
-      const startStr = format(startDate, "yyyy-MM-dd");
-      const endStr = format(endDate, "yyyy-MM-dd");
+      const startStr = startStrKey;
+      const endStr = endStrKey;
+      const requestKey = currentRequestKey;
       setResponseDateRange(res.data?.dateRange || res.data?.appliedFilters || null);
       setDataHealthStatus(res.data?.dataHealth?.status || (rows.length > 0 ? "READY" : "EMPTY"));
-      if (!responseDateRangeMatches(res.data, startStr, endStr) && lastGoodData) {
-        setProducts(lastGoodData);
+      setDataHealth(res.data?.dataHealth || null);
+      if (isDateRangeMismatch(res.data, startStr, endStr)) {
+        if (lastGoodData?.requestKey !== requestKey) {
+          setProducts([]);
+          setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
+          return;
+        }
+        setProducts(lastGoodData.data || []);
         setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
         return;
       }
-      if (shouldPreserveLastGoodData(res.data, rows, lastGoodData)) {
-        setProducts(lastGoodData);
+      if (shouldPreserveLastGoodData(res.data, rows, lastGoodData, requestKey)) {
+        setProducts(lastGoodData.data || []);
         setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
         return;
       }
 
       setProducts(rows);
-      setLastGoodData(rows);
+      setLastGoodData(makeLastGoodData(requestKey, rows, { dataHealth: res.data?.dataHealth || null }));
       setViewNotice(null);
     } catch (err: any) {
       console.error("Failed to load product intelligence:", err);
       if (lastGoodData) {
-        setProducts(lastGoodData);
+        setProducts(lastGoodData.data || []);
         setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
         setError(null);
       } else {
@@ -148,13 +172,24 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
   return (
   <div className="space-y-6">
       <DataViewTraceBar
-        currentStartDate={format(startDate, "yyyy-MM-dd")}
-        currentEndDate={format(endDate, "yyyy-MM-dd")}
+        currentStartDate={startStrKey}
+        currentEndDate={endStrKey}
         responseStartDate={responseDateRange?.startDate}
         responseEndDate={responseDateRange?.endDate}
         timezone={responseDateRange?.timezone || "America/Los_Angeles"}
         rowCount={products.length}
         status={dataHealthStatus}
+        factRows={dataHealth?.factRows}
+        structureRows={dataHealth?.structureRows}
+        queryDebug={dataHealth?.queryDebug}
+        extra={
+          <>
+            <span>花费：-</span>
+            <span>展示：-</span>
+            <span>点击：-</span>
+            <span>购买：{totalOrders.toLocaleString()}</span>
+          </>
+        }
         source="Order"
       />
       {viewNotice && (

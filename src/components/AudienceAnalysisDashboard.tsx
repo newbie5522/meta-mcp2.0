@@ -19,9 +19,11 @@ import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel"
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 import {
+  buildDataViewRequestKey,
   CURRENT_RANGE_NOT_READY_MESSAGE,
   DATE_RANGE_MISMATCH_MESSAGE,
-  responseDateRangeMatches,
+  isDateRangeMismatch,
+  makeLastGoodData,
   shouldPreserveLastGoodData
 } from "@/lib/data-view-state";
 
@@ -56,6 +58,25 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
   // Local/Backend Sorting
   const [sortBy, setSortBy] = useState<string>("spend");
+  const startStrKey = format(startDate, "yyyy-MM-dd");
+  const endStrKey = format(endDate, "yyyy-MM-dd");
+  const currentRequestKey = buildDataViewRequestKey({
+    page: "audience",
+    startDate: startStrKey,
+    endDate: endStrKey,
+    dimension: activeTab,
+    storeId: selectedStore,
+    accountId: selectedAccount,
+    includeZeroSpend,
+    minSpend: minSpend || "all",
+    sort: sortBy
+  });
+
+  useEffect(() => {
+    setViewNotice(null);
+    setResponseDateRange(null);
+    setSyncStatus({ status: "idle" });
+  }, [currentRequestKey]);
 
   // Fetch Filters (Stores and Accounts) from central endpoint
   useEffect(() => {
@@ -101,15 +122,23 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       
       if (res.data) {
         const rows = res.data.rows || [];
+        const requestKey = currentRequestKey;
         setResponseDateRange(res.data.dateRange || res.data.appliedFilters || null);
-        if (!responseDateRangeMatches(res.data, startStr, endStr) && lastGoodData) {
+        if (isDateRangeMismatch(res.data, startStr, endStr)) {
+          if (lastGoodData?.requestKey !== requestKey) {
+            setData([]);
+            setSummary(null);
+            setDataHealth(res.data.dataHealth || null);
+            setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
+            return;
+          }
           setData(lastGoodData.rows || []);
           setSummary(lastGoodData.summary || null);
           setDataHealth(lastGoodData.dataHealth || null);
           setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
           return;
         }
-        if (shouldPreserveLastGoodData(res.data, rows, lastGoodData)) {
+        if (shouldPreserveLastGoodData(res.data, rows, lastGoodData, requestKey)) {
           setData(lastGoodData.rows || []);
           setSummary(lastGoodData.summary || null);
           setDataHealth(lastGoodData.dataHealth || null);
@@ -119,11 +148,11 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         setData(rows);
         setSummary(res.data.summary || null);
         setDataHealth(res.data.dataHealth || null);
-        setLastGoodData({
+        setLastGoodData(makeLastGoodData(requestKey, rows, {
           rows,
           summary: res.data.summary || null,
           dataHealth: res.data.dataHealth || null
-        });
+        }));
         setViewNotice(null);
       } else {
         setData(lastGoodData?.rows || []);
@@ -198,10 +227,12 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
     try {
       const result = await triggerSyncTask({
-        taskType: "sync_meta_audience",
+        taskType: "sync_view_audience",
         startDate: startStr,
         endDate: endStr,
         days: Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000) + 1),
+        accountId: selectedAccount !== "all" ? selectedAccount : undefined,
+        storeId: selectedStore !== "all" ? selectedStore : undefined,
         limit: 200
       });
 
@@ -599,6 +630,15 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         factRows={dataHealth?.factRows}
         status={dataHealth?.status || "UNKNOWN"}
         level={activeTab}
+        queryDebug={dataHealth?.queryDebug}
+        extra={
+          <>
+            <span>花费：${Number(summary?.totalSpend || 0).toFixed(2)}</span>
+            <span>展示：{Number(summary?.totalImpressions || 0).toLocaleString()}</span>
+            <span>点击：{Number(summary?.totalClicks || 0).toLocaleString()}</span>
+            <span>购买：{Number(summary?.totalPurchases || 0).toLocaleString()}</span>
+          </>
+        }
         source="受众拆分事实数据"
       />
 

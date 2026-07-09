@@ -20,7 +20,15 @@ export enum SyncTaskType {
 
   // 数据中心账本刷新
   REFRESH_STORE_DATACENTER_LEDGER = 'refresh_store_datacenter_ledger',
-  REFRESH_META_DATACENTER_LEDGER = 'refresh_meta_datacenter_ledger'
+  REFRESH_META_DATACENTER_LEDGER = 'refresh_meta_datacenter_ledger',
+
+  // Data center view-level atomic sync chains
+  SYNC_VIEW_AD_HIERARCHY = 'sync_view_ad_hierarchy',
+  SYNC_VIEW_AUDIENCE = 'sync_view_audience',
+  SYNC_VIEW_CREATIVES = 'sync_view_creatives',
+  SYNC_VIEW_ACCOUNT_DATA = 'sync_view_account_data',
+  SYNC_VIEW_STORE_DATA = 'sync_view_store_data',
+  SYNC_VIEW_PRODUCTS = 'sync_view_products'
 }
 
 /**
@@ -54,7 +62,7 @@ export interface SyncTriggerRequest {
  */
 export interface SyncTriggerResponse {
   success: boolean;
-  status?: 'started' | 'NO_NEW_DATA' | 'SUCCESS' | 'FAILED';
+  status?: 'started' | 'NO_NEW_DATA' | 'SUCCESS' | 'PARTIAL_SUCCESS' | 'FAILED';
   message: string;
   chainId: string; // 统一的 chainId，用于追踪
   taskType: SyncTaskType;

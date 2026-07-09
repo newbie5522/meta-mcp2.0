@@ -26,24 +26,30 @@ async function safeEnsureAdAccount(fb_account_id: string): Promise<void> {
 
 async function safeEnsureCampaign(id: string, accountId: string): Promise<void> {
   await safeEnsureAdAccount(accountId);
-
-  const existing = await prisma.campaign.findUnique({ where: { id } });
-  if (!existing) {
-    throw new Error(
-      `STRUCTURE_PARENT_CAMPAIGN_MISSING: Campaign ${id} must be synced from Meta before writing child rows.`
-    );
-  }
+  await prisma.campaign.upsert({
+    where: { id },
+    update: { accountId },
+    create: {
+      id,
+      accountId,
+      name: id,
+      status: "UNKNOWN"
+    }
+  });
 }
 
 async function safeEnsureAdSet(id: string, campaignId: string, accountId: string): Promise<void> {
   await safeEnsureCampaign(campaignId, accountId);
-
-  const existing = await prisma.adSet.findUnique({ where: { id } });
-  if (!existing) {
-    throw new Error(
-      `STRUCTURE_PARENT_ADSET_MISSING: AdSet ${id} must be synced from Meta before writing child rows.`
-    );
-  }
+  await prisma.adSet.upsert({
+    where: { id },
+    update: { campaignId, accountId },
+    create: {
+      id,
+      campaignId,
+      accountId,
+      name: id
+    }
+  });
 }
 
 function normalizeSyncLogStoreId(value: unknown): number | null {
@@ -67,6 +73,12 @@ export interface TaskResult {
   metadata?: any;
 }
 
+export interface RunTaskOptions {
+  parentChainId?: string | null;
+  allowSameChainRunning?: boolean;
+  parentViewTask?: boolean;
+}
+
 /**
  * Sync Center Core Engine
  */
@@ -82,7 +94,8 @@ export class SyncCenter {
     parentTaskId: string | null = null,
     storeId: string | number | null = null,
     adAccountId: string | null = null,
-    executor: () => Promise<TaskResult>
+    executor: () => Promise<TaskResult>,
+    options: RunTaskOptions = {}
   ): Promise<string> {
     const taskId = generateUUID();
     console.log(`[Sync Center | chain:${taskChainId}] Task ${taskType} started...`);
@@ -107,8 +120,17 @@ export class SyncCenter {
     if (existingRunningTask) {
       const ageMs = Date.now() - existingRunningTask.startedAt.getTime();
       const maxRunningAgeMs = 30 * 60 * 1000;
+      const sameChain =
+        existingRunningTask.taskChainId === taskChainId ||
+        (options.parentChainId && existingRunningTask.taskChainId === options.parentChainId);
 
       if (ageMs < maxRunningAgeMs) {
+        if (sameChain && (options.allowSameChainRunning || options.parentViewTask)) {
+          console.log(
+            `[Sync Center | chain:${taskChainId}] Reusing running same-chain task ${existingRunningTask.id} for ${taskType}.`
+          );
+          return existingRunningTask.id;
+        }
         throw new Error(
           `SYNC_TASK_ALREADY_RUNNING: ${taskType} is already running. taskId=${existingRunningTask.id}`
         );
@@ -311,7 +333,7 @@ export class SyncCenter {
   }
 
   // 3. sync_meta_accounts
-  static async syncMetaAccounts(taskChainId: string, triggeredBy: string, parentTaskId: string | null = null): Promise<string> {
+  static async syncMetaAccounts(taskChainId: string, triggeredBy: string, parentTaskId: string | null = null, runOptions: RunTaskOptions = {}): Promise<string> {
     return this.runTask(
       "sync_meta_accounts",
       "meta",
@@ -332,12 +354,13 @@ export class SyncCenter {
           recordsSaved: count,
           metadata: { totalAdAccounts: count }
         };
-      }
+      },
+      runOptions
     );
   }
 
   // 4. sync_meta_activity
-  static async syncMetaActivity(taskChainId: string, triggeredBy: string, parentTaskId: string | null = null): Promise<string> {
+  static async syncMetaActivity(taskChainId: string, triggeredBy: string, parentTaskId: string | null = null, runOptions: RunTaskOptions = {}): Promise<string> {
     return this.runTask(
       "sync_meta_activity",
       "meta",
@@ -356,7 +379,8 @@ export class SyncCenter {
           recordsSaved: activeAccounts.length,
           metadata: { activeAccountsCount: activeAccounts.length }
         };
-      }
+      },
+      runOptions
     );
   }
 
@@ -369,7 +393,8 @@ export class SyncCenter {
       accountId?: string | null;
       accountIds?: string[] | null;
       limit?: number | string | null;
-    } = {}
+    } = {},
+    runOptions: RunTaskOptions = {}
   ): Promise<string> {
     const normalizedTaskAccountId = options.accountId
       ? normalizeMetaAccountId(String(options.accountId))
@@ -447,6 +472,8 @@ export class SyncCenter {
         let campaignsTotal = 0;
         let adsetsTotal = 0;
         let adsTotal = 0;
+        let skippedAdsets = 0;
+        let skippedAds = 0;
 
         for (const account of activeAccounts) {
           const actId = normalizeMetaAccountId(account.fb_account_id);
@@ -481,9 +508,11 @@ export class SyncCenter {
             const adsets = adsetsRes.data?.data || [];
             adsetsTotal += adsets.length;
             for (const adset of adsets) {
-              if (adset.campaign_id) {
-                await safeEnsureCampaign(String(adset.campaign_id), actId);
+              if (!adset.campaign_id) {
+                skippedAdsets++;
+                continue;
               }
+              await safeEnsureCampaign(String(adset.campaign_id), actId);
               await prisma.adSet.upsert({
                 where: { id: adset.id },
                 update: { campaignId: adset.campaign_id, accountId: actId, name: adset.name || adset.id },
@@ -498,9 +527,17 @@ export class SyncCenter {
             const ads = adsRes.data?.data || [];
             adsTotal += ads.length;
             for (const ad of ads) {
-              if (ad.adset_id && ad.campaign_id) {
-                await safeEnsureAdSet(String(ad.adset_id), String(ad.campaign_id), actId);
+              if (!ad.adset_id) {
+                skippedAds++;
+                continue;
               }
+              const existingAdSet = await prisma.adSet.findUnique({ where: { id: String(ad.adset_id) } });
+              const campaignId = ad.campaign_id || existingAdSet?.campaignId;
+              if (!campaignId) {
+                skippedAds++;
+                continue;
+              }
+              await safeEnsureAdSet(String(ad.adset_id), String(campaignId), actId);
               const creativeId = ad.creative?.id;
               if (creativeId) {
                 const creativeExists = await prisma.adCreative.findUnique({ where: { creativeId } });
@@ -535,7 +572,7 @@ export class SyncCenter {
                 where: { id: ad.id },
                 update: {
                   adsetId: ad.adset_id,
-                  campaignId: ad.campaign_id,
+                  campaignId,
                   accountId: actId,
                   name: ad.name || ad.id,
                   creativeId: creativeId || null
@@ -543,7 +580,7 @@ export class SyncCenter {
                 create: {
                   id: ad.id,
                   adsetId: ad.adset_id,
-                  campaignId: ad.campaign_id,
+                  campaignId,
                   accountId: actId,
                   name: ad.name || ad.id,
                   creativeId: creativeId || null
@@ -567,10 +604,13 @@ export class SyncCenter {
             adsetsFetched: adsetsTotal,
             adsFetched: adsTotal,
             creativesFetched: creativeCountTotal,
+            skippedAdsets,
+            skippedAds,
             completedAt: new Date().toISOString()
           }
         };
-      }
+      },
+      runOptions
     );
   }
 
@@ -582,7 +622,8 @@ export class SyncCenter {
     days: number = 3,
     accountId: string | null = null,
     startDate: string | null = null,
-    endDate: string | null = null
+    endDate: string | null = null,
+    runOptions: RunTaskOptions = {}
   ): Promise<string> {
     return this.runTask(
       "sync_meta_insights",
@@ -639,7 +680,8 @@ export class SyncCenter {
             completedAt: new Date().toISOString()
           }
         };
-      }
+      },
+      runOptions
     );
   }
 
@@ -651,7 +693,8 @@ export class SyncCenter {
     days: number = 3,
     accountId: string | null = null,
     startDate: string | null = null,
-    endDate: string | null = null
+    endDate: string | null = null,
+    runOptions: RunTaskOptions = {}
   ): Promise<string> {
     return this.runTask(
       "sync_meta_audience",
@@ -681,9 +724,7 @@ export class SyncCenter {
             ? failedAccounts.map(item => `${item.accountId}:${item.dimension || "unknown"}:${item.message || item.error || "unknown_error"}`).join("; ")
             : stats.reason || stats.message || "Meta API 未返回受众 breakdown 数据，且没有提供具体失败账户。";
 
-          throw new Error(
-            `META_AUDIENCE_SYNC_FAILED: ${failureDetail}`
-          );
+          throw new Error(failureDetail);
         }
 
         return {
@@ -708,7 +749,8 @@ export class SyncCenter {
             completedAt: new Date().toISOString()
           }
         };
-      }
+      },
+      runOptions
     );
   }
 

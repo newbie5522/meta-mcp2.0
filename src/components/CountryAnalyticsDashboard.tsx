@@ -18,9 +18,11 @@ import {
   AlertTriangle
 } from "lucide-react";
 import {
+  buildDataViewRequestKey,
   CURRENT_RANGE_NOT_READY_MESSAGE,
   DATE_RANGE_MISMATCH_MESSAGE,
-  responseDateRangeMatches,
+  isDateRangeMismatch,
+  makeLastGoodData,
   shouldPreserveLastGoodData
 } from "@/lib/data-view-state";
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
@@ -73,6 +75,9 @@ interface CountryAnalyticsData {
     unmappedAccountsCount: number;
     unmappedSpendRate: number;
     warnings: string[];
+    factRows?: number;
+    structureRows?: number;
+    queryDebug?: Record<string, any>;
   };
   dataSourceExplain: {
     orderPrimarySource: string;
@@ -93,9 +98,25 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
   const [minSpendFilter, setMinSpendFilter] = useState<number>(0);
   const [includeUnmapped, setIncludeUnmapped] = useState<boolean>(true);
   const [selectedRow, setSelectedRow] = useState<CountryAnalyticsRecord | null>(null);
-  const [lastGoodData, setLastGoodData] = useState<CountryAnalyticsData | null>(null);
+  const [lastGoodData, setLastGoodData] = useState<any | null>(null);
   const [viewNotice, setViewNotice] = useState<string | null>(null);
   const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string; timezone?: string } | null>(null);
+  const startStrKey = format(startDate, "yyyy-MM-dd");
+  const endStrKey = format(endDate, "yyyy-MM-dd");
+  const currentRequestKey = buildDataViewRequestKey({
+    page: "country",
+    startDate: startStrKey,
+    endDate: endStrKey,
+    storeId: "all",
+    includeUnmapped,
+    includeZeroSpend: minSpendFilter <= 0,
+    filter: `minSpend:${minSpendFilter}`
+  });
+
+  useEffect(() => {
+    setViewNotice(null);
+    setResponseDateRange(null);
+  }, [currentRequestKey]);
 
   const fetchCountryData = async () => {
     setLoading(true);
@@ -103,33 +124,39 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
     try {
       const res = await axios.get("/api/data-center/countries", {
         params: {
-          startDate: format(startDate, "yyyy-MM-dd"),
-          endDate: format(endDate, "yyyy-MM-dd"),
+          startDate: startStrKey,
+          endDate: endStrKey,
           minSpend: minSpendFilter,
           includeUnmappedSpend: includeUnmapped ? "true" : "false"
         }
       });
-      const startStr = format(startDate, "yyyy-MM-dd");
-      const endStr = format(endDate, "yyyy-MM-dd");
+      const startStr = startStrKey;
+      const endStr = endStrKey;
+      const requestKey = currentRequestKey;
       const rows = res.data?.rows || [];
       setResponseDateRange(res.data?.dateRange || res.data?.appliedFilters || null);
-      if (!responseDateRangeMatches(res.data, startStr, endStr) && lastGoodData) {
-        setData(lastGoodData);
+      if (isDateRangeMismatch(res.data, startStr, endStr)) {
+        if (lastGoodData?.requestKey !== requestKey) {
+          setData(null);
+          setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
+          return;
+        }
+        setData(lastGoodData.data || null);
         setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
         return;
       }
-      if (shouldPreserveLastGoodData(res.data, rows, lastGoodData)) {
-        setData(lastGoodData);
+      if (shouldPreserveLastGoodData(res.data, rows, lastGoodData, requestKey)) {
+        setData(lastGoodData.data || null);
         setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
         return;
       }
       setData(res.data);
-      setLastGoodData(res.data);
+      setLastGoodData(makeLastGoodData(requestKey, res.data));
       setViewNotice(null);
     } catch (err: any) {
       console.error("Failed to load country analytics:", err);
       if (lastGoodData) {
-        setData(lastGoodData);
+        setData(lastGoodData.data || null);
         setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
         setError(null);
       } else {
@@ -170,14 +197,24 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
   return (
     <div className="space-y-6">
       <DataViewTraceBar
-        currentStartDate={format(startDate, "yyyy-MM-dd")}
-        currentEndDate={format(endDate, "yyyy-MM-dd")}
+        currentStartDate={startStrKey}
+        currentEndDate={endStrKey}
         responseStartDate={responseDateRange?.startDate}
         responseEndDate={responseDateRange?.endDate}
         timezone={responseDateRange?.timezone || "America/Los_Angeles"}
         rowCount={countryRows.length}
         status={countryHealthStatus}
         level="country"
+        factRows={data?.dataHealth?.factRows}
+        queryDebug={data?.dataHealth?.queryDebug}
+        extra={
+          <>
+            <span>花费：${Number(data?.summary?.totalMetaSpend || 0).toFixed(2)}</span>
+            <span>展示：-</span>
+            <span>点击：-</span>
+            <span>购买：{Number(data?.summary?.totalMetaPurchases || 0).toLocaleString()}</span>
+          </>
+        }
         source="受众国家事实数据 + 店铺订单"
       />
       {viewNotice && (

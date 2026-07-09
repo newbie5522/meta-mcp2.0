@@ -176,6 +176,21 @@ Verification:
 
 This commit is ready for server-side full verification, not final production sign-off.
 
+## R5-ROOT-FIX Date State and Atomic Sync
+
+- Added request-key guarded last-good-data preservation through `buildDataViewRequestKey`, `makeLastGoodData`, and the four-argument `shouldPreserveLastGoodData`.
+- Updated data center pages so old successful rows are preserved only for the same page/date/filter request key.
+- Replaced frontend data-center sync buttons with view-level atomic tasks: `sync_view_ad_hierarchy`, `sync_view_audience`, `sync_view_creatives`, and `sync_view_account_data`.
+- Added server-side view sync task types that execute the required structure/fact/ledger chain under one chainId.
+- Removed GET-triggered data-center freshness refresh calls from data-center read APIs.
+- Hardened Meta structure sync parent creation so missing Campaign / AdSet parents are skeleton-upserted before child rows, while malformed ads without `adset_id` are skipped and counted.
+
+## R5-ROOT-FIX Data Scope Trace
+
+- `dataHealth.queryDebug` now exposes `source`, `scope`, `includeUnmapped`, `includeZeroSpend`, `mappedOnly`, `storeId`, `accountId`, `factRows`, and `structureRows` for the main data-center APIs.
+- `DataViewTraceBar` displays the current data scope, whether unmapped accounts are included, and whether zero-spend objects are included.
+- Data center pages now show scope metadata alongside row/fact/structure counts so same-date metric differences can be traced to source and filter scope rather than guessed.
+
 ## R5-UIE-V2 Unified Frontend Experience Pass
 
 ### Modified Files And Scope

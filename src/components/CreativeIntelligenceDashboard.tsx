@@ -52,9 +52,11 @@ import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel"
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask, type SyncTaskPayload } from "@/lib/sync-trigger";
 import {
+  buildDataViewRequestKey,
   CURRENT_RANGE_NOT_READY_MESSAGE,
   DATE_RANGE_MISMATCH_MESSAGE,
-  responseDateRangeMatches,
+  isDateRangeMismatch,
+  makeLastGoodData,
   shouldPreserveLastGoodData
 } from "@/lib/data-view-state";
 import { cn } from "@/lib/utils";
@@ -177,7 +179,7 @@ export function CreativeIntelligenceDashboard({
         : (storesList.find(store => store.name === localStoreFilter || String(store.id) === localStoreFilter)?.id || "all");
 
       const payload: SyncTaskPayload = {
-        taskType: "sync_meta_creatives",
+        taskType: "sync_view_creatives",
         startDate: startStr,
         endDate: endStr,
         days: Math.max(1, Math.ceil((new Date(endStr).getTime() - new Date(startStr).getTime()) / 86400000) + 1),
@@ -365,8 +367,16 @@ export function CreativeIntelligenceDashboard({
       }));
       const nextResponseRange = resGrouped.data?.dateRange || resGrouped.data?.appliedFilters || null;
       setResponseDateRange(nextResponseRange);
+      const requestKey = currentRequestKey;
 
-      if (!responseDateRangeMatches(resGrouped.data, startStr, endStr) && lastGoodData) {
+      if (isDateRangeMismatch(resGrouped.data, startStr, endStr)) {
+        if (lastGoodData?.requestKey !== requestKey) {
+          setCreatives([]);
+          setDiagnostics(resGrouped.data?.diagnostics || null);
+          setCreativeDataHealth(resGrouped.data?.dataHealth || null);
+          setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
+          return;
+        }
         setCreatives(lastGoodData.creatives || []);
         setDiagnostics(lastGoodData.diagnostics || null);
         setCreativeDataHealth(lastGoodData.dataHealth || null);
@@ -374,7 +384,7 @@ export function CreativeIntelligenceDashboard({
         return;
       }
 
-      if (shouldPreserveLastGoodData(resGrouped.data, formattedGrouped, lastGoodData)) {
+      if (shouldPreserveLastGoodData(resGrouped.data, formattedGrouped, lastGoodData, requestKey)) {
         setCreatives(lastGoodData.creatives || []);
         setDiagnostics(lastGoodData.diagnostics || null);
         setCreativeDataHealth(lastGoodData.dataHealth || null);
@@ -385,11 +395,11 @@ export function CreativeIntelligenceDashboard({
       setCreatives(formattedGrouped);
       setDiagnostics(resGrouped.data?.diagnostics || null);
       setCreativeDataHealth(resGrouped.data?.dataHealth || null);
-      setLastGoodData({
+      setLastGoodData(makeLastGoodData(requestKey, formattedGrouped, {
         creatives: formattedGrouped,
         diagnostics: resGrouped.data?.diagnostics || null,
         dataHealth: resGrouped.data?.dataHealth || null
-      });
+      }));
       setViewNotice(null);
 
 
@@ -415,6 +425,25 @@ export function CreativeIntelligenceDashboard({
 
   const startStrKey = startDate ? format(startDate, "yyyy-MM-dd") : "";
   const endStrKey = endDate ? format(endDate, "yyyy-MM-dd") : "";
+  const currentRequestKey = buildDataViewRequestKey({
+    page: "creative",
+    startDate: startStrKey,
+    endDate: endStrKey,
+    storeId: localStoreFilter,
+    accountId: selectedAccountFilter,
+    campaignId: selectedCampaignFilter,
+    type: selectedType,
+    tab: activeSubTab,
+    includeZeroSpend: true,
+    search: searchTerm,
+    sort: `${activeSubTab}:${previewSortField}:${previewSortOrder}:${metricsSortField}:${metricsSortOrder}`
+  });
+
+  useEffect(() => {
+    setViewNotice(null);
+    setResponseDateRange(null);
+    setSyncStatus({ status: "idle" });
+  }, [currentRequestKey]);
 
   useEffect(() => {
     fetchCreatives();
@@ -833,6 +862,8 @@ CPM：${creative.cpm}
 
   // KPI aggregates for filtered data
   const totalSpend = filteredCreatives.reduce((sum, c) => sum + (c.spend || 0), 0);
+  const totalImpressions = filteredCreatives.reduce((sum, c) => sum + (c.impressions || 0), 0);
+  const totalClicks = filteredCreatives.reduce((sum, c) => sum + ((c as any).clicks || 0), 0);
   const totalRevenue = filteredCreatives.reduce((sum, c) => sum + (c.revenue || 0), 0);
   const totalPurchases = filteredCreatives.reduce((sum, c) => sum + (c.purchases || 0), 0);
   const avgROAS = totalSpend > 0 ? totalRevenue / totalSpend : 0;
@@ -1120,8 +1151,11 @@ CPM：${creative.cpm}
         responseEndDate={responseDateRange?.endDate}
         timezone={responseDateRange?.timezone || "America/Los_Angeles"}
         rowCount={creatives.length}
+        factRows={creativeDataHealth?.factRows}
+        structureRows={creativeDataHealth?.structureRows}
         status={creativeDataHealth?.status || "UNKNOWN"}
         level={activeSubTab}
+        queryDebug={creativeDataHealth?.queryDebug}
         source="广告成效数据 + 素材结构"
         extra={<span>当前排序：{activeSubTab === "metrics" ? metricsSortField : previewSortField} / {activeSubTab === "metrics" ? metricsSortOrder : previewSortOrder}</span>}
       />

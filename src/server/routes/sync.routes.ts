@@ -188,6 +188,34 @@ function getRunningTaskTypesForSync(taskType: string, error?: any) {
     taskTypes.add(SyncTaskType.SYNC_META_INSIGHTS);
   }
 
+  if (taskType === SyncTaskType.SYNC_VIEW_AD_HIERARCHY) {
+    taskTypes.add(SyncTaskType.SYNC_META_ACCOUNTS);
+    taskTypes.add("sync_meta_activity");
+    taskTypes.add(SyncTaskType.SYNC_META_STRUCTURE);
+    taskTypes.add(SyncTaskType.SYNC_META_INSIGHTS);
+  }
+
+  if (taskType === SyncTaskType.SYNC_VIEW_AUDIENCE) {
+    taskTypes.add(SyncTaskType.SYNC_META_AUDIENCE);
+  }
+
+  if (taskType === SyncTaskType.SYNC_VIEW_CREATIVES) {
+    taskTypes.add(SyncTaskType.SYNC_META_STRUCTURE);
+    taskTypes.add(SyncTaskType.SYNC_META_INSIGHTS);
+  }
+
+  if (taskType === SyncTaskType.SYNC_VIEW_ACCOUNT_DATA) {
+    taskTypes.add(SyncTaskType.SYNC_META_ACCOUNTS);
+    taskTypes.add("sync_meta_activity");
+    taskTypes.add(SyncTaskType.SYNC_META_INSIGHTS);
+    taskTypes.add(SyncTaskType.REFRESH_META_DATACENTER_LEDGER);
+  }
+
+  if (taskType === SyncTaskType.SYNC_VIEW_STORE_DATA || taskType === SyncTaskType.SYNC_VIEW_PRODUCTS) {
+    taskTypes.add(SyncTaskType.SYNC_STORE_ORDERS);
+    taskTypes.add(SyncTaskType.REFRESH_STORE_DATACENTER_LEDGER);
+  }
+
   for (const candidate of Object.values(SyncTaskType)) {
     if (message.includes(candidate)) {
       taskTypes.add(candidate);
@@ -440,6 +468,313 @@ router.post("/sync/trigger", async (req, res) => {
     // ============================================================
     // 前端安全任务（不需要 ENABLE_MANUAL_SYNC）
     // ============================================================
+
+    const viewRunOptions = {
+      parentChainId: chainId,
+      parentViewTask: true,
+      allowSameChainRunning: true
+    };
+
+    if (taskType === SyncTaskType.SYNC_VIEW_AD_HIERARCHY) {
+      const daysVal = days ? parseInt(String(days), 10) : 30;
+      const range = boundedDateRange(startDate, endDate, daysVal, 3650);
+      const taskIds: string[] = [];
+
+      const accountsTaskId = await SyncCenter.syncMetaAccounts(chainId, "frontend_view_sync", null, viewRunOptions);
+      taskIds.push(accountsTaskId);
+      const activityTaskId = await SyncCenter.syncMetaActivity(chainId, "frontend_view_sync", accountsTaskId, viewRunOptions);
+      taskIds.push(activityTaskId);
+      const structureTaskId = await SyncCenter.syncMetaStructure(
+        chainId,
+        "frontend_view_sync",
+        activityTaskId,
+        { accountId, accountIds, limit },
+        viewRunOptions
+      );
+      taskIds.push(structureTaskId);
+
+      const targets = await resolveSafeMetaTargets({ accountId, accountIds, limit });
+      let lastTaskId: string | null = structureTaskId;
+      for (const account of targets) {
+        const taskId = await SyncCenter.syncMetaInsights(
+          chainId,
+          "frontend_view_sync",
+          lastTaskId,
+          range.days,
+          account.fb_account_id,
+          range.startDate,
+          range.endDate,
+          viewRunOptions
+        );
+        taskIds.push(taskId);
+        lastTaskId = taskId;
+      }
+
+      const summary = await summarizeSyncLogs(taskIds);
+      const limitReceipt = buildLimitReceipt(limit, targets.length);
+      const status = deriveSyncStatus(summary);
+      return res.json({
+        success: true,
+        status,
+        message: status === "NO_NEW_DATA"
+          ? "广告层级视图同步完成，但当前日期范围没有新的结构或成效事实数据。"
+          : `广告层级视图同步完成：结构 + 成效事实已按 ${range.startDate} 至 ${range.endDate} 执行。`,
+        chainId,
+        taskType,
+        taskIds,
+        recordsFetched: summary.recordsFetched,
+        recordsSaved: summary.recordsSaved,
+        recordsUpdated: summary.recordsUpdated,
+        targetAccountsCount: summary.targetAccountsCount || targets.length,
+        failedAccounts: summary.failedAccounts,
+        ...limitReceipt,
+        ...buildProgress({
+          currentStep: taskIds.length,
+          totalSteps: Math.max(1, taskIds.length),
+          stepLabel: "广告层级视图同步完成",
+          processedAccounts: targets.length,
+          totalAccounts: targets.length
+        }),
+        startDate: range.startDate,
+        endDate: range.endDate
+      } as SyncTriggerResponse);
+    }
+
+    if (taskType === SyncTaskType.SYNC_VIEW_AUDIENCE) {
+      const daysVal = days ? parseInt(String(days), 10) : 7;
+      const range = boundedDateRange(startDate, endDate, daysVal, 3650);
+      const targets = await resolveSafeMetaTargets({ accountId, accountIds, limit });
+      const taskIds: string[] = [];
+      let lastTaskId: string | null = null;
+
+      for (const account of targets) {
+        const taskId = await SyncCenter.syncMetaAudience(
+          chainId,
+          "frontend_view_sync",
+          lastTaskId,
+          range.days,
+          account.fb_account_id,
+          range.startDate,
+          range.endDate,
+          viewRunOptions
+        );
+        taskIds.push(taskId);
+        lastTaskId = taskId;
+      }
+
+      const summary = await summarizeSyncLogs(taskIds);
+      const limitReceipt = buildLimitReceipt(limit, targets.length);
+      const metadataStatus = String(summary.metadataStatus || "").toUpperCase();
+      const status =
+        metadataStatus === "NO_NEW_DATA"
+          ? "NO_NEW_DATA"
+          : metadataStatus === "PARTIAL"
+            ? "PARTIAL_SUCCESS"
+            : deriveSyncStatus(summary);
+      return res.json({
+        success: true,
+        status,
+        message: summary.metadataMessage || "受众视图同步完成。",
+        chainId,
+        taskType,
+        taskIds,
+        recordsFetched: summary.recordsFetched,
+        recordsSaved: summary.recordsSaved,
+        recordsUpdated: summary.recordsUpdated,
+        targetAccountsCount: summary.targetAccountsCount || targets.length,
+        failedAccounts: status === "NO_NEW_DATA" ? [] : summary.failedAccounts,
+        reason: summary.metadataReason || null,
+        dimensionsRequested: summary.dimensionsRequested || ["country", "age", "gender", "publisher_platform"],
+        dimensionsSynced: summary.dimensionsSynced || [],
+        ...limitReceipt,
+        ...buildProgress({
+          currentStep: targets.length,
+          totalSteps: Math.max(1, targets.length),
+          stepLabel: "受众视图同步完成",
+          processedAccounts: targets.length,
+          totalAccounts: targets.length,
+          processedDimensions: Array.isArray(summary.dimensionsSynced) ? summary.dimensionsSynced.length : null,
+          totalDimensions: Array.isArray(summary.dimensionsRequested) ? summary.dimensionsRequested.length : 4
+        }),
+        startDate: range.startDate,
+        endDate: range.endDate
+      } as SyncTriggerResponse);
+    }
+
+    if (taskType === SyncTaskType.SYNC_VIEW_CREATIVES) {
+      const daysVal = days ? parseInt(String(days), 10) : 30;
+      const range = boundedDateRange(startDate, endDate, daysVal, 3650);
+      const taskIds: string[] = [];
+      const structureTaskId = await SyncCenter.syncMetaStructure(
+        chainId,
+        "frontend_view_sync",
+        null,
+        { accountId, accountIds, limit },
+        viewRunOptions
+      );
+      taskIds.push(structureTaskId);
+      const targets = await resolveSafeMetaTargets({ accountId, accountIds, limit });
+      let lastTaskId: string | null = structureTaskId;
+      for (const account of targets) {
+        const taskId = await SyncCenter.syncMetaInsights(
+          chainId,
+          "frontend_view_sync",
+          lastTaskId,
+          range.days,
+          account.fb_account_id,
+          range.startDate,
+          range.endDate,
+          viewRunOptions
+        );
+        taskIds.push(taskId);
+        lastTaskId = taskId;
+      }
+      const summary = await summarizeSyncLogs(taskIds);
+      const limitReceipt = buildLimitReceipt(limit, targets.length);
+      return res.json({
+        success: true,
+        status: deriveSyncStatus(summary),
+        message: "素材视图同步完成：已执行素材结构和 ad-level 成效事实链路。",
+        chainId,
+        taskType,
+        taskIds,
+        recordsFetched: summary.recordsFetched,
+        recordsSaved: summary.recordsSaved,
+        recordsUpdated: summary.recordsUpdated,
+        targetAccountsCount: summary.targetAccountsCount || targets.length,
+        failedAccounts: summary.failedAccounts,
+        ...limitReceipt,
+        ...buildProgress({
+          currentStep: taskIds.length,
+          totalSteps: Math.max(1, taskIds.length),
+          stepLabel: "素材视图同步完成",
+          processedAccounts: targets.length,
+          totalAccounts: targets.length
+        }),
+        startDate: range.startDate,
+        endDate: range.endDate
+      } as SyncTriggerResponse);
+    }
+
+    if (taskType === SyncTaskType.SYNC_VIEW_ACCOUNT_DATA) {
+      const daysVal = days ? parseInt(String(days), 10) : 30;
+      const range = boundedDateRange(startDate, endDate, daysVal, 3650);
+      const taskIds: string[] = [];
+      const accountsTaskId = await SyncCenter.syncMetaAccounts(chainId, "frontend_view_sync", null, viewRunOptions);
+      taskIds.push(accountsTaskId);
+      const activityTaskId = await SyncCenter.syncMetaActivity(chainId, "frontend_view_sync", accountsTaskId, viewRunOptions);
+      taskIds.push(activityTaskId);
+      const targets = await resolveSafeMetaTargets({ accountId, accountIds, limit });
+      let lastTaskId: string | null = activityTaskId;
+      for (const account of targets) {
+        const taskId = await SyncCenter.syncMetaInsights(
+          chainId,
+          "frontend_view_sync",
+          lastTaskId,
+          range.days,
+          account.fb_account_id,
+          range.startDate,
+          range.endDate,
+          viewRunOptions
+        );
+        taskIds.push(taskId);
+        lastTaskId = taskId;
+      }
+      const ledgerAccountIds = targets.map(account => normalizeMetaAccountId(account.fb_account_id));
+      const ledgerResult = await refreshMetaDataCenterLedger({
+        storeId: storeId ? Number(storeId) : null,
+        accountIds: ledgerAccountIds,
+        startDate: range.startDate,
+        endDate: range.endDate,
+        includeUnmapped: includeUnmapped === false || includeUnmapped === "false" ? false : true
+      });
+      const summary = await summarizeSyncLogs(taskIds);
+      const limitReceipt = buildLimitReceipt(limit, targets.length);
+      return res.json({
+        success: true,
+        status: deriveSyncStatus(summary),
+        message: "账户表现视图同步完成：Meta 账户、成效事实与账户 ledger 已串联执行。",
+        chainId,
+        taskType,
+        taskIds,
+        recordsFetched: summary.recordsFetched + Number(ledgerResult.recordsFetched || 0),
+        recordsSaved: summary.recordsSaved + Number(ledgerResult.recordsSaved || 0),
+        recordsUpdated: summary.recordsUpdated + Number(ledgerResult.recordsUpdated || 0),
+        targetAccountsCount: summary.targetAccountsCount || targets.length,
+        failedAccounts: summary.failedAccounts || ledgerResult.failedAccounts || [],
+        ledger: ledgerResult,
+        ...limitReceipt,
+        ...buildProgress({
+          currentStep: taskIds.length + 1,
+          totalSteps: Math.max(1, taskIds.length + 1),
+          stepLabel: "账户表现视图同步完成",
+          processedAccounts: targets.length,
+          totalAccounts: targets.length
+        }),
+        startDate: range.startDate,
+        endDate: range.endDate
+      } as SyncTriggerResponse);
+    }
+
+    if (taskType === SyncTaskType.SYNC_VIEW_STORE_DATA || taskType === SyncTaskType.SYNC_VIEW_PRODUCTS) {
+      const daysVal = days ? parseInt(String(days), 10) : 30;
+      const range = boundedDateRange(startDate, endDate, daysVal, 3650);
+      const targets = await resolveSafeStoreTargets({ storeId, limit });
+      const taskIds: string[] = [];
+      let lastTaskId: string | null = null;
+      const ledgers: any[] = [];
+
+      for (const store of targets) {
+        const taskId = await SyncCenter.syncStoreOrders(
+          store.id,
+          chainId,
+          "frontend_view_sync",
+          lastTaskId,
+          range.days,
+          range.startDate,
+          range.endDate,
+          {
+            baselineRevenue: baselineRevenue !== undefined ? parseFloat(String(baselineRevenue)) : undefined,
+            rebuild: rebuild === true || rebuild === "true"
+          }
+        );
+        taskIds.push(taskId);
+        lastTaskId = taskId;
+        ledgers.push(await refreshStoreDataCenterLedger({
+          storeId: store.id,
+          startDate: range.startDate,
+          endDate: range.endDate
+        }));
+      }
+
+      const summary = await summarizeSyncLogs(taskIds);
+      const ledgerRecordsSaved = ledgers.reduce((sum, item) => sum + Number(item.recordsSaved || item.snapshots?.length || 0), 0);
+      return res.json({
+        success: true,
+        status: deriveSyncStatus(summary),
+        message: taskType === SyncTaskType.SYNC_VIEW_PRODUCTS
+          ? "商品视图同步完成：店铺订单与店铺 ledger 已串联执行。"
+          : "店铺视图同步完成：店铺订单与店铺 ledger 已串联执行。",
+        chainId,
+        taskType,
+        taskIds,
+        targetStores: targets.map(store => ({ id: store.id, name: store.name, platform: store.platform, mode: store.mode })),
+        recordsFetched: summary.recordsFetched,
+        recordsSaved: summary.recordsSaved + ledgerRecordsSaved,
+        recordsUpdated: summary.recordsUpdated,
+        failedAccounts: summary.failedAccounts,
+        ledgers,
+        ...buildProgress({
+          currentStep: taskIds.length + ledgers.length,
+          totalSteps: Math.max(1, taskIds.length + ledgers.length),
+          stepLabel: "店铺视图同步完成",
+          processedAccounts: targets.length,
+          totalAccounts: targets.length
+        }),
+        startDate: range.startDate,
+        endDate: range.endDate
+      } as SyncTriggerResponse);
+    }
 
     if (taskType === SyncTaskType.SYNC_META_INSIGHTS) {
       const daysVal = days ? parseInt(String(days), 10) : 7;

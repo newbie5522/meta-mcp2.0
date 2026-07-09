@@ -32,6 +32,11 @@ import {
 import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountDisplay";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
+import {
+  buildDataViewRequestKey,
+  isDateRangeMismatch,
+  makeLastGoodData
+} from "@/lib/data-view-state";
 
 import { useNavigate } from "react-router-dom";
 
@@ -77,6 +82,22 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   // Sorting configurations
   const [sortField, setSortField] = useState<string>("spend");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const startStrKey = format(startDate, "yyyy-MM-dd");
+  const endStrKey = format(endDate, "yyyy-MM-dd");
+  const currentRequestKey = buildDataViewRequestKey({
+    page: "accounts-performance",
+    startDate: startStrKey,
+    endDate: endStrKey,
+    storeId: storeFilter,
+    includeHistoricalAccounts: showHistoricalAccounts,
+    statusFilter,
+    search: searchTerm,
+    sort: `${sortField}:${sortOrder}`
+  });
+
+  useEffect(() => {
+    setSyncStatus({ status: "idle" });
+  }, [currentRequestKey]);
 
   const loadData = async (options: { silent?: boolean } = {}) => {
     const silent = options.silent === true;
@@ -86,8 +107,8 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
     }
 
     try {
-      const startStr = format(startDate, "yyyy-MM-dd");
-      const endStr = format(endDate, "yyyy-MM-dd");
+      const startStr = startStrKey;
+      const endStr = endStrKey;
 
       const response = await axios.get("/api/data-center/accounts-performance", {
         params: {
@@ -98,13 +119,28 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
         }
       });
 
+      if (isDateRangeMismatch(response.data, startStr, endStr)) {
+        if (lastGoodData?.requestKey === currentRequestKey) {
+          setData(lastGoodData.data);
+        } else {
+          setData({
+            metaInsights: [],
+            accounts: [],
+            filters: { stores: [], adAccounts: [], mappings: [] },
+            health: { status: "DATE_RANGE_MISMATCH", missingReason: "Response date range mismatch", lastSyncTime: null, lastSyncTimeStr: "N/A", isSyncActive: false },
+            dataHealth: response.data?.dataHealth || null
+          });
+        }
+        return;
+      }
+
       setData(response.data);
-      setLastGoodData(response.data);
+      setLastGoodData(makeLastGoodData(currentRequestKey, response.data));
     } catch (error: any) {
       console.error("Load Accounts Performance error:", error);
 
       if (lastGoodData) {
-        setData(lastGoodData);
+        setData(lastGoodData.data || lastGoodData);
       }
 
       if (!silent) {
@@ -215,7 +251,12 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
 
     try {
       const accountsResult = await triggerSyncTask({
-        taskType: "sync_meta_accounts"
+        taskType: "sync_view_account_data",
+        startDate: startStr,
+        endDate: endStr,
+        days,
+        storeId: storeFilter === "all" ? undefined : Number(storeFilter),
+        limit: 200
       });
 
       setSyncStatus({
@@ -230,13 +271,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
         failedAccounts: accountsResult.failedAccounts || null
       });
 
-      const insightsResult = await triggerSyncTask({
-        taskType: "sync_meta_insights",
-        startDate: startStr,
-        endDate: endStr,
-        days,
-        limit: 200
-      });
+      const insightsResult = accountsResult;
 
       setSyncStatus({
         status: "running",
@@ -250,13 +285,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
         failedAccounts: insightsResult.failedAccounts || null
       });
 
-      const ledgerResult = await triggerSyncTask({
-        taskType: "refresh_meta_datacenter_ledger",
-        startDate: startStr,
-        endDate: endStr,
-        storeId: storeFilter === "all" ? null : Number(storeFilter),
-        includeUnmapped: true
-      });
+      const ledgerResult = accountsResult;
 
       const panelResult = mapSyncResultToPanel({
         ...ledgerResult,
@@ -320,6 +349,10 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const hasAccountInventoryWithoutFacts = allAccountsCount > 0 && factRowsCount === 0;
   const appliedStartDate = data.appliedFilters?.startDate || format(startDate, "yyyy-MM-dd");
   const appliedEndDate = data.appliedFilters?.endDate || format(endDate, "yyyy-MM-dd");
+  const filteredSpend = filteredAccounts.reduce((sum, item) => sum + Number(item.spend || 0), 0);
+  const filteredImpressions = filteredAccounts.reduce((sum, item) => sum + Number(item.impressions || 0), 0);
+  const filteredClicks = filteredAccounts.reduce((sum, item) => sum + Number(item.clicks || 0), 0);
+  const filteredPurchases = filteredAccounts.reduce((sum, item) => sum + Number(item.purchases || 0), 0);
   const displayScopeText = accountDisplayScope === "historical_all" ? "全部历史账户" : "当前日期范围内活跃账户";
 
   // Formatting date safely
@@ -425,6 +458,15 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
         factRows={factRowsCount}
         status={data.health?.status || "UNKNOWN"}
         level="account"
+        queryDebug={data.dataHealth?.queryDebug}
+        extra={
+          <>
+            <span>花费：${filteredSpend.toFixed(2)}</span>
+            <span>展示：{filteredImpressions.toLocaleString()}</span>
+            <span>点击：{filteredClicks.toLocaleString()}</span>
+            <span>购买：{filteredPurchases.toLocaleString()}</span>
+          </>
+        }
         source="广告成效数据 + 广告账户"
       />
 
