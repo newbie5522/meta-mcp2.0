@@ -101,6 +101,14 @@ export function getSyncErrorMessage(error: any): string {
     return data?.message || "已有同步任务正在运行，请稍后刷新查看。";
   }
 
+  if (normalized === "NO_NEW_DATA" || normalized === "NO_NEW_DATA_OR_FAILED") {
+    return data?.message || "同步完成，当前日期范围暂无新增数据。";
+  }
+
+  if (normalized === "PARTIAL_SUCCESS" || normalized === "PARTIAL") {
+    return data?.message || "同步部分完成，正在刷新已同步数据。";
+  }
+
   return (
     data?.message ||
     data?.details ||
@@ -189,6 +197,21 @@ export function mapSyncErrorToPanel(error: any) {
       startedAt: data.startedAt ?? null,
       finishedAt: data.finishedAt ?? null
     };
+  }
+
+  if (
+    normalized === "NO_NEW_DATA" ||
+    normalized === "NO_NEW_DATA_OR_FAILED" ||
+    normalized === "PARTIAL" ||
+    normalized === "PARTIAL_SUCCESS" ||
+    normalized === "SUCCESS"
+  ) {
+    return mapSyncResultToPanel({
+      success: true,
+      ...data,
+      status: normalized,
+      message: data?.message || getSyncErrorMessage(error)
+    });
   }
 
   return {

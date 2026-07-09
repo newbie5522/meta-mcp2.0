@@ -704,17 +704,19 @@ router.get("/audience", async (req, res) => {
       includeZeroSpend: queryFlag(includeZeroSpend),
       mappedOnly: false
     });
-    const storeOrderSummary = await getStoreOrderSummary({
-      startDate: startStr,
-      endDate: endStr,
-      storeId: isSpecificFilter(storeId) ? String(storeId) : undefined,
-      includeLegacyCreatedAtFallback: false
-    });
+    const storeCountryAnalytics = await getCountryAnalytics(
+      startStr,
+      endStr,
+      isSpecificFilter(storeId) ? String(storeId) : undefined,
+      0,
+      0,
+      true
+    );
     const buildStoreSummary = () => ({
-      orderCount: storeOrderSummary.ordersCount || 0,
-      revenue: Number((storeOrderSummary.totalSales || 0).toFixed(4)),
-      averageOrderValue: Number((storeOrderSummary.aov || 0).toFixed(4)),
-      countryCount: 0
+      orderCount: Number(storeCountryAnalytics.summary.orderCount || 0),
+      revenue: Number((storeCountryAnalytics.summary.revenue || 0).toFixed(4)),
+      averageOrderValue: Number((storeCountryAnalytics.summary.averageOrderValue || 0).toFixed(4)),
+      countryCount: Number(storeCountryAnalytics.summary.countryCount || 0)
     });
     const emptyMetaSummary = {
       spend: 0,
@@ -725,7 +727,8 @@ router.get("/audience", async (req, res) => {
       roas: 0,
       ctr: 0,
       cpc: 0,
-      cpm: 0
+      cpm: 0,
+      cpa: 0
     };
 
     // 1. Store filtering: resolve store mapped accounts
@@ -1135,21 +1138,49 @@ router.get("/countries", async (req, res) => {
           Number(row.purchases || row.metaPurchases || 0) > 0
       )
       : [];
+    const visibleOrderCount = visibleCountryRows.reduce(
+      (sum: number, row: any) => sum + Number(row.orderCount || row.orders || 0),
+      0
+    );
+    const visibleRevenue = visibleCountryRows.reduce(
+      (sum: number, row: any) => sum + Number(row.revenue || row.totalRevenue || row.orderRevenue || 0),
+      0
+    );
+    const visibleMetaCountriesCount = visibleCountryRows.filter((row: any) =>
+      Number(row.metaSpend || row.spend || 0) > 0 ||
+      Number(row.metaImpressions || row.impressions || 0) > 0 ||
+      Number(row.metaClicks || row.clicks || 0) > 0 ||
+      Number(row.metaPurchases || row.purchases || 0) > 0
+    ).length;
+    const visibleOrderCountriesCount = visibleCountryRows.filter((row: any) =>
+      Number(row.orderCount || row.orders || 0) > 0 ||
+      Number(row.revenue || row.totalRevenue || row.orderRevenue || 0) > 0
+    ).length;
+    const visibleCountrySummary = {
+      ...(result.summary || {}),
+      countriesCount: visibleCountryRows.length,
+      countryCount: visibleCountryRows.length,
+      orderCountriesCount: visibleOrderCountriesCount,
+      metaCountriesCount: visibleMetaCountriesCount,
+      orderCount: visibleOrderCount,
+      revenue: Number(visibleRevenue.toFixed(4)),
+      averageOrderValue: visibleOrderCount > 0 ? Number((visibleRevenue / visibleOrderCount).toFixed(4)) : 0,
+      totalOrderCount: visibleOrderCount,
+      totalOrderRevenue: Number(visibleRevenue.toFixed(4))
+    };
 
     res.json({
       ...result,
       rows: visibleCountryRows,
+      summary: visibleCountrySummary,
       appliedFilters,
       dateRange: buildDateRange(startStr, endStr),
       dataScope: buildDataScope({
         page: "countries",
-        primarySource: "FactAudienceBreakdown + Order",
+        primarySource: "Store orders",
         metaScope: "Meta 国家指标来自受众 country breakdown",
         storeScope: "店铺订单国家按 Order.store_local_date 和收货/账单国家统计",
-        dateField: {
-          meta: "FactAudienceBreakdown.date",
-          store: "Order.store_local_date"
-        },
+        dateField: "store_local_date",
         storeId,
         includeUnmapped: incUnmapped,
         includeZeroSpend: minS <= 0,

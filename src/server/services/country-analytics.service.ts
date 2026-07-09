@@ -5,8 +5,12 @@ export interface CountryAnalyticsResult {
   rows: MergedCountryRow[];
   summary: {
     countriesCount: number;
+    countryCount: number;
     orderCountriesCount: number;
     metaCountriesCount: number;
+    orderCount: number;
+    revenue: number;
+    averageOrderValue: number;
     totalOrderRevenue: number | null;
     totalOrderCount: number | null;
     totalMetaSpend: number;
@@ -99,6 +103,52 @@ const COUNTRY_NAME_MAP: Record<string, string> = {
   CO: "Colombia",
   PE: "Peru",
 };
+
+function buildStoreOrderCountryWhere({
+  startDate,
+  endDate,
+  storeId
+}: {
+  startDate: string;
+  endDate: string;
+  storeId?: string | number | null;
+}) {
+  const where: any = {
+    store_local_date: {
+      gte: startDate,
+      lte: endDate
+    }
+  };
+
+  if (storeId && storeId !== "all" && storeId !== "undefined") {
+    where.storeId = Number(storeId);
+  }
+
+  return where;
+}
+
+function filterNonZeroCountryRows(rows: MergedCountryRow[]) {
+  return rows.filter(row =>
+    Number(row.orderCount || 0) > 0 ||
+    Number(row.orderRevenue || 0) > 0 ||
+    Number(row.metaSpend || 0) > 0 ||
+    Number(row.metaImpressions || 0) > 0 ||
+    Number(row.metaClicks || 0) > 0 ||
+    Number(row.metaPurchases || 0) > 0
+  );
+}
+
+function summarizeCountryRows(rows: MergedCountryRow[]) {
+  const orderCount = rows.reduce((sum, row) => sum + Number(row.orderCount || 0), 0);
+  const revenue = rows.reduce((sum, row) => sum + Number(row.orderRevenue || 0), 0);
+
+  return {
+    orderCount,
+    revenue,
+    averageOrderValue: orderCount > 0 ? revenue / orderCount : 0,
+    countryCount: rows.length
+  };
+}
 
 export async function getCountryAnalytics(
   startDate: string,
@@ -217,15 +267,11 @@ export async function getCountryAnalytics(
   }
 
   // 3. Query and aggregate real database order country performance
-  const orderWhereClause: any = {
-    store_local_date: {
-      gte: startDate,
-      lte: endDate
-    }
-  };
-  if (filterStoreId && filterStoreId !== "all") {
-    orderWhereClause.storeId = Number(filterStoreId);
-  }
+  const orderWhereClause = buildStoreOrderCountryWhere({
+    startDate,
+    endDate,
+    storeId: filterStoreId
+  });
 
   const dbOrders = await prisma.order.findMany({
     where: orderWhereClause
@@ -251,10 +297,7 @@ export async function getCountryAnalytics(
     lastAt: Date | null;
   }> = {};
 
-  const totalUniqueOrderIdsOverall = new Set<string>();
-  let totalOrderRevenueOverall = 0;
-
-  for (const [oId, rows] of ordersGroupedById.entries()) {
+  for (const rows of ordersGroupedById.values()) {
     // 1. Determine country prioritizing shippingCountryCode, then billingCountryCode, else UNKNOWN
     let resolvedCountryCode = "UNKNOWN";
     let resolvedCountryName = "Unknown Country";
@@ -289,9 +332,6 @@ export async function getCountryAnalytics(
     const calculatedRevenue = orderTotalVal !== null ? orderTotalVal : rows.reduce((sum, r) => sum + (r.revenue || 0), 0);
     const calculatedProfit = rows.reduce((sum, r) => sum + (r.profit || 0), 0) || (calculatedRevenue * 0.4);
     const hasRefund = rows.some(r => r.refunded);
-
-    totalUniqueOrderIdsOverall.add(oId);
-    totalOrderRevenueOverall += calculatedRevenue;
 
     if (!orderCountryGroup[resolvedCountryCode]) {
       orderCountryGroup[resolvedCountryCode] = {
@@ -329,8 +369,8 @@ export async function getCountryAnalytics(
   ]));
 
   // Convert map to final rows with formula metrics
-  const mergedRows: MergedCountryRow[] = allCountryCodes
-    .map(countryCode => {
+  const mergedRows: MergedCountryRow[] = filterNonZeroCountryRows(
+    allCountryCodes.map(countryCode => {
       const g = countryBreakdownGroup[countryCode];
       const og = orderCountryGroup[countryCode];
       const countryName = COUNTRY_NAME_MAP[countryCode] || countryCode;
@@ -386,18 +426,12 @@ export async function getCountryAnalytics(
         dataSourceExplain: `Prisma Unified Country Aggregate (Order-resolved + Meta action-insights). resolved via Order.${og?.totalOrders ? "shippingCountryCode/billingCountryCode" : "none"}`
       };
     })
+  )
     // Filter out rows by minSpend or minOrders parameter
     .filter(row => {
-      const hasData =
-        Number(row.orderCount || 0) > 0 ||
-        Number(row.orderRevenue || 0) > 0 ||
-        Number(row.metaSpend || 0) > 0 ||
-        Number(row.metaImpressions || 0) > 0 ||
-        Number(row.metaClicks || 0) > 0 ||
-        Number(row.metaPurchases || 0) > 0;
       const spendOk = row.metaSpend >= minSpend;
       const ordersOk = (row.orderCount || 0) >= minOrders;
-      return hasData && spendOk && ordersOk;
+      return spendOk && ordersOk;
     });
 
   // Sort rows by metaSpend or orderRevenue descending
@@ -410,6 +444,7 @@ export async function getCountryAnalytics(
   const countriesCount = mergedRows.length;
   const orderCountriesCount = mergedRows.filter(r => (r.orderCount || 0) > 0).length;
   const metaCountriesCount = mergedRows.filter(r => r.metaSpend > 0).length;
+  const rowSummary = summarizeCountryRows(mergedRows);
 
   const unmappedSpendRate = totalMetaSpendOverall > 0 
     ? unmappedMetaSpendOverall / totalMetaSpendOverall 
@@ -432,10 +467,14 @@ export async function getCountryAnalytics(
     rows: mergedRows,
     summary: {
       countriesCount,
+      countryCount: rowSummary.countryCount,
       orderCountriesCount,
       metaCountriesCount,
-      totalOrderRevenue: totalOrderRevenueOverall,
-      totalOrderCount: totalUniqueOrderIdsOverall.size,
+      orderCount: rowSummary.orderCount,
+      revenue: Number(rowSummary.revenue.toFixed(4)),
+      averageOrderValue: Number(rowSummary.averageOrderValue.toFixed(4)),
+      totalOrderRevenue: Number(rowSummary.revenue.toFixed(4)),
+      totalOrderCount: rowSummary.orderCount,
       totalMetaSpend: totalMetaSpendOverall,
       totalMetaPurchases: totalMetaPurchasesOverall,
       totalMetaPurchaseValue: totalMetaPurchaseValueOverall,

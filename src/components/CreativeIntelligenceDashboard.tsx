@@ -218,9 +218,18 @@ export function CreativeIntelligenceDashboard({
         toast.info("已有素材同步任务正在运行，请稍后刷新查看。", { id: syncToast });
         window.setTimeout(() => fetchCreatives(), 5000);
         return;
-      } else {
-        toast.error("素材同步失败：" + (panel.message || err?.data?.message || err?.response?.data?.message || err.message), { id: syncToast });
       }
+      if (panel.status === "success") {
+        toast.info(panel.message || "素材同步完成，当前日期范围暂无新的素材成效数据。", { id: syncToast });
+        await fetchCreatives();
+        return;
+      }
+      if (panel.status === "warning") {
+        toast.warning(panel.message || "素材同步部分完成，正在刷新已同步数据。", { id: syncToast });
+        await fetchCreatives();
+        return;
+      }
+      toast.error("素材同步失败：" + (panel.message || err?.data?.message || err?.response?.data?.message || err.message), { id: syncToast });
     } finally {
       setSyncing(false);
     }
@@ -928,7 +937,7 @@ CPM：${creative.cpm}
         '素材名称': c.creativeName,
         '素材类型': c.type === "IMAGE" ? "单图素材" : c.type === "VIDEO" ? "视频素材" : "轮播素材",
         '支出花费 ($)': c.spend,
-        '购买订单数': c.purchases,
+        'Meta购买数': c.purchases,
         '追踪转化金额 ($)': c.revenue,
         '转化ROAS': c.roas,
         '点击率 CTR (%)': c.ctr,

@@ -458,9 +458,18 @@ setAiReport(reportText || "未返回分析报告");
         toast.info("已有店铺同步任务正在运行，请稍后刷新查看。", { id: toastId });
         window.setTimeout(() => fetchStoresData(true), 5000);
         return;
-      } else {
-        toast.error("同步数据失败: " + (panel.message || data?.message || data?.details || data?.error || error.message), { id: toastId });
       }
+      if (panel.status === "success") {
+        toast.info(panel.message || "店铺同步完成，当前日期范围暂无新的店铺订单数据。", { id: toastId });
+        await fetchStoresData(true);
+        return;
+      }
+      if (panel.status === "warning") {
+        toast.warning(panel.message || "店铺同步部分完成，正在刷新已同步数据。", { id: toastId });
+        await fetchStoresData(true);
+        return;
+      }
+      toast.error("同步数据失败: " + (panel.message || data?.message || data?.details || data?.error || error.message), { id: toastId });
     } finally {
       setSyncing(false);
     }
@@ -609,7 +618,7 @@ setAiReport(reportText || "未返回分析报告");
               {dataHealth.status === "EMPTY_FACTS" || dataHealth.status === "EMPTY" ? "当前日期范围暂无店铺订单数据" : "最近一次店铺/同步任务失败"}
             </h5>
             <p className="text-slate-600 leading-relaxed">
-              {dataHealth.message || "已配置店铺会继续显示在下方列表中；订单数、销售额和 AOV 在事实表为空时按 0 展示。"}
+              {dataHealth.message || "已配置店铺会继续显示在下方列表中；店铺订单数、店铺销售额和 AOV 在事实表为空时按 0 展示。"}
             </p>
             {dataHealth.lastFailedSync?.errorMessage && (
               <p className="text-rose-700 leading-relaxed">

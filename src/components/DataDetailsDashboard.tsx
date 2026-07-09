@@ -332,8 +332,39 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
 
       await loadData();
     } catch (error: any) {
-      setSyncStatus(mapSyncErrorToPanel(error));
-      toast.error(`Meta 同步失败: ${getSyncErrorMessage(error)}`, {
+      const panel = mapSyncErrorToPanel(error);
+      setSyncStatus(panel);
+
+      if (panel.status === "running") {
+        toast.info(panel.message || "已有账户数据同步任务正在运行，请稍后刷新查看。", {
+          id: toastId,
+          duration: 6000
+        });
+        window.setTimeout(() => {
+          loadData({ silent: true });
+        }, 5000);
+        return;
+      }
+
+      if (panel.status === "success") {
+        toast.info(panel.message || "同步完成，当前日期范围暂无新增数据。", {
+          id: toastId,
+          duration: 6000
+        });
+        await loadData();
+        return;
+      }
+
+      if (panel.status === "warning") {
+        toast.warning(panel.message || "同步部分完成，正在刷新已同步数据。", {
+          id: toastId,
+          duration: 7000
+        });
+        await loadData();
+        return;
+      }
+
+      toast.error(`Meta 同步失败: ${panel.message || getSyncErrorMessage(error)}`, {
         id: toastId,
         duration: 8000
       });

@@ -300,6 +300,18 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         return;
       }
 
+      if (panel.status === "success") {
+        toast.info(panel.message || "Meta受众同步完成，但当前日期范围暂无新的受众 breakdown 数据。");
+        await fetchAudienceInsights();
+        return;
+      }
+
+      if (panel.status === "warning") {
+        toast.warning(panel.message || "受众同步部分完成，正在刷新已同步数据。");
+        await fetchAudienceInsights();
+        return;
+      }
+
       toast.error("受众同步失败：" + (panel.message || error.message));
     } finally {
       setSyncing(false);
@@ -428,6 +440,43 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     averageOrderValue: 0,
     countryCount: visibleOrderCountryRows.length
   };
+  const storeOrderCountFromRows = visibleOrderCountryRows.reduce(
+    (sum, row) => sum + Number(row.orderCount || row.orders || 0),
+    0
+  );
+  const storeRevenueFromRows = visibleOrderCountryRows.reduce(
+    (sum, row) => sum + Number(row.revenue || row.totalRevenue || row.orderRevenue || 0),
+    0
+  );
+  const normalizedStoreSummary = {
+    orderCount: Number(storeSummary.orderCount ?? storeOrderCountFromRows ?? 0),
+    revenue: Number(storeSummary.revenue ?? storeRevenueFromRows ?? 0),
+    averageOrderValue: Number(storeSummary.averageOrderValue || 0),
+    countryCount: Number(storeSummary.countryCount ?? visibleOrderCountryRows.length)
+  };
+  useEffect(() => {
+    if (
+      activeTab === "country" &&
+      normalizedStoreSummary.orderCount !== storeOrderCountFromRows &&
+      visibleOrderCountryRows.length > 0
+    ) {
+      console.warn("[Audience] Store order summary mismatch", {
+        summaryStoreOrderCount: normalizedStoreSummary.orderCount,
+        rowStoreOrderCount: storeOrderCountFromRows,
+        selectedStore,
+        startDate: startStrKey,
+        endDate: endStrKey
+      });
+    }
+  }, [
+    activeTab,
+    normalizedStoreSummary.orderCount,
+    storeOrderCountFromRows,
+    visibleOrderCountryRows.length,
+    selectedStore,
+    startStrKey,
+    endStrKey
+  ]);
   const totalSpend = metaSummary.spend ?? 0;
   const totalImpressions = metaSummary.impressions ?? 0;
   const totalClicks = metaSummary.clicks ?? 0;
@@ -444,10 +493,10 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
   const chartRows = useMemo(() => {
     if (activeTab === "country") {
-      return data.slice(0, 10);
+      return visibleMetaCountryRows.slice(0, 10);
     }
     return data;
-  }, [data, activeTab]);
+  }, [activeTab, data, visibleMetaCountryRows]);
 
   const chartKey = `${activeTab}-${format(startDate, "yyyyMMdd")}-${format(endDate, "yyyyMMdd")}-${selectedStore}-${selectedAccount}-${sortBy}-${chartRows.length}`;
   const isMetaBreakdownMissing = dataHealth?.status === "MISSING_META_BREAKDOWN" || dataHealth?.reason === "META_AUDIENCE_BREAKDOWN_MISSING";
@@ -756,14 +805,14 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         <Card className="border-emerald-200/80 bg-emerald-50/10 shadow-xs hover:border-emerald-300 transition-all">
           <CardContent className="p-4">
             <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">店铺订单数</p>
-            <h3 className="text-lg font-black text-emerald-700 font-mono mt-1">{Number(storeSummary.orderCount || 0).toLocaleString()} 单</h3>
+            <h3 className="text-lg font-black text-emerald-700 font-mono mt-1">{Number(normalizedStoreSummary.orderCount || 0).toLocaleString()} 单</h3>
           </CardContent>
         </Card>
 
         <Card className="border-emerald-200/80 bg-emerald-50/10 shadow-xs hover:border-emerald-300 transition-all">
           <CardContent className="p-4">
             <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">店铺收入</p>
-            <h3 className="text-lg font-black text-emerald-700 font-mono mt-1">${Number(storeSummary.revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            <h3 className="text-lg font-black text-emerald-700 font-mono mt-1">${Number(normalizedStoreSummary.revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
           </CardContent>
         </Card>
 

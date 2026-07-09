@@ -202,6 +202,32 @@ R5 unified verification showed that the date filters were mostly usable, but dat
 - Ad hierarchy, audience, and creative sync buttons use view-level sync tasks and treat RUNNING / NO_NEW_DATA as neutral states.
 - Product sync behavior remains on the existing `sync_view_products` path.
 
+## R5-UX-SCOPE-SYNC-CF2 Data Scope Reconciliation
+
+### Cause
+
+After the R5-UX-SCOPE-SYNC-CF code pass, follow-up review found a few remaining code-layer gaps:
+
+- The account data page could still show a running sync as a failed Meta sync toast.
+- The audience country chart could still use unfiltered `data.slice(0, 10)`.
+- Audience store orders, country order rows, and store-page orders needed a stricter shared date/store scope.
+- A read-only script was needed to compare order counts across data-center pages during the later unified verification pass.
+
+### Scope Fixed
+
+- `DataDetailsDashboard` sync catch now handles running, success, warning, and true error branches separately.
+- Audience country charts now use `visibleMetaCountryRows`.
+- Audience store KPIs now use `normalizedStoreSummary`.
+- Country analytics summary is derived from the returned rows, so row totals and summary totals stay aligned.
+- `/api/data-center/audience` uses the country analytics service for store-order summary scope.
+- `/api/data-center/countries` returns a summary aligned with its visible rows.
+- Added `scripts/audit/r5-data-scope-consistency.mjs` for read-only API scope comparison.
+- Continued protecting the clean UI rule: no business page uses `debug={true}` for trace display.
+
+### Not Frontend Acceptance
+
+This pass only completes code-layer gaps. It does not perform VPS, API, or browser acceptance testing. The consistency script is ready and should be re-run during the unified verification phase against the deployed service.
+
 ## R5-ROOT-FIX-CF Date State Completion
 
 ### 修复原因

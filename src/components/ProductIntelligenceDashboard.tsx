@@ -205,9 +205,19 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
       setSyncStatus(panel);
       if (panel.status === "running") {
         toast.info("已有同步任务正在运行，请稍后查看进度。", { id: toastId });
-      } else {
-        toast.error("同步数据失败: " + (data?.message || data?.details || data?.error || error.message), { id: toastId });
+        return;
       }
+      if (panel.status === "success") {
+        toast.info(panel.message || "商品同步完成，当前日期范围暂无新的商品订单数据。", { id: toastId });
+        await fetchProducts();
+        return;
+      }
+      if (panel.status === "warning") {
+        toast.warning(panel.message || "商品同步部分完成，正在刷新已同步数据。", { id: toastId });
+        await fetchProducts();
+        return;
+      }
+      toast.error("同步数据失败: " + (panel.message || data?.message || data?.details || data?.error || error.message), { id: toastId });
     } finally {
       setSyncing(false);
     }
@@ -409,7 +419,7 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
                       <td colSpan={9} className="px-6 py-10">
                         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">
                           <AlertTriangle className="w-7 h-7 text-slate-400 mx-auto mb-2" />
-                          当前日期范围暂无产品订单数据。请扩大日期范围或同步店铺订单数据。
+                          当前日期范围暂无商品订单数据。请扩大日期范围或同步店铺订单数据。
                         </div>
                       </td>
                     </tr>

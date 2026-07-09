@@ -538,9 +538,18 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
           fetchData();
         }, 5000);
         return;
-      } else {
-        toast.error("同步数据失败: " + (panel.message || data?.message || data?.details || data?.error || err.message), { id: tId });
       }
+      if (panel.status === "success") {
+        toast.info(panel.message || "同步完成，但当前日期范围暂无新的广告层级数据。", { id: tId });
+        await fetchData();
+        return;
+      }
+      if (panel.status === "warning") {
+        toast.warning(panel.message || "同步部分完成，正在刷新已同步数据。", { id: tId });
+        await fetchData();
+        return;
+      }
+      toast.error("同步数据失败: " + (panel.message || data?.message || data?.details || data?.error || err.message), { id: tId });
     } finally {
       setSyncing(false);
     }
