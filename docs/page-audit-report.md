@@ -228,6 +228,27 @@ After the R5-UX-SCOPE-SYNC-CF code pass, follow-up review found a few remaining 
 
 This pass only completes code-layer gaps. It does not perform VPS, API, or browser acceptance testing. The consistency script is ready and should be re-run during the unified verification phase against the deployed service.
 
+## R5-UX-SCOPE-SYNC-CF3 Audience Metric Label and Countries Store-Only Scope Fix
+
+### Cause
+
+CF2 code-layer verification still found two remaining issues:
+
+- Audience charts and tables still used ambiguous Meta metric labels such as `购买 (单)` and `购买价值`.
+- `/countries` could still keep countries only because they had Meta metrics, which conflicted with the store-order receiving-country scope.
+
+### Scope Fixed
+
+- Audience Meta metric labels were unified as `Meta购买数` and `Meta转化价值`.
+- `/countries` service rows now keep only countries with store orders or store revenue.
+- `/countries` route `visibleCountryRows` no longer uses Meta metrics to decide whether a country remains in the response.
+- `/countries` dataScope now states that Meta-only countries belong in the audience page country tab.
+- This pass did not enter VPS, API matrix, or frontend screenshot acceptance. It remains a code-layer patch before `R5-DATA-PAGE-CODE-CLOSURE-AUDIT`.
+
+### Not Unified Acceptance
+
+This pass does not claim deployed data consistency. The deployed API and frontend must still be checked later in the unified verification phase.
+
 ## R5-ROOT-FIX-CF Date State Completion
 
 ### 修复原因

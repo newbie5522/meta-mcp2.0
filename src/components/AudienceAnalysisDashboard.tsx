@@ -385,9 +385,9 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 - 点击率 (CTR): ${formattedCtr}%
 - 单次点击成本 (CPC): $${row.cpc.toFixed(2)}
 - 千次展示成本 (CPM): $${row.cpm.toFixed(2)}
-- 带来的转化购买数 (Purchases): ${row.purchases}
+- Meta购买数 (Purchases): ${row.purchases}
 - 获客单价 (CPA/CAC): $${row.cpa.toFixed(2)}
-- 广告购买价值 (Purchase Value): $${row.purchaseValue.toFixed(2)}
+- Meta转化价值 (Purchase Value): $${row.purchaseValue.toFixed(2)}
 - 广告投资回报率 (ROAS): ${row.roas.toFixed(2)}
 - 触点关联广告账户数: ${row.accountsCount} 个
 
@@ -543,7 +543,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
               <RechartsTooltip formatter={(value, name) => [typeof value === 'number' ? value.toFixed(2) : value, name]} contentStyle={{ fontSize: 11, borderRadius: 8 }} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Bar yAxisId="left" dataKey="spend" name="花费 ($)" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={25} />
-              <Bar yAxisId="right" dataKey="purchases" name="购买 (单)" fill="#10b981" radius={[4, 4, 0, 0]} barSize={25} />
+              <Bar yAxisId="right" dataKey="purchases" name="Meta购买数" fill="#10b981" radius={[4, 4, 0, 0]} barSize={25} />
             </BarChart>
           </ResponsiveContainer>
         );
@@ -557,7 +557,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
               <RechartsTooltip formatter={(value, name) => [typeof value === 'number' ? value.toFixed(2) : value, name]} contentStyle={{ fontSize: 11, borderRadius: 8 }} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Bar dataKey="spend" name="花费 ($)" fill="#6366f1" radius={[0, 4, 4, 0]} barSize={15} />
-              <Bar dataKey="purchases" name="购买 (单)" fill="#10b981" radius={[0, 4, 4, 0]} barSize={15} />
+              <Bar dataKey="purchases" name="Meta购买数" fill="#10b981" radius={[0, 4, 4, 0]} barSize={15} />
             </BarChart>
           </ResponsiveContainer>
         );
@@ -595,7 +595,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
               <RechartsTooltip formatter={(value, name) => [typeof value === 'number' ? value.toFixed(2) : value, name]} contentStyle={{ fontSize: 11, borderRadius: 8 }} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Bar yAxisId="left" dataKey="spend" name="花费 ($)" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={25} />
-              <Bar yAxisId="right" dataKey="purchases" name="购买 (单)" fill="#10b981" radius={[4, 4, 0, 0]} barSize={25} />
+              <Bar yAxisId="right" dataKey="purchases" name="Meta购买数" fill="#10b981" radius={[4, 4, 0, 0]} barSize={25} />
             </BarChart>
           </ResponsiveContainer>
         );
@@ -839,7 +839,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
         <Card className="border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
           <CardContent className="p-4">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">平均购买成本 (CPA)</p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">平均Meta购买成本 (CPA)</p>
             <h3 className="text-lg font-black text-slate-800 font-mono mt-1">${cpaVal.toFixed(2)}</h3>
           </CardContent>
         </Card>
@@ -862,7 +862,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
             <div className="flex flex-col gap-1">
               <CardTitle className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
                 <MonitorPlay className="w-4 h-4 text-indigo-500" />
-                受众花费与转化购买分布交叉比对图 (Purchases vs Ad Spend)
+                受众花费与Meta购买数分布交叉比对图 (Purchases vs Ad Spend)
               </CardTitle>
               {activeTab === "country" && (
                 <p className="text-[10px] text-slate-500 font-semibold mt-1">
@@ -944,7 +944,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                         获客 CPA/CAC {sortBy === "cpa" && <span className="text-indigo-600 font-extrabold font-mono">↓</span>}
                       </div>
                     </TableHead>
-                    <TableHead className="text-slate-700 font-semibold text-right">购买价值</TableHead>
+                    <TableHead className="text-slate-700 font-semibold text-right">Meta转化价值</TableHead>
                     <TableHead className="text-slate-700 font-bold text-indigo-500 text-right cursor-pointer hover:bg-indigo-50/50" onClick={() => handleSortToggle("roas")}>
                       <div className="flex items-center justify-end gap-1 select-none font-mono">
                         ROAS {sortBy === "roas" && <span className="text-indigo-600 font-extrabold font-mono">↓</span>}

@@ -127,14 +127,10 @@ function buildStoreOrderCountryWhere({
   return where;
 }
 
-function filterNonZeroCountryRows(rows: MergedCountryRow[]) {
+function filterStoreOrderCountryRows(rows: MergedCountryRow[]) {
   return rows.filter(row =>
     Number(row.orderCount || 0) > 0 ||
-    Number(row.orderRevenue || 0) > 0 ||
-    Number(row.metaSpend || 0) > 0 ||
-    Number(row.metaImpressions || 0) > 0 ||
-    Number(row.metaClicks || 0) > 0 ||
-    Number(row.metaPurchases || 0) > 0
+    Number(row.orderRevenue || 0) > 0
   );
 }
 
@@ -369,7 +365,7 @@ export async function getCountryAnalytics(
   ]));
 
   // Convert map to final rows with formula metrics
-  const mergedRows: MergedCountryRow[] = filterNonZeroCountryRows(
+  const mergedRows: MergedCountryRow[] = filterStoreOrderCountryRows(
     allCountryCodes.map(countryCode => {
       const g = countryBreakdownGroup[countryCode];
       const og = orderCountryGroup[countryCode];

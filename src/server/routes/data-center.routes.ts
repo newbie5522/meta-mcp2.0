@@ -1131,11 +1131,7 @@ router.get("/countries", async (req, res) => {
     const visibleCountryRows = Array.isArray(result.rows)
       ? result.rows.filter((row: any) =>
         Number(row.orderCount || row.orders || 0) > 0 ||
-          Number(row.revenue || row.totalRevenue || row.orderRevenue || 0) > 0 ||
-          Number(row.spend || row.metaSpend || 0) > 0 ||
-          Number(row.impressions || row.metaImpressions || 0) > 0 ||
-          Number(row.clicks || row.metaClicks || 0) > 0 ||
-          Number(row.purchases || row.metaPurchases || 0) > 0
+          Number(row.revenue || row.totalRevenue || row.orderRevenue || 0) > 0
       )
       : [];
     const visibleOrderCount = visibleCountryRows.reduce(
@@ -1178,12 +1174,12 @@ router.get("/countries", async (req, res) => {
       dataScope: buildDataScope({
         page: "countries",
         primarySource: "Store orders",
-        metaScope: "Meta 国家指标来自受众 country breakdown",
-        storeScope: "店铺订单国家按 Order.store_local_date 和收货/账单国家统计",
+        metaScope: "仅在有店铺订单国家上展示匹配到的 Meta 国家指标；Meta-only 国家请看受众页 country tab",
+        storeScope: "店铺订单按 Order.store_local_date 和收货/账单国家统计",
         dateField: "store_local_date",
         storeId,
         includeUnmapped: incUnmapped,
-        includeZeroSpend: minS <= 0,
+        includeZeroSpend: false,
         mappedOnly: !incUnmapped
       }),
       dataHealth: {
