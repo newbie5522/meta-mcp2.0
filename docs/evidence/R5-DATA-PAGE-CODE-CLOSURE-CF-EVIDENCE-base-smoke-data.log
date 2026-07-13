@@ -1,0 +1,25 @@
+
+> react-example@0.0.0 smoke:data
+> tsx src/server/scripts/smoke-data-contract.ts
+
+
+DATA CONTRACT SMOKE
+[PASS] AdAccount.storeId is nullable - AdAccount can exist unmapped and store deletion sets storeId null
+[PASS] AccountMapping.storeId is nullable - AccountMapping can represent unmapped account history
+[FAIL] Unmapped AdAccount can be written - unmapped AdAccount write path is not statically proven
+[PASS] No runtime AdAccount delete in config/sync chain - runtime config/sync files do not call prisma.adAccount.delete/deleteMany
+[PASS] No defaultStore binding in AdAccount chain - AdAccount sync/mapping paths do not bind unknown accounts to a default store
+[PASS] Order has store-local fact fields - Order schema contains UTC, timezone, local datetime, and local date fields
+[PASS] Store sync uses Store.timezone for order windows - store sync derives request windows from Store.timezone
+[PASS] Store sync computes and filters store_local_date - store sync writes local date/datetime/UTC fields and applies local-date range filtering
+[PASS] OrderFactService defaults createdAt fallback off - Order fact reads Order.store_local_date unless explicit fallback is requested
+[PASS] DataCenter default createdAt fallback is closed - DataCenter routes require includeLegacyFallback=true to enable legacy createdAt fallback
+[PASS] DataCenter does not fabricate reach from spend - reach is marked unavailable instead of estimated from spend
+[PASS] FactMetaPerformance is the Meta performance fact source - Meta performance routes call the FactMetaPerformance fact service
+[PASS] Mapping facts isolate unmapped spend - unmapped spend is surfaced separately rather than merged into store ROAS
+[PASS] Data pipeline audit treats empty FactMetaPerformance as WARNING - empty FactMetaPerformance creates a warning, not fabricated PASS data
+[FAIL] Dangerous sync endpoints require ENABLE_MANUAL_SYNC - dangerous sync routes are not fully protected by ENABLE_MANUAL_SYNC
+
+Summary: 13 passed, 0 warnings, 2 failed.
+
+__SMOKE_EXIT_CODE__=1
