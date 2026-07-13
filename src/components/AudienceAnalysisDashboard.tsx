@@ -206,7 +206,17 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         } catch (countriesErr) {
           console.error("Failed to fetch order country statistics", countriesErr);
           setOrderCountryRows([]);
-          setCountriesHealth(null);
+          const errData = (countriesErr as any)?.response?.data;
+          setCountriesHealth({
+            status: "COUNTRIES_REQUEST_FAILED",
+            reason: "ORDER_COUNTRY_AUXILIARY_REQUEST_FAILED",
+            message: errData?.message || errData?.details || errData?.error || (countriesErr as any)?.message || "店铺订单国家辅助请求失败。",
+            dateRange: {
+              startDate: startStr,
+              endDate: endStr,
+              timezone: "America/Los_Angeles"
+            }
+          });
         } finally {
           setCountriesLoading(false);
         }
@@ -487,6 +497,12 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   const cpmVal = metaSummary.cpm ?? 0;
   const cpaVal = metaSummary.cpa ?? 0;
   const roasVal = metaSummary.roas ?? 0;
+
+  const formatOrderBusinessDate = (value: string | null | undefined) => {
+    if (!value) return "-";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return String(value);
+    return format(new Date(value), "yyyy-MM-dd HH:mm");
+  };
 
   // Unified data source for both charts and table (limited to Top 10 for country to prevent label skipping/overlap)
   const tableRows = activeTab === "country" ? visibleMetaCountryRows : data;
@@ -1070,6 +1086,14 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                 <Loader2 className="w-6 h-6 animate-spin text-emerald-500 mb-2" />
                 <p className="text-xs font-semibold">主站订单国家数据分析中...</p>
               </div>
+            ) : countriesHealth?.status === "COUNTRIES_REQUEST_FAILED" ? (
+              <div className="p-12 text-center text-rose-600 bg-rose-50/30 rounded-xl my-4 flex flex-col items-center justify-center max-w-lg mx-auto border border-dashed border-rose-200">
+                <AlertTriangle className="w-8 h-8 text-rose-400 mb-2" />
+                <p className="text-xs font-bold text-rose-700">店铺订单国家辅助请求失败</p>
+                <p className="text-[11px] text-rose-500 mt-1">
+                  {countriesHealth.message || "当前日期和店铺范围的订单国家数据未能加载；这是真实请求错误，不作为空数据处理。"}
+                </p>
+              </div>
             ) : (countriesHealth?.status === "ORDER_COUNTRY_BACKFILL_REQUIRED" || visibleOrderCountryRows.length === 0) ? (
               <div className="p-12 text-center text-slate-500 bg-slate-50/20 rounded-xl my-4 flex flex-col items-center justify-center max-w-lg mx-auto border border-dashed border-slate-200">
                 <AlertTriangle className="w-8 h-8 text-slate-400 mb-2" />
@@ -1095,8 +1119,8 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                   </TableHeader>
                   <TableBody>
                     {visibleOrderCountryRows.map((row) => {
-                      const formattedFirst = row.orderFirstAt ? format(new Date(row.orderFirstAt), "yyyy-MM-dd HH:mm") : "-";
-                      const formattedLast = row.orderLastAt ? format(new Date(row.orderLastAt), "yyyy-MM-dd HH:mm") : "-";
+                      const formattedFirst = formatOrderBusinessDate(row.orderFirstAt);
+                      const formattedLast = formatOrderBusinessDate(row.orderLastAt);
                       return (
                         <TableRow key={`order-country-${row.countryCode}`} className="hover:bg-slate-50/80 border-b">
                           <TableCell className="font-extrabold text-slate-800 whitespace-nowrap pr-4 flex items-center gap-1.5">

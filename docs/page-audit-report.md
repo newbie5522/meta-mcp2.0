@@ -176,6 +176,38 @@ Verification:
 
 This commit is ready for server-side full verification, not final production sign-off.
 
+## R5-DATA-PAGE-CODE-CLOSURE-CF
+
+### Scope
+
+This is an R5 internal code fix for Countries store scope and summary consistency. It does not claim Code complete, API complete, Browser complete, VPS complete, Production complete, or R5 completion.
+
+Changed files:
+- `src/server/services/country-analytics.logic.ts`
+- `src/server/services/country-analytics.logic.test.ts`
+- `src/server/services/country-analytics.service.ts`
+- `src/server/services/order-fact.service.ts`
+- `src/server/routes/data-center.routes.ts`
+- `src/components/AudienceAnalysisDashboard.tsx`
+- `docs/page-audit-report.md`
+
+### Fixes
+
+- Countries store rows are retained only by real Store facts: `orderCount > 0` or `orderRevenue > 0`.
+- `minSpend` no longer controls whether a Store country appears in `/countries`.
+- `/countries` summary uses the final visible rows and keeps Meta attached totals scoped to those rows.
+- Fixed-profit inference such as `revenue * 0.4` is removed; real zero profit stays `0`, unavailable profit stays `null` with warning.
+- Countries now reuses the Store order fact helper for `store_local_date`, payment-status filtering, deduplication fallback warning, refund amount availability, and business date rules.
+- `orderFirstAt` and `orderLastAt` are date-only values from `Order.store_local_date`, not `createdAt`.
+- Audience country auxiliary request failures now produce `COUNTRIES_REQUEST_FAILED` UI state instead of silently becoming an empty order-country table.
+
+### Boundaries
+
+- Payment status long-term rule: pending formal confirmation; this pass only reuses the existing Store order helper rule.
+- Refund long-term rule: pending formal confirmation; this pass does not invent refund amounts.
+- Canonical deduplication long-term rule: pending formal confirmation; this pass prefers real `orderId` and warns when falling back to database `id`.
+- VPS/API/browser verification is still not run in this pass.
+
 ## R5-UX-SCOPE-SYNC-CF Clean UI and Data Scope
 
 ### Cause
@@ -243,6 +275,7 @@ CF2 code-layer verification still found two remaining issues:
 - `/countries` service rows now keep only countries with store orders or store revenue.
 - `/countries` route `visibleCountryRows` no longer uses Meta metrics to decide whether a country remains in the response.
 - `/countries` dataScope now states that Meta-only countries belong in the audience page country tab.
+- Later R5-DATA-PAGE-CODE-CLOSURE-CF review found this was not a complete Countries closeout: `minSpend`, summary totals, profit, refund, deduplication, and business-date handling still needed a dedicated code fix.
 - This pass did not enter VPS, API matrix, or frontend screenshot acceptance. It remains a code-layer patch before `R5-DATA-PAGE-CODE-CLOSURE-AUDIT`.
 
 ### Not Unified Acceptance

@@ -1128,42 +1128,8 @@ router.get("/countries", async (req, res) => {
       minO,
       incUnmapped
     );
-    const visibleCountryRows = Array.isArray(result.rows)
-      ? result.rows.filter((row: any) =>
-        Number(row.orderCount || row.orders || 0) > 0 ||
-          Number(row.revenue || row.totalRevenue || row.orderRevenue || 0) > 0
-      )
-      : [];
-    const visibleOrderCount = visibleCountryRows.reduce(
-      (sum: number, row: any) => sum + Number(row.orderCount || row.orders || 0),
-      0
-    );
-    const visibleRevenue = visibleCountryRows.reduce(
-      (sum: number, row: any) => sum + Number(row.revenue || row.totalRevenue || row.orderRevenue || 0),
-      0
-    );
-    const visibleMetaCountriesCount = visibleCountryRows.filter((row: any) =>
-      Number(row.metaSpend || row.spend || 0) > 0 ||
-      Number(row.metaImpressions || row.impressions || 0) > 0 ||
-      Number(row.metaClicks || row.clicks || 0) > 0 ||
-      Number(row.metaPurchases || row.purchases || 0) > 0
-    ).length;
-    const visibleOrderCountriesCount = visibleCountryRows.filter((row: any) =>
-      Number(row.orderCount || row.orders || 0) > 0 ||
-      Number(row.revenue || row.totalRevenue || row.orderRevenue || 0) > 0
-    ).length;
-    const visibleCountrySummary = {
-      ...(result.summary || {}),
-      countriesCount: visibleCountryRows.length,
-      countryCount: visibleCountryRows.length,
-      orderCountriesCount: visibleOrderCountriesCount,
-      metaCountriesCount: visibleMetaCountriesCount,
-      orderCount: visibleOrderCount,
-      revenue: Number(visibleRevenue.toFixed(4)),
-      averageOrderValue: visibleOrderCount > 0 ? Number((visibleRevenue / visibleOrderCount).toFixed(4)) : 0,
-      totalOrderCount: visibleOrderCount,
-      totalOrderRevenue: Number(visibleRevenue.toFixed(4))
-    };
+    const visibleCountryRows = Array.isArray(result.rows) ? result.rows : [];
+    const visibleCountrySummary = result.summary || {};
 
     res.json({
       ...result,
@@ -1179,7 +1145,7 @@ router.get("/countries", async (req, res) => {
         dateField: "store_local_date",
         storeId,
         includeUnmapped: incUnmapped,
-        includeZeroSpend: false,
+        includeZeroSpend: true,
         mappedOnly: !incUnmapped
       }),
       dataHealth: {
@@ -1192,7 +1158,7 @@ router.get("/countries", async (req, res) => {
           source: "FactAudienceBreakdown + Order",
           storeId,
           includeUnmapped: incUnmapped,
-          includeZeroSpend: minS <= 0,
+          includeZeroSpend: true,
           mappedOnly: !incUnmapped,
           factRows: visibleCountryRows.length,
           structureRows: 0
