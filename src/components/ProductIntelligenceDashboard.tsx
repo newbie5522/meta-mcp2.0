@@ -23,7 +23,7 @@ interface StoreOption {
   platform?: string;
 }
 
-interface ProductIntelligenceRecord {
+export interface ProductIntelligenceRecord {
   id: string;
   productId: string;
   storeId: number | null;
@@ -43,7 +43,7 @@ interface ProductIntelligenceRecord {
   source: "Order";
 }
 
-interface ProductSummary {
+export interface ProductSummary {
   productsCount: number;
   totalOrders: number;
   refundedOrders: number;
@@ -51,6 +51,70 @@ interface ProductSummary {
   totalProductLineRevenue: number | null;
   revenueComplete: boolean;
   profitAvailable: false;
+}
+
+export type ProductViewSnapshot = {
+  products: ProductIntelligenceRecord[];
+  summary: ProductSummary | null;
+  dataHealth: any | null;
+  dataHealthStatus: string;
+  responseDateRange: {
+    startDate: string;
+    endDate: string;
+    timezone?: string;
+  } | null;
+};
+
+export function emptyProductSnapshot(dataHealthStatus: string): ProductViewSnapshot {
+  return {
+    products: [],
+    summary: null,
+    dataHealth: null,
+    dataHealthStatus,
+    responseDateRange: null
+  };
+}
+
+export function buildProductSnapshot(payload: any): ProductViewSnapshot {
+  const products = Array.isArray(payload?.products) ? payload.products : [];
+  return {
+    products,
+    summary: payload?.summary || null,
+    dataHealth: payload?.dataHealth || null,
+    dataHealthStatus: payload?.dataHealth?.status || (products.length > 0 ? "READY" : "EMPTY"),
+    responseDateRange: payload?.dateRange || payload?.appliedFilters || null
+  };
+}
+
+export function resolveProductSnapshot(input: {
+  payload: any;
+  currentSnapshot: ProductViewSnapshot;
+  lastGoodData: any;
+  currentRequestKey: string;
+  startDate: string;
+  endDate: string;
+}): { snapshot: ProductViewSnapshot; notice: string | null; persist: boolean } {
+  const safeData = getSafeLastGoodData(input.lastGoodData, input.currentRequestKey);
+  if (isDateRangeMismatch(input.payload, input.startDate, input.endDate)) {
+    return {
+      snapshot: safeData?.data || emptyProductSnapshot("DATE_RANGE_MISMATCH"),
+      notice: DATE_RANGE_MISMATCH_MESSAGE,
+      persist: false
+    };
+  }
+  if (shouldPreserveLastGoodData(
+    input.payload,
+    input.currentSnapshot.products,
+    input.lastGoodData,
+    input.currentRequestKey
+  )) {
+    return {
+      snapshot: safeData?.data || emptyProductSnapshot(input.currentSnapshot.dataHealthStatus),
+      notice: safeData ? CURRENT_RANGE_NOT_READY_MESSAGE : null,
+      persist: false
+    };
+  }
+  return { snapshot: input.currentSnapshot, notice: null, persist: true };
 }
 
 const PRODUCT_WARNING_LABELS: Record<string, string> = {
@@ -83,6 +147,14 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
     includeZeroSpend: true
   });
 
+  function applyProductSnapshot(snapshot: ProductViewSnapshot) {
+    setProducts(snapshot.products);
+    setSummary(snapshot.summary);
+    setDataHealth(snapshot.dataHealth);
+    setDataHealthStatus(snapshot.dataHealthStatus);
+    setResponseDateRange(snapshot.responseDateRange);
+  }
+
   useEffect(() => {
     let active = true;
     axios.get("/api/data-center/detail", {
@@ -97,7 +169,7 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
 
   useEffect(() => {
     setViewNotice(null);
-    setResponseDateRange(null);
+    applyProductSnapshot(emptyProductSnapshot("LOADING"));
     setSyncStatus({ status: "idle" });
   }, [currentRequestKey]);
 
@@ -108,38 +180,28 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
       const response = await axios.get("/api/data-center/products", {
         params: { startDate: startStrKey, endDate: endStrKey, storeId }
       });
-      const rows = Array.isArray(response.data?.products) ? response.data.products : [];
-      setResponseDateRange(response.data?.dateRange || response.data?.appliedFilters || null);
-      setDataHealthStatus(response.data?.dataHealth?.status || (rows.length > 0 ? "READY" : "EMPTY"));
-      setDataHealth(response.data?.dataHealth || null);
-      setSummary(response.data?.summary || null);
-
-      if (isDateRangeMismatch(response.data, startStrKey, endStrKey)) {
-        const safeData = getSafeLastGoodData(lastGoodData, currentRequestKey);
-        setProducts(safeData?.data || []);
-        setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
-        return;
+      const currentSnapshot = buildProductSnapshot(response.data);
+      const decision = resolveProductSnapshot({
+        payload: response.data,
+        currentSnapshot,
+        lastGoodData,
+        currentRequestKey,
+        startDate: startStrKey,
+        endDate: endStrKey
+      });
+      applyProductSnapshot(decision.snapshot);
+      setViewNotice(decision.notice);
+      if (decision.persist) {
+        setLastGoodData(makeLastGoodData(currentRequestKey, currentSnapshot));
       }
-      if (shouldPreserveLastGoodData(response.data, rows, lastGoodData, currentRequestKey)) {
-        const safeData = getSafeLastGoodData(lastGoodData, currentRequestKey);
-        if (safeData) {
-          setProducts(safeData.data || []);
-          setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-          return;
-        }
-      }
-      setProducts(rows);
-      setLastGoodData(makeLastGoodData(currentRequestKey, rows));
-      setViewNotice(null);
     } catch (requestError: any) {
       const safeData = getSafeLastGoodData(lastGoodData, currentRequestKey);
       if (safeData) {
-        setProducts(safeData.data || []);
+        applyProductSnapshot(safeData.data);
         setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
       } else {
-        setProducts([]);
-        setSummary(null);
-        setDataHealthStatus("REQUEST_FAILED");
+        applyProductSnapshot(emptyProductSnapshot("REQUEST_FAILED"));
+        setViewNotice(null);
         setError(requestError.response?.data?.details || requestError.message || "商品订单分析加载失败");
       }
     } finally {

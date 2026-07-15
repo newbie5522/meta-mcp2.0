@@ -32,7 +32,7 @@ vi.mock("../services/datacenter-meta-ledger.service.js", () => ({ refreshMetaDat
 vi.mock("../services/meta-audience-breakdown-sync.service.js", () => ({ syncMetaAudienceBreakdown: vi.fn() }));
 vi.mock("uuid", () => ({ v4: uuidMock }));
 
-import router from "./sync.routes";
+import router, { deriveSyncStatus } from "./sync.routes";
 
 function responseMock() {
   const response: any = {
@@ -76,6 +76,106 @@ beforeEach(() => {
   syncCenterMock.syncMetaActivity.mockResolvedValue("task-activity");
   syncCenterMock.syncStoreOrders.mockResolvedValue("task-store");
   refreshStoreLedgerMock.mockResolvedValue({ recordsSaved: 0 });
+});
+
+describe("deriveSyncStatus", () => {
+  it("returns NO_NEW_DATA when there are no failures or records", () => {
+    expect(deriveSyncStatus({
+      hasFailedTask: false,
+      failedAccounts: [],
+      recordsFetched: 0,
+      recordsSaved: 0,
+      recordsUpdated: 0
+    })).toBe("NO_NEW_DATA");
+  });
+
+  it("returns SUCCESS when records exist without failures", () => {
+    expect(deriveSyncStatus({
+      hasFailedTask: false,
+      failedAccounts: [],
+      recordsFetched: 1,
+      recordsSaved: 0,
+      recordsUpdated: 0
+    })).toBe("SUCCESS");
+  });
+
+  it("returns PARTIAL_SUCCESS when failures and records both exist", () => {
+    expect(deriveSyncStatus({
+      hasFailedTask: true,
+      failedAccounts: [{ accountId: "account-1", message: "partial failure" }],
+      recordsFetched: 1,
+      recordsSaved: 0,
+      recordsUpdated: 0
+    })).toBe("PARTIAL_SUCCESS");
+  });
+
+  it("returns FAILED when a failure has no records", () => {
+    expect(deriveSyncStatus({
+      hasFailedTask: true,
+      failedAccounts: [{ accountId: "account-1", message: "sync failed" }],
+      recordsFetched: 0,
+      recordsSaved: 0,
+      recordsUpdated: 0
+    })).toBe("FAILED");
+  });
+});
+
+describe("POST /sync/trigger derived status", () => {
+  it("returns a neutral NO_NEW_DATA success response", async () => {
+    const response = await invokeTrigger({ taskType: "sync_view_products" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.status).toBe("NO_NEW_DATA");
+    expect(response.body.message).toContain("没有新的订单数据");
+  });
+
+  it("returns HTTP 500 and the failure contract for a failed task with no records", async () => {
+    prismaMock.syncLog.findMany.mockResolvedValue([{
+      status: "failed",
+      recordsFetched: 0,
+      recordsSaved: 0,
+      metadata: {
+        message: "Store order sync failed",
+        failedAccounts: [{ accountId: "store-1", message: "token expired" }]
+      }
+    }]);
+
+    const response = await invokeTrigger({ taskType: "sync_view_products" });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.body).toMatchObject({
+      success: false,
+      status: "FAILED",
+      error: "SYNC_TASK_FAILED",
+      message: "Store order sync failed",
+      recordsFetched: 0,
+      recordsSaved: 0,
+      recordsUpdated: 0,
+      failedAccounts: [{ accountId: "store-1", message: "token expired" }],
+      chainId: "chain-test",
+      taskType: "sync_view_products",
+      taskIds: ["task-store"]
+    });
+  });
+
+  it("returns a warning PARTIAL_SUCCESS response when records and failures coexist", async () => {
+    prismaMock.syncLog.findMany.mockResolvedValue([{
+      status: "failed",
+      recordsFetched: 1,
+      recordsSaved: 1,
+      metadata: {
+        failedAccounts: [{ accountId: "store-1", message: "one page failed" }]
+      }
+    }]);
+
+    const response = await invokeTrigger({ taskType: "sync_view_products" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.status).toBe("PARTIAL_SUCCESS");
+    expect(response.body.message).toContain("部分任务执行失败");
+  });
 });
 
 describe("POST /sync/trigger manual guard", () => {

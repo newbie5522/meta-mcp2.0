@@ -140,16 +140,42 @@ function buildProgress(input: {
   };
 }
 
-function deriveSyncStatus(summary: any) {
-  if (summary.hasFailedTask || summary.failedAccounts?.length > 0) {
-    return summary.recordsFetched > 0 || summary.recordsSaved > 0 || summary.recordsUpdated > 0
-      ? "PARTIAL_SUCCESS"
-      : "NO_NEW_DATA";
+export function deriveSyncStatus(summary: any) {
+  const hasFailure =
+    summary.hasFailedTask ||
+    (Array.isArray(summary.failedAccounts) && summary.failedAccounts.length > 0);
+  const hasRecords =
+    Number(summary.recordsFetched || 0) > 0 ||
+    Number(summary.recordsSaved || 0) > 0 ||
+    Number(summary.recordsUpdated || 0) > 0;
+
+  if (hasFailure) {
+    return hasRecords ? "PARTIAL_SUCCESS" : "FAILED";
   }
 
-  return summary.recordsFetched === 0 && summary.recordsSaved === 0 && summary.recordsUpdated === 0
-    ? "NO_NEW_DATA"
-    : "SUCCESS";
+  return hasRecords ? "SUCCESS" : "NO_NEW_DATA";
+}
+
+function returnFailedSyncResponse(res: any, input: {
+  summary: any;
+  chainId: string;
+  taskType: string;
+  taskIds: string[];
+  message?: string | null;
+}) {
+  return res.status(500).json({
+    success: false,
+    status: "FAILED",
+    error: "SYNC_TASK_FAILED",
+    message: input.message || input.summary.metadataMessage || input.summary.metadataReason || "同步任务执行失败。",
+    recordsFetched: Number(input.summary.recordsFetched || 0),
+    recordsSaved: Number(input.summary.recordsSaved || 0),
+    recordsUpdated: Number(input.summary.recordsUpdated || 0),
+    failedAccounts: Array.isArray(input.summary.failedAccounts) ? input.summary.failedAccounts : [],
+    chainId: input.chainId,
+    taskType: input.taskType,
+    taskIds: input.taskIds
+  });
 }
 
 function isSyncAlreadyRunningError(error: any) {
@@ -507,6 +533,9 @@ router.post("/sync/trigger", async (req, res) => {
       const summary = await summarizeSyncLogs(taskIds);
       const limitReceipt = buildLimitReceipt(limit, targets.length);
       const status = deriveSyncStatus(summary);
+      if (status === "FAILED") {
+        return returnFailedSyncResponse(res, { summary, chainId, taskType, taskIds });
+      }
       return res.json({
         success: true,
         status,
@@ -559,12 +588,18 @@ router.post("/sync/trigger", async (req, res) => {
       const summary = await summarizeSyncLogs(taskIds);
       const limitReceipt = buildLimitReceipt(limit, targets.length);
       const metadataStatus = String(summary.metadataStatus || "").toUpperCase();
+      const derivedStatus = deriveSyncStatus(summary);
       const status =
-        metadataStatus === "NO_NEW_DATA"
+        derivedStatus === "FAILED" || derivedStatus === "PARTIAL_SUCCESS"
+          ? derivedStatus
+          : metadataStatus === "NO_NEW_DATA"
           ? "NO_NEW_DATA"
           : metadataStatus === "PARTIAL"
             ? "PARTIAL_SUCCESS"
-            : deriveSyncStatus(summary);
+            : derivedStatus;
+      if (status === "FAILED") {
+        return returnFailedSyncResponse(res, { summary, chainId, taskType, taskIds });
+      }
       return res.json({
         success: true,
         status,
@@ -625,9 +660,13 @@ router.post("/sync/trigger", async (req, res) => {
       }
       const summary = await summarizeSyncLogs(taskIds);
       const limitReceipt = buildLimitReceipt(limit, targets.length);
+      const status = deriveSyncStatus(summary);
+      if (status === "FAILED") {
+        return returnFailedSyncResponse(res, { summary, chainId, taskType, taskIds });
+      }
       return res.json({
         success: true,
-        status: deriveSyncStatus(summary),
+        status,
         message: "素材视图同步完成：已执行素材结构和 ad-level 成效事实链路。",
         chainId,
         taskType,
@@ -684,9 +723,13 @@ router.post("/sync/trigger", async (req, res) => {
       });
       const summary = await summarizeSyncLogs(taskIds);
       const limitReceipt = buildLimitReceipt(limit, targets.length);
+      const status = deriveSyncStatus(summary);
+      if (status === "FAILED") {
+        return returnFailedSyncResponse(res, { summary, chainId, taskType, taskIds });
+      }
       return res.json({
         success: true,
-        status: deriveSyncStatus(summary),
+        status,
         message: "账户表现视图同步完成：Meta 账户、成效事实与账户 ledger 已串联执行。",
         chainId,
         taskType,
@@ -743,12 +786,20 @@ router.post("/sync/trigger", async (req, res) => {
 
       const summary = await summarizeSyncLogs(taskIds);
       const ledgerRecordsSaved = ledgers.reduce((sum, item) => sum + Number(item.recordsSaved || item.snapshots?.length || 0), 0);
+      const status = deriveSyncStatus(summary);
+      if (status === "FAILED") {
+        return returnFailedSyncResponse(res, { summary, chainId, taskType, taskIds });
+      }
       return res.json({
         success: true,
-        status: deriveSyncStatus(summary),
-        message: taskType === SyncTaskType.SYNC_VIEW_PRODUCTS
-          ? "商品视图同步完成：店铺订单与店铺 ledger 已串联执行。"
-          : "店铺视图同步完成：店铺订单与店铺 ledger 已串联执行。",
+        status,
+        message: status === "NO_NEW_DATA"
+          ? "店铺订单同步完成，当前范围没有新的订单数据。"
+          : status === "PARTIAL_SUCCESS"
+            ? "店铺订单同步部分成功，部分任务执行失败。"
+            : taskType === SyncTaskType.SYNC_VIEW_PRODUCTS
+              ? "商品视图同步完成：店铺订单与店铺 ledger 已串联执行。"
+              : "店铺视图同步完成：店铺订单与店铺 ledger 已串联执行。",
         chainId,
         taskType,
         taskIds,
@@ -800,6 +851,9 @@ router.post("/sync/trigger", async (req, res) => {
       const summary = await summarizeSyncLogs(taskIds);
       const limitReceipt = buildLimitReceipt(limit, targets.length);
       const status = deriveSyncStatus(summary);
+      if (status === "FAILED") {
+        return returnFailedSyncResponse(res, { summary, chainId, taskType, taskIds });
+      }
       return res.json({
         success: true,
         status,
@@ -861,6 +915,9 @@ router.post("/sync/trigger", async (req, res) => {
 
       const summary = await summarizeSyncLogs(taskIds);
       const status = deriveSyncStatus(summary);
+      if (status === "FAILED") {
+        return returnFailedSyncResponse(res, { summary, chainId, taskType, taskIds });
+      }
       return res.json({
         success: true,
         status,
@@ -912,6 +969,10 @@ router.post("/sync/trigger", async (req, res) => {
       const recordsFetched = summary.recordsFetched || log?.recordsFetched || 0;
       const recordsSaved = summary.recordsSaved || log?.recordsSaved || 0;
       const status = deriveSyncStatus(summary);
+
+      if (status === "FAILED") {
+        return returnFailedSyncResponse(res, { summary, chainId, taskType, taskIds: [taskId] });
+      }
 
       return res.json({
         success: true,
@@ -985,6 +1046,10 @@ router.post("/sync/trigger", async (req, res) => {
       const summary = await summarizeSyncLogs(taskIds);
       const limitReceipt = buildLimitReceipt(limit, targets.length);
       const status = deriveSyncStatus(summary);
+
+      if (status === "FAILED") {
+        return returnFailedSyncResponse(res, { summary, chainId, taskType, taskIds });
+      }
 
       return res.json({
         success: true,
@@ -1078,12 +1143,18 @@ router.post("/sync/trigger", async (req, res) => {
       const summary = await summarizeSyncLogs(taskIds);
       const limitReceipt = buildLimitReceipt(limit, targets.length);
       const metadataStatus = String(summary.metadataStatus || "").toUpperCase();
+      const derivedStatus = deriveSyncStatus(summary);
       const status =
-        metadataStatus === "NO_NEW_DATA"
+        derivedStatus === "FAILED" || derivedStatus === "PARTIAL_SUCCESS"
+          ? derivedStatus
+          : metadataStatus === "NO_NEW_DATA"
           ? "NO_NEW_DATA"
           : metadataStatus === "PARTIAL"
             ? "PARTIAL_SUCCESS"
-            : deriveSyncStatus(summary);
+            : derivedStatus;
+      if (status === "FAILED") {
+        return returnFailedSyncResponse(res, { summary, chainId, taskType, taskIds });
+      }
       const message =
         status === "NO_NEW_DATA"
           ? summary.metadataMessage || "Meta API 当前日期范围未返回受众 breakdown 数据。"
