@@ -320,19 +320,6 @@ export async function syncStoreData(
         });
       }
 
-      if (options?.rebuild) {
-        console.log(`[Store Sync] REBUILD MODE: Deleting legacy Order rows for storeId=${store.id} in range ${startDate} to ${endDate}`);
-        await prisma.order.deleteMany({
-          where: {
-            storeId: store.id,
-            store_local_date: {
-              gte: startDate,
-              lte: endDate
-            }
-          }
-        });
-      }
-
       const canonical = await fetchStoreOrdersCanonical({
         platform,
         storeId: store.id,
@@ -654,13 +641,15 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
             report.duplicateCount++;
           }
 
+          // Storage sentinel only. Profit is unavailable until real cost provenance exists.
+          // Read services must expose null + PROFIT_UNAVAILABLE.
           await prisma.order.upsert({
             where: { id: lineItem.id.toString() },
             update: {
               storeId: targetStoreId,
               productId: productId,
               revenue,
-              profit: revenue * 0.4,
+              profit: 0,
               refunded,
               refundedAt,
               orderId,
@@ -677,7 +666,7 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
               storeId: targetStoreId,
               productId: productId,
               revenue,
-              profit: revenue * 0.4,
+              profit: 0,
               refunded,
               refundedAt,
               orderId,
@@ -878,13 +867,15 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
             report.duplicateCount++;
           }
 
+          // Storage sentinel only. Profit is unavailable until real cost provenance exists.
+          // Read services must expose null + PROFIT_UNAVAILABLE.
           await prisma.order.upsert({
             where: { id: lineItem.id.toString() },
             update: {
               storeId: targetStoreId,
               productId: productId,
               revenue,
-              profit: revenue * 0.4,
+              profit: 0,
               refunded,
               refundedAt,
               orderId,
@@ -901,7 +892,7 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
               storeId: targetStoreId,
               productId: productId,
               revenue,
-              profit: revenue * 0.4,
+              profit: 0,
               refunded,
               refundedAt,
               orderId,
@@ -1140,13 +1131,15 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
             report.duplicateCount++;
           }
 
+          // Storage sentinel only. Profit is unavailable until real cost provenance exists.
+          // Read services must expose null + PROFIT_UNAVAILABLE.
           await prisma.order.upsert({
             where: { id: lineItem.id.toString() },
             update: {
               storeId: targetStoreId,
               productId: productId,
               revenue,
-              profit: revenue * 0.4,
+              profit: 0,
               refunded,
               refundedAt,
               orderId,
@@ -1163,7 +1156,7 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
               storeId: targetStoreId,
               productId: productId,
               revenue,
-              profit: revenue * 0.4,
+              profit: 0,
               refunded,
               refundedAt,
               orderId,

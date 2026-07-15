@@ -5,6 +5,9 @@ const { prismaMock } = vi.hoisted(() => ({
     order: {
       findMany: vi.fn(),
       count: vi.fn()
+    },
+    store: {
+      findMany: vi.fn()
     }
   }
 }));
@@ -32,6 +35,7 @@ function orderFixture(overrides: Record<string, unknown> = {}) {
     orderId: "order-default",
     storeId: 1,
     paymentStatus: "paid",
+    storePlatform: "shopify",
     orderTotal: null,
     revenue: 0,
     profit: 0,
@@ -49,6 +53,7 @@ function orderFixture(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  prismaMock.store.findMany.mockResolvedValue([{ id: 1, platform: "shopify" }]);
 });
 
 describe("store order fact shared contract", () => {
@@ -80,7 +85,8 @@ describe("store order fact shared contract", () => {
       expect(isPaymentStatusExcluded(status)).toBe(false);
     }
     expect(isPaymentStatusExcluded("  Waiting  ")).toBe(true);
-    expect(rows.map(row => row.orderId)).toEqual([
+    const normalized = normalizeStoreOrderFacts(rows);
+    expect(normalized.orders.map(order => order.rows[0].orderId)).toEqual([
       "included-0",
       "included-1",
       "included-2",
@@ -102,7 +108,7 @@ describe("store order fact shared contract", () => {
 
     // Assert
     expect(normalized.orders).toHaveLength(1);
-    expect(normalized.orders[0].orderKey).toBe("order-100");
+    expect(normalized.orders[0].orderKey).toBe("store:1:order:order-100");
     expect(normalized.orders[0].usedFallbackKey).toBe(false);
     expect(normalized.orders[0].revenue).toBe(120);
     expect(normalized.warnings).not.toContain("ORDER_DEDUP_FALLBACK_USED");
@@ -119,7 +125,7 @@ describe("store order fact shared contract", () => {
 
     // Assert
     expect(normalized.orders).toHaveLength(1);
-    expect(normalized.orders[0].orderKey).toBe("db-fallback-1");
+    expect(normalized.orders[0].orderKey).toBe("store:1:db:db-fallback-1");
     expect(normalized.orders[0].usedFallbackKey).toBe(true);
     expect(normalized.warnings).toContain("ORDER_DEDUP_FALLBACK_USED");
   });
@@ -322,7 +328,9 @@ describe("store order fact shared contract", () => {
     expect(summary.totalSales).toBe(150);
     expect(summary.aov).toBe(75);
     expect(summary.refundAmount).toBe(10);
-    expect(summary.refundRate).toBeCloseTo(10 / 150);
+    expect(summary.refundRate).toBeCloseTo(1 / 2);
+    expect(summary.refundAmountRate).toBeCloseTo(10 / 150);
+    expect(summary.refundRateBasis).toBe("orders");
     expect(summary.legacyFallbackOrdersCount).toBe(0);
     expect(summary.legacyFallbackRevenue).toBe(0);
     expect(summary.legacyFallbackUsed).toBe(false);
@@ -331,6 +339,14 @@ describe("store order fact shared contract", () => {
       "summary-order-1",
       "summary-order-2"
     ]);
+    expect(summary.orders).toHaveLength(3);
+    expect(summary.orders.every(row =>
+      typeof row.orderId === "string" &&
+      row.storeId === 1
+    )).toBe(true);
+    expect(summary.orders.some(row =>
+      row.orderId === "summary-excluded"
+    )).toBe(false);
   });
 
   it("counts explicit legacy fallback rows separately when fallback is requested", async () => {

@@ -14,12 +14,18 @@ export interface OrderFactSummary {
   ordersCount: number;
   totalSales: number;
   aov: number;
-  refundAmount: number;
+  refundedOrderCount: number;
+  refundAmount: number | null;
+  refundAmountAvailable: boolean;
+  refundOrderRate: number;
+  refundAmountRate: number | null;
   refundRate: number;
+  refundRateBasis: "orders";
   legacyFallbackOrdersCount: number;
   legacyFallbackRevenue: number;
   legacyFallbackUsed: boolean;
   orders: any[];
+  warnings: string[];
 }
 
 export interface MetaPerformanceFactParams {

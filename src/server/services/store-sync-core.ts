@@ -698,19 +698,6 @@ export async function saveCanonicalOrdersToDb(
   let orderRowsWritten = 0;
   let deletedRows = 0;
 
-  if (options?.rebuild && options.storeId && options.startDate && options.endDate) {
-    const deleted = await prisma.order.deleteMany({
-      where: {
-        storeId: options.storeId,
-        store_local_date: {
-          gte: options.startDate,
-          lte: options.endDate
-        }
-      }
-    });
-    deletedRows += deleted.count;
-  }
-
   for (const o of orders) {
     if (!o.lineItems || o.lineItems.length === 0) continue;
 
@@ -726,92 +713,96 @@ export async function saveCanonicalOrdersToDb(
     if (existingOrderInDb) uniqueOrdersUpdated++;
     else uniqueOrdersInserted++;
 
-    if (!options?.rebuild) {
-      const deleted = await prisma.order.deleteMany({
+    const countries = parseOrderCountryFields(o.raw);
+    const currentLineIds = o.lineItems.map(item => `${o.orderId}-${item.lineItemId}`);
+    const transactionResult = await prisma.$transaction(async tx => {
+      for (const item of o.lineItems) {
+        const productId = item.productId || `product-${o.orderId}`;
+        const orderLineId = `${o.orderId}-${item.lineItemId}`;
+        const refunded = o.financialStatus === "refunded" || o.financialStatus === "partially_refunded";
+        const refundedAt = refunded ? new Date(o.rawUpdatedAt || o.attributionTimeRaw) : null;
+
+        await tx.product.upsert({
+          where: { id: productId },
+          update: {
+            storeId: targetStoreId,
+            name: item.name || "Unknown Product",
+            sku: item.sku || "",
+          },
+          create: {
+            id: productId,
+            storeId: targetStoreId,
+            name: item.name || "Unknown Product",
+            sku: item.sku || "",
+            category: "Uncategorized",
+            inventory: 0
+          }
+        });
+
+        // Storage sentinel only. Profit is unavailable until real cost provenance exists.
+        // Read services must expose null + PROFIT_UNAVAILABLE.
+        await tx.order.upsert({
+          where: { id: orderLineId },
+          update: {
+            storeId: targetStoreId,
+            productId,
+            revenue: item.revenue,
+            profit: 0,
+            refunded,
+            refundedAt,
+            orderId: o.orderId,
+            orderTotal: o.orderTotal,
+            store_local_date: o.storeLocalDate,
+            paymentStatus: o.paymentStatus || "unknown",
+            fulfillmentStatus: o.fulfillmentStatus || "unfulfilled",
+            created_at_utc: new Date(o.rawCreatedAt || o.attributionTimeRaw),
+            store_timezone: o.storeTimezone,
+            store_local_datetime: o.storeLocalDatetime,
+            shippingCountryCode: countries.shippingCountryCode,
+            shippingCountryName: countries.shippingCountryName,
+            billingCountryCode: countries.billingCountryCode,
+            billingCountryName: countries.billingCountryName,
+            countrySource: countries.countrySource
+          },
+          create: {
+            id: orderLineId,
+            storeId: targetStoreId,
+            productId,
+            revenue: item.revenue,
+            profit: 0,
+            refunded,
+            refundedAt,
+            orderId: o.orderId,
+            orderTotal: o.orderTotal,
+            createdAt: new Date(o.rawCreatedAt || o.attributionTimeRaw),
+            store_local_date: o.storeLocalDate,
+            paymentStatus: o.paymentStatus || "unknown",
+            fulfillmentStatus: o.fulfillmentStatus || "unfulfilled",
+            created_at_utc: new Date(o.rawCreatedAt || o.attributionTimeRaw),
+            store_timezone: o.storeTimezone,
+            store_local_datetime: o.storeLocalDatetime,
+            shippingCountryCode: countries.shippingCountryCode,
+            shippingCountryName: countries.shippingCountryName,
+            billingCountryCode: countries.billingCountryCode,
+            billingCountryName: countries.billingCountryName,
+            countrySource: countries.countrySource
+          }
+        });
+      }
+
+      const staleLines = await tx.order.deleteMany({
         where: {
           storeId: o.storeId,
           orderId: o.orderId,
-          store_local_date: o.storeLocalDate
-        }
-      });
-      deletedRows += deleted.count;
-    }
-
-    const countries = parseOrderCountryFields(o.raw);
-
-    for (const item of o.lineItems) {
-      const productId = item.productId || `product-${o.orderId}`;
-      const orderLineId = `${o.orderId}-${item.lineItemId}`;
-      const refunded = o.financialStatus === "refunded" || o.financialStatus === "partially_refunded";
-      const refundedAt = refunded ? new Date(o.rawUpdatedAt || o.attributionTimeRaw) : null;
-
-      await prisma.product.upsert({
-        where: { id: productId },
-        update: {
-          storeId: targetStoreId,
-          name: item.name || "Unknown Product",
-          sku: item.sku || "",
-        },
-        create: {
-          id: productId,
-          storeId: targetStoreId,
-          name: item.name || "Unknown Product",
-          sku: item.sku || "",
-          category: "Uncategorized",
-          inventory: 0
+          id: { notIn: currentLineIds }
         }
       });
 
-      await prisma.order.upsert({
-        where: { id: orderLineId },
-        update: {
-          storeId: targetStoreId,
-          productId,
-          revenue: item.revenue,
-          profit: item.revenue * 0.4,
-          refunded,
-          refundedAt,
-          orderId: o.orderId,
-          orderTotal: o.orderTotal,
-          store_local_date: o.storeLocalDate,
-          paymentStatus: o.paymentStatus || "unknown",
-          fulfillmentStatus: o.fulfillmentStatus || "unfulfilled",
-          created_at_utc: new Date(o.rawCreatedAt || o.attributionTimeRaw),
-          store_timezone: o.storeTimezone,
-          store_local_datetime: o.storeLocalDatetime,
-          shippingCountryCode: countries.shippingCountryCode,
-          shippingCountryName: countries.shippingCountryName,
-          billingCountryCode: countries.billingCountryCode,
-          billingCountryName: countries.billingCountryName,
-          countrySource: countries.countrySource
-        },
-        create: {
-          id: orderLineId,
-          storeId: targetStoreId,
-          productId,
-          revenue: item.revenue,
-          profit: item.revenue * 0.4,
-          refunded,
-          refundedAt,
-          orderId: o.orderId,
-          orderTotal: o.orderTotal,
-          createdAt: new Date(o.rawCreatedAt || o.attributionTimeRaw),
-          store_local_date: o.storeLocalDate,
-          paymentStatus: o.paymentStatus || "unknown",
-          fulfillmentStatus: o.fulfillmentStatus || "unfulfilled",
-          created_at_utc: new Date(o.rawCreatedAt || o.attributionTimeRaw),
-          store_timezone: o.storeTimezone,
-          store_local_datetime: o.storeLocalDatetime,
-          shippingCountryCode: countries.shippingCountryCode,
-          shippingCountryName: countries.shippingCountryName,
-          billingCountryCode: countries.billingCountryCode,
-          billingCountryName: countries.billingCountryName,
-          countrySource: countries.countrySource
-        }
-      });
+      return { rowsWritten: currentLineIds.length, deletedRows: staleLines.count };
+    });
 
-      orderRowsWritten++;
-    }
+    orderRowsWritten += transactionResult.rowsWritten;
+    deletedRows += transactionResult.deletedRows;
   }
 
   return {

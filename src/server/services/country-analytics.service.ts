@@ -270,9 +270,11 @@ export async function getCountryAnalytics(
 
     const og = orderCountryGroup[resolvedCountryCode];
     og.revenue += order.revenue;
-    og.profit = og.profit === null || order.profit === null
-      ? null
-      : og.profit + order.profit;
+    if (og.profit === null || order.profit === null) {
+      og.profit = null;
+    } else {
+      og.profit += order.profit;
+    }
     og.totalOrders++;
     if (order.refunded) {
       og.refundedCount++;
@@ -316,7 +318,9 @@ export async function getCountryAnalytics(
       const orderRevenue = og ? og.revenue : null;
       const orderCount = og ? og.totalOrders : null;
       const orderProfit = og ? og.profit : null;
-      const refundRate = og && og.totalOrders > 0 && !og.refundAmountUnavailable ? (og.refundedCount / og.totalOrders) : null;
+      const refundRate = og && og.totalOrders > 0
+        ? og.refundedCount / og.totalOrders
+        : null;
       const paidOrderCount = og ? og.totalOrders : null;
       const averageOrderValue = og && og.totalOrders > 0 ? (og.revenue / og.totalOrders) : null;
       const orderFirstAt = og?.firstAt || null;

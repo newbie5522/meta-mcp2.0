@@ -79,16 +79,6 @@ export async function rebuildStoreLedgerForRange(params: {
     }
   });
 
-  const deleted = await prisma.order.deleteMany({
-    where: {
-      storeId: params.storeId,
-      store_local_date: {
-        gte: params.startDate,
-        lte: params.endDate
-      }
-    }
-  });
-
   const syncResult = await params.syncStoreData(params.startDate, params.endDate, String(params.storeId), {
     rebuild: true
   });
@@ -123,7 +113,7 @@ export async function rebuildStoreLedgerForRange(params: {
   const uniqueOrders = Array.from(byOrder.values());
 
   return {
-    deletedRows: deleted.count,
+    deletedRows: 0,
     beforeRows: before.length,
     afterRows: after.length,
     uniqueOrderCount: uniqueOrders.length,

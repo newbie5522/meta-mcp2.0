@@ -5,14 +5,18 @@ import dayjs from "dayjs";
 export function isPaymentStatusExcluded(status: string | null | undefined): boolean {
   if (!status) return false;
   const s = status.toLowerCase().trim();
-  return ["waiting", "unpaid", "pending", "cancelled", "voided"].includes(s);
+  return ["waiting", "unpaid", "pending", "failed", "cancelled", "canceled", "voided"].includes(s);
 }
 
 export type StoreOrderFactWarningCode =
   | "ORDER_DEDUP_FALLBACK_USED"
+  | "ORDER_STORE_SCOPE_UNAVAILABLE"
+  | "PLATFORM_ORDER_RULE_UNAVAILABLE"
   | "REFUND_AMOUNT_UNAVAILABLE"
   | "ORDER_BUSINESS_TIME_UNAVAILABLE"
   | "PROFIT_UNAVAILABLE";
+
+export type SupportedOrderPlatform = "shopline" | "shopify" | "shoplazza";
 
 export type NormalizedStoreOrderFact = {
   orderKey: string;
@@ -20,9 +24,11 @@ export type NormalizedStoreOrderFact = {
   rows: any[];
   countryCode: string;
   countryName: string;
+  grossSales: number;
   revenue: number;
   profit: number | null;
   refunded: boolean;
+  refundedAt: string | null;
   refundAmount: number | null;
   refundAmountAvailable: boolean;
   businessDateFirst: string | null;
@@ -41,16 +47,101 @@ function finiteNumberOrNull(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function hasOwnValue(row: any, key: string) {
-  return Object.prototype.hasOwnProperty.call(row, key) && row[key] !== null && row[key] !== undefined;
+function finiteStoreId(value: unknown): number | null {
+  const storeId = finiteNumberOrNull(value);
+  return storeId !== null && Number.isInteger(storeId) && storeId > 0 ? storeId : null;
 }
 
-export function getStoreOrderBusinessKey(row: any) {
+export function getStoreOrderBusinessKey(row: any): {
+  key: string | null;
+  fallbackUsed: boolean;
+  storeScopeUnavailable: boolean;
+} {
+  const storeId = finiteStoreId(row?.storeId);
+  if (storeId === null) {
+    return { key: null, fallbackUsed: false, storeScopeUnavailable: true };
+  }
+
   const orderId = typeof row?.orderId === "string" ? row.orderId.trim() : row?.orderId;
   if (orderId) {
-    return { key: String(orderId), fallbackUsed: false };
+    return {
+      key: `store:${storeId}:order:${String(orderId)}`,
+      fallbackUsed: false,
+      storeScopeUnavailable: false
+    };
   }
-  return { key: String(row?.id), fallbackUsed: true };
+
+  if (row?.id !== null && row?.id !== undefined && String(row.id).trim()) {
+    return {
+      key: `store:${storeId}:db:${String(row.id)}`,
+      fallbackUsed: true,
+      storeScopeUnavailable: false
+    };
+  }
+
+  return { key: null, fallbackUsed: true, storeScopeUnavailable: false };
+}
+
+function normalizeSupportedPlatform(value: unknown): SupportedOrderPlatform | null {
+  const platform = String(value || "").trim().toLowerCase();
+  return platform === "shopline" || platform === "shopify" || platform === "shoplazza"
+    ? platform
+    : null;
+}
+
+export function resolveOrderPlatform(
+  row: any,
+  storePlatformById: Map<number, string | null | undefined> = new Map()
+): SupportedOrderPlatform | null {
+  const storeId = finiteStoreId(row?.storeId);
+  const candidates = [
+    row?.storePlatform,
+    row?.platform,
+    row?.store?.platform,
+    storeId === null ? null : storePlatformById.get(storeId)
+  ];
+
+  for (const candidate of candidates) {
+    const platform = normalizeSupportedPlatform(candidate);
+    if (platform) return platform;
+  }
+  return null;
+}
+
+export function classifyOrderValidity(input: {
+  platform: SupportedOrderPlatform | null;
+  paymentStatus?: string | null;
+  fulfillmentStatus?: string | null;
+  cancelledAt?: unknown;
+}): { valid: boolean; warning: "PLATFORM_ORDER_RULE_UNAVAILABLE" | null } {
+  if (!input.platform) {
+    return { valid: false, warning: "PLATFORM_ORDER_RULE_UNAVAILABLE" };
+  }
+
+  const paymentStatus = String(input.paymentStatus || "").trim().toLowerCase();
+  const fulfillmentStatus = String(input.fulfillmentStatus || "").trim().toLowerCase();
+  const cancelled = input.cancelledAt !== null && input.cancelledAt !== undefined && input.cancelledAt !== "";
+
+  // Current Shopline, Shopify, and Shoplazza sync mappers persist the same
+  // normalized financial/fulfillment statuses into Order.
+  const invalidPaymentStatuses = new Set([
+    "waiting",
+    "unpaid",
+    "pending",
+    "failed",
+    "cancelled",
+    "canceled",
+    "voided"
+  ]);
+  const invalidFulfillmentStatuses = new Set(["cancelled", "canceled"]);
+
+  return {
+    valid:
+      !cancelled &&
+      !invalidPaymentStatuses.has(paymentStatus) &&
+      !invalidFulfillmentStatuses.has(fulfillmentStatus),
+    warning: null
+  };
 }
 
 function resolveOrderCountry(rows: any[]) {
@@ -89,28 +180,50 @@ function resolveOrderRevenue(rows: any[]) {
   return rows.reduce((sum, row) => sum + (finiteNumberOrNull(row.revenue) || 0), 0);
 }
 
-function resolveOrderProfit(rows: any[]) {
-  if (!rows.every(row => hasOwnValue(row, "profit"))) return null;
-  return rows.reduce((sum, row) => sum + (finiteNumberOrNull(row.profit) || 0), 0);
+function resolveOrderProfit(rows: any[]): number | null {
+  const values = rows
+    .map(row => finiteNumberOrNull(row?.profit))
+    .filter((value): value is number => value !== null);
+
+  if (values.length === 0) return null;
+  return values.every(value => value === values[0])
+    ? values[0]
+    : values.reduce((sum, value) => sum + value, 0);
 }
 
 function resolveRefundAmount(rows: any[]) {
   const refundKeys = ["refundAmount", "refundedAmount", "totalRefunded", "refund_total"];
-  let foundAmount = false;
-  let total = 0;
+  const amounts: number[] = [];
 
   for (const row of rows) {
     for (const key of refundKeys) {
       const amount = finiteNumberOrNull(row[key]);
       if (amount !== null) {
-        foundAmount = true;
-        total += amount;
+        amounts.push(amount);
         break;
       }
     }
   }
 
-  return foundAmount ? total : null;
+  if (amounts.length === 0) return null;
+  return amounts.every(amount => amount === amounts[0])
+    ? amounts[0]
+    : amounts.reduce((sum, amount) => sum + amount, 0);
+}
+
+function isRefundedOrderRow(row: any): boolean {
+  const paymentStatus = String(row?.paymentStatus || "").trim().toLowerCase();
+  return Boolean(row?.refunded) || paymentStatus === "refunded" || paymentStatus === "partially_refunded";
+}
+
+function resolveRefundedAt(rows: any[]): string | null {
+  const dates = rows
+    .map(row => row?.refundedAt)
+    .filter(value => value !== null && value !== undefined && value !== "")
+    .map(value => new Date(value))
+    .filter(value => !Number.isNaN(value.getTime()))
+    .sort((left, right) => left.getTime() - right.getTime());
+  return dates[0]?.toISOString() || null;
 }
 
 function resolveBusinessDateRange(rows: any[]) {
@@ -130,8 +243,23 @@ export function normalizeStoreOrderFacts(rows: any[]): NormalizedStoreOrderFacts
   const ordersGroupedByKey = new Map<string, any[]>();
   const fallbackKeys = new Set<string>();
 
-  for (const row of rows.filter(order => !isPaymentStatusExcluded(order?.paymentStatus))) {
-    const { key, fallbackUsed } = getStoreOrderBusinessKey(row);
+  for (const row of rows) {
+    const validity = classifyOrderValidity({
+      platform: resolveOrderPlatform(row),
+      paymentStatus: row?.paymentStatus,
+      fulfillmentStatus: row?.fulfillmentStatus,
+      cancelledAt: row?.cancelledAt
+    });
+    if (!validity.valid) {
+      if (validity.warning) warnings.add(validity.warning);
+      continue;
+    }
+
+    const { key, fallbackUsed, storeScopeUnavailable } = getStoreOrderBusinessKey(row);
+    if (storeScopeUnavailable || !key) {
+      warnings.add("ORDER_STORE_SCOPE_UNAVAILABLE");
+      continue;
+    }
     if (fallbackUsed) {
       fallbackKeys.add(key);
       warnings.add("ORDER_DEDUP_FALLBACK_USED");
@@ -146,13 +274,14 @@ export function normalizeStoreOrderFacts(rows: any[]): NormalizedStoreOrderFacts
 
   for (const [orderKey, groupedRows] of ordersGroupedByKey.entries()) {
     const { countryCode, countryName } = resolveOrderCountry(groupedRows);
-    const revenue = resolveOrderRevenue(groupedRows);
+    const grossSales = resolveOrderRevenue(groupedRows);
     const profit = resolveOrderProfit(groupedRows);
-    const refunded = groupedRows.some(row => Boolean(row.refunded));
+    const refunded = groupedRows.some(isRefundedOrderRow);
+    const refundedAt = refunded ? resolveRefundedAt(groupedRows) : null;
     const refundAmount = refunded ? resolveRefundAmount(groupedRows) : 0;
     const refundAmountAvailable = !refunded || refundAmount !== null;
     const businessDateRange = resolveBusinessDateRange(groupedRows);
-    const isLegacy = groupedRows.some(row => !row.store_local_date);
+    const isLegacy = businessDateRange.first === null || businessDateRange.last === null;
 
     if (profit === null) warnings.add("PROFIT_UNAVAILABLE");
     if (!refundAmountAvailable) warnings.add("REFUND_AMOUNT_UNAVAILABLE");
@@ -164,9 +293,11 @@ export function normalizeStoreOrderFacts(rows: any[]): NormalizedStoreOrderFacts
       rows: groupedRows,
       countryCode,
       countryName,
-      revenue,
+      grossSales,
+      revenue: grossSales,
       profit,
       refunded,
+      refundedAt,
       refundAmount,
       refundAmountAvailable,
       businessDateFirst: businessDateRange.first,
@@ -216,50 +347,78 @@ export async function getStoreOrderFacts(params: OrderFactParams) {
     where: whereClause,
     orderBy: { createdAt: "desc" },
   });
+  const storeIds = Array.from(new Set(orders.map(order => order.storeId).filter(id => Number.isInteger(id))));
+  const stores = storeIds.length > 0
+    ? await prisma.store.findMany({
+        where: { id: { in: storeIds } },
+        select: { id: true, platform: true }
+      })
+    : [];
+  const storePlatformById = new Map(stores.map(store => [store.id, store.platform]));
 
-  // Filter excluded payment statuses
-  return orders.filter(o => !isPaymentStatusExcluded(o.paymentStatus));
+  return orders.map(order => ({
+    ...order,
+    storePlatform: storePlatformById.get(order.storeId) || null
+  }));
 }
 
 export async function getStoreOrderSummary(params: OrderFactParams): Promise<OrderFactSummary> {
   const filteredOrders = await getStoreOrderFacts(params);
   const normalized = normalizeStoreOrderFacts(filteredOrders);
+  const includedOrderRows = normalized.orders.flatMap(order => order.rows);
 
   let ordersCount = 0;
   let totalSales = 0;
-  let refundAmount = 0;
+  let refundedOrderCount = 0;
+  let knownRefundAmount = 0;
+  let refundAmountAvailable = true;
 
   let legacyFallbackOrdersCount = 0;
   let legacyFallbackRevenue = 0;
   const legacyFallbackUsed = normalized.orders.some(o => o.isLegacy);
 
   normalized.orders.forEach((val) => {
-    const salesVal = val.revenue;
+    const salesVal = val.grossSales;
     if (val.isLegacy) {
       legacyFallbackOrdersCount++;
       legacyFallbackRevenue += salesVal;
     } else {
       ordersCount++;
       totalSales += salesVal;
-      if (val.refunded && val.refundAmountAvailable) {
-        refundAmount += val.refundAmount || 0;
+      if (val.refunded) {
+        refundedOrderCount++;
+        if (!val.refundAmountAvailable || val.refundAmount === null) {
+          refundAmountAvailable = false;
+        } else {
+          knownRefundAmount += val.refundAmount;
+        }
       }
     }
   });
 
-  const refundRate = totalSales > 0 ? refundAmount / totalSales : 0;
+  const refundAmount = refundAmountAvailable ? knownRefundAmount : null;
+  const refundOrderRate = ordersCount > 0 ? refundedOrderCount / ordersCount : 0;
+  const refundAmountRate = refundAmountAvailable && totalSales > 0
+    ? knownRefundAmount / totalSales
+    : null;
   const aov = ordersCount > 0 ? totalSales / ordersCount : 0;
 
   return {
     ordersCount,
     totalSales,
     aov,
+    refundedOrderCount,
     refundAmount,
-    refundRate,
+    refundAmountAvailable,
+    refundOrderRate,
+    refundAmountRate,
+    refundRate: refundOrderRate,
+    refundRateBasis: "orders",
     legacyFallbackOrdersCount,
     legacyFallbackRevenue,
     legacyFallbackUsed,
-    orders: filteredOrders,
+    orders: includedOrderRows,
+    warnings: normalized.warnings,
   };
 }
 
