@@ -1,4 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { prismaMock, orderFactMock } = vi.hoisted(() => ({
+  prismaMock: {
+    accountMapping: { findMany: vi.fn() },
+    adAccount: { findMany: vi.fn() },
+    factAudienceBreakdown: { findMany: vi.fn() }
+  },
+  orderFactMock: {
+    getStoreOrderFacts: vi.fn(),
+    normalizeStoreOrderFacts: vi.fn()
+  }
+}));
+
+vi.mock("../../db/index.js", () => ({ default: prismaMock, prisma: prismaMock }));
+vi.mock("./order-fact.service.js", () => orderFactMock);
 import {
   applyMinOrdersFilter,
   collectCountryRowWarnings,
@@ -6,6 +21,14 @@ import {
   summarizeCountryRows,
   type CountryAnalyticsLikeRow
 } from "./country-analytics.logic";
+import { getCountryAnalytics } from "./country-analytics.service";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  prismaMock.accountMapping.findMany.mockResolvedValue([]);
+  prismaMock.adAccount.findMany.mockResolvedValue([]);
+  prismaMock.factAudienceBreakdown.findMany.mockResolvedValue([]);
+});
 
 function row(input: Partial<CountryAnalyticsLikeRow>): CountryAnalyticsLikeRow {
   return {
@@ -101,5 +124,40 @@ describe("country analytics store-only logic", () => {
     ];
 
     expect(collectCountryRowWarnings(visibleRows)).toContain("ORDER_BUSINESS_TIME_UNAVAILABLE");
+  });
+});
+
+describe("country analytics refund order rate", () => {
+  it("keeps refund order rate available when refund amount is unavailable", async () => {
+    orderFactMock.getStoreOrderFacts.mockResolvedValue([
+      { shippingCountryCode: "US", shippingCountryName: "United States" }
+    ]);
+    orderFactMock.normalizeStoreOrderFacts.mockReturnValue({
+      orders: [{
+        orderKey: "store:1:order:refund-order",
+        rows: [],
+        countryCode: "US",
+        countryName: "United States",
+        revenue: 100,
+        profit: 0,
+        refunded: true,
+        refundAmountAvailable: false,
+        businessDateFirst: "2026-07-02",
+        businessDateLast: "2026-07-02"
+      }],
+      warnings: ["REFUND_AMOUNT_UNAVAILABLE"]
+    });
+
+    const result = await getCountryAnalytics("2026-07-01", "2026-07-07", "1");
+
+    expect(orderFactMock.getStoreOrderFacts).toHaveBeenCalledWith({
+      startDate: "2026-07-01",
+      endDate: "2026-07-07",
+      storeId: "1"
+    });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].refundRate).toBe(1);
+    expect(result.rows[0].orderRevenue).toBe(100);
+    expect(result.rows[0].orderCount).toBe(1);
   });
 });

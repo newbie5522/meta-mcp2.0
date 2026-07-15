@@ -40,10 +40,10 @@ const adAccountModel = modelBlock(schema, "AdAccount");
 const accountMappingModel = modelBlock(schema, "AccountMapping");
 const orderModel = modelBlock(schema, "Order");
 
-const utils = readFile("src/server/utils.ts");
 const accountsRoutes = readFile("src/server/routes/accounts.routes.ts");
 const mappingsRoutes = readFile("src/server/routes/mappings.routes.ts");
 const syncRoutes = readFile("src/server/routes/sync.routes.ts");
+const syncManualGuard = readFile("src/server/services/sync-manual-guard.ts");
 const dataCenterRoutes = readFile("src/server/routes/data-center.routes.ts");
 const orderFactService = readFile("src/server/services/order-fact.service.ts");
 const storeSyncService = readFile("src/server/services/store-sync.service.ts");
@@ -53,7 +53,6 @@ const auditService = readFile("src/server/services/data-pipeline-audit.service.t
 const metaHierarchySyncService = readFile("src/server/services/meta-hierarchy-sync.service.ts");
 
 const adAccountRuntimeFiles = [
-  ["src/server/utils.ts", utils],
   ["src/server/routes/accounts.routes.ts", accountsRoutes],
   ["src/server/routes/mappings.routes.ts", mappingsRoutes],
   ["src/server/routes/sync.routes.ts", syncRoutes],
@@ -63,7 +62,18 @@ const adAccountDeleteHits = adAccountRuntimeFiles
   .filter(([, file]) => /prisma\.adAccount\.(delete|deleteMany)/.test(file))
   .map(([name]) => name);
 
-const manualSyncGuardedRoutes = syncRoutes.match(/router\.(post|get)\("[^"]+",\s*requireManualSyncEnabled/g) || [];
+const syncTriggerBlock = syncRoutes.slice(syncRoutes.indexOf('router.post("/sync/trigger"'));
+const syncGuardCallIndex = syncTriggerBlock.indexOf("isManualSyncRequired({ taskType, rebuild, baselineRevenue })");
+const syncChainIdIndex = syncTriggerBlock.indexOf("const chainId = uuidv4()");
+const syncRunningCheckIndex = syncTriggerBlock.indexOf("assertNoRunningTask");
+const safeViewTaskNames = [
+  "sync_view_ad_hierarchy",
+  "sync_view_audience",
+  "sync_view_creatives",
+  "sync_view_account_data",
+  "sync_view_store_data",
+  "sync_view_products"
+];
 
 const results: CheckResult[] = [
   check(
@@ -80,12 +90,14 @@ const results: CheckResult[] = [
   ),
   check(
     "Unmapped AdAccount can be written",
-    accountsRoutes.includes("targetStoreId = null") &&
+    adAccountModel.includes("storeId") &&
+      accountMappingModel.includes("storeId") &&
+      accountsRoutes.includes("let targetStoreId: number | null = null") &&
+      accountsRoutes.includes("targetStoreId = null") &&
+      accountsRoutes.includes("storeId: targetStoreId") &&
       mappingsRoutes.includes("data: { storeId: null }") &&
-      utils.includes("mapping.storeId === null") &&
-      utils.includes("storeId: null") &&
-      utils.includes("storeId: targetStoreId"),
-    "active-list, mappings, and sync utility preserve null storeId accounts",
+      mappingsRoutes.includes("storeId: null"),
+    "active-list and mapping write paths preserve null storeId accounts without default binding",
     "unmapped AdAccount write path is not statically proven"
   ),
   check(
@@ -96,7 +108,7 @@ const results: CheckResult[] = [
   ),
   check(
     "No defaultStore binding in AdAccount chain",
-    !/(defaultStore|prisma\.store\.findFirst\(\))/.test(utils + accountsRoutes + mappingsRoutes + metaHierarchySyncService),
+    !/(defaultStore|prisma\.store\.findFirst\(\))/.test(accountsRoutes + mappingsRoutes + metaHierarchySyncService),
     "AdAccount sync/mapping paths do not bind unknown accounts to a default store",
     "default store lookup/binding still exists in an AdAccount chain"
   ),
@@ -173,13 +185,17 @@ const results: CheckResult[] = [
   ),
   check(
     "Dangerous sync endpoints require ENABLE_MANUAL_SYNC",
-    syncRoutes.includes("ENABLE_MANUAL_SYNC") &&
+    safeViewTaskNames.every(taskType => syncManualGuard.includes(`"${taskType}"`)) &&
+      syncManualGuard.includes("export function isManualSyncRequired") &&
+      syncRoutes.includes("ENABLE_MANUAL_SYNC") &&
       syncRoutes.includes("MANUAL_SYNC_DISABLED") &&
-      manualSyncGuardedRoutes.length >= 9 &&
+      syncGuardCallIndex >= 0 &&
+      syncChainIdIndex > syncGuardCallIndex &&
+      syncRunningCheckIndex > syncGuardCallIndex &&
       syncRoutes.includes('router.get("/sync/status"') &&
       syncRoutes.includes('router.get("/sync/logs"'),
-    `${manualSyncGuardedRoutes.length} sync routes are guarded while read-only status/logs remain open`,
-    "dangerous sync routes are not fully protected by ENABLE_MANUAL_SYNC"
+    "six safe view tasks are explicit; all other trigger work is guarded before chain/task work while status/logs remain open",
+    "unified manual sync guard contract is missing or runs after task work"
   ),
 ];
 

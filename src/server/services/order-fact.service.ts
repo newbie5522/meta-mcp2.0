@@ -1,22 +1,22 @@
 import prisma from "../../db/index.js";
 import { OrderFactParams, OrderFactSummary, DateRange } from "./data-pipeline-fact.types.js";
 import dayjs from "dayjs";
-
-export function isPaymentStatusExcluded(status: string | null | undefined): boolean {
-  if (!status) return false;
-  const s = status.toLowerCase().trim();
-  return ["waiting", "unpaid", "pending", "failed", "cancelled", "canceled", "voided"].includes(s);
-}
+import {
+  classifyPlatformOrderValidity,
+  type StorePlatform
+} from "./store-sync-core.js";
 
 export type StoreOrderFactWarningCode =
   | "ORDER_DEDUP_FALLBACK_USED"
   | "ORDER_STORE_SCOPE_UNAVAILABLE"
   | "PLATFORM_ORDER_RULE_UNAVAILABLE"
+  | "PAYMENT_STATUS_UNAVAILABLE"
+  | "PAYMENT_STATUS_UNRECOGNIZED"
   | "REFUND_AMOUNT_UNAVAILABLE"
   | "ORDER_BUSINESS_TIME_UNAVAILABLE"
   | "PROFIT_UNAVAILABLE";
 
-export type SupportedOrderPlatform = "shopline" | "shopify" | "shoplazza";
+export type SupportedOrderPlatform = StorePlatform;
 
 export type NormalizedStoreOrderFact = {
   orderKey: string;
@@ -113,35 +113,21 @@ export function classifyOrderValidity(input: {
   paymentStatus?: string | null;
   fulfillmentStatus?: string | null;
   cancelledAt?: unknown;
-}): { valid: boolean; warning: "PLATFORM_ORDER_RULE_UNAVAILABLE" | null } {
+}): { valid: boolean; warning: StoreOrderFactWarningCode | null } {
   if (!input.platform) {
     return { valid: false, warning: "PLATFORM_ORDER_RULE_UNAVAILABLE" };
   }
-
-  const paymentStatus = String(input.paymentStatus || "").trim().toLowerCase();
-  const fulfillmentStatus = String(input.fulfillmentStatus || "").trim().toLowerCase();
-  const cancelled = input.cancelledAt !== null && input.cancelledAt !== undefined && input.cancelledAt !== "";
-
-  // Current Shopline, Shopify, and Shoplazza sync mappers persist the same
-  // normalized financial/fulfillment statuses into Order.
-  const invalidPaymentStatuses = new Set([
-    "waiting",
-    "unpaid",
-    "pending",
-    "failed",
-    "cancelled",
-    "canceled",
-    "voided"
-  ]);
-  const invalidFulfillmentStatuses = new Set(["cancelled", "canceled"]);
-
-  return {
-    valid:
-      !cancelled &&
-      !invalidPaymentStatuses.has(paymentStatus) &&
-      !invalidFulfillmentStatuses.has(fulfillmentStatus),
-    warning: null
-  };
+  const result = classifyPlatformOrderValidity({
+    platform: input.platform,
+    paymentStatus: input.paymentStatus,
+    fulfillmentStatus: input.fulfillmentStatus,
+    cancelledAt: input.cancelledAt
+  });
+  const warning = result.reason === "PAYMENT_STATUS_UNAVAILABLE" ||
+    result.reason === "PAYMENT_STATUS_UNRECOGNIZED"
+    ? result.reason
+    : null;
+  return { valid: result.valid, warning };
 }
 
 function resolveOrderCountry(rows: any[]) {

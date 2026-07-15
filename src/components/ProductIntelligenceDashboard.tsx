@@ -1,23 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { format } from "date-fns";
-import { 
-  PackageSearch, 
-  Coins, 
-  FileSpreadsheet, 
-  HelpCircle, 
-  BadgePercent, 
-  LineChart, 
-  Layers, 
-  Activity, 
-  Calendar,
-  Sparkles,
-  ArrowRight,
-  ShieldCheck,
-  Percent,
-  AlertTriangle,
-  RefreshCw
-} from "lucide-react";
+import { AlertTriangle, PackageSearch, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
@@ -33,44 +17,58 @@ import { DataViewTraceBar } from "./common/DataViewTraceBar";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 
+interface StoreOption {
+  id: number;
+  name: string;
+  platform?: string;
+}
+
 interface ProductIntelligenceRecord {
   id: string;
   productId: string;
-  storeId: number;
+  storeId: number | null;
   productName: string;
   sku: string;
   category: string;
-  revenue: number;
+  revenue: number | null;
+  revenueAvailable: boolean;
   orders: number;
-  profit: number;
-  averageOrderValue: number;
-  refundRate: number;
+  refundedOrders: number;
+  profit: null;
+  averageOrderValue: number | null;
+  refundRate: number | null;
   firstOrderAt: string | null;
   lastOrderAt: string | null;
-  adSpend: number | null;
-  productRoas: number | null;
-  profitRoas: number | null;
-  source: string;
-  dataSourceExplain: {
-    primarySource: string;
-    productTableUsedForMetadataOnly: boolean;
-    productPerformanceDailyUsed: boolean;
-    revenueRule: string;
-    invalidOrderExcluded: boolean;
-    adSpendAvailable: boolean;
-    adSpendReason: string;
-  };
+  warnings: string[];
+  source: "Order";
 }
+
+interface ProductSummary {
+  productsCount: number;
+  totalOrders: number;
+  refundedOrders: number;
+  refundRate: number | null;
+  totalProductLineRevenue: number | null;
+  revenueComplete: boolean;
+  profitAvailable: false;
+}
+
+const PRODUCT_WARNING_LABELS: Record<string, string> = {
+  PRODUCT_REVENUE_UNAVAILABLE: "部分商品订单行缺少可确认的销售额，该商品销售额显示为 N/A。",
+  PRODUCT_PROFIT_ALLOCATION_UNAVAILABLE: "商品利润分配规则尚未建立，商品利润显示为 N/A。"
+};
 
 export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const [products, setProducts] = useState<ProductIntelligenceRecord[]>([]);
+  const [summary, setSummary] = useState<ProductSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedProduct, setSelectedProduct] = useState<ProductIntelligenceRecord | null>(null);
+  const [storeId, setStoreId] = useState("all");
+  const [stores, setStores] = useState<StoreOption[]>([]);
   const [lastGoodData, setLastGoodData] = useState<any | null>(null);
   const [viewNotice, setViewNotice] = useState<string | null>(null);
   const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string; timezone?: string } | null>(null);
-  const [dataHealthStatus, setDataHealthStatus] = useState<string>("UNKNOWN");
+  const [dataHealthStatus, setDataHealthStatus] = useState("UNKNOWN");
   const [dataHealth, setDataHealth] = useState<any | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
@@ -80,9 +78,22 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
     page: "products",
     startDate: startStrKey,
     endDate: endStrKey,
-    scope: "all_stores",
+    storeId,
+    scope: storeId === "all" ? "all_stores" : `store:${storeId}`,
     includeZeroSpend: true
   });
+
+  useEffect(() => {
+    let active = true;
+    axios.get("/api/data-center/detail", {
+      params: { startDate: startStrKey, endDate: endStrKey }
+    }).then(response => {
+      if (active) setStores(response.data?.filters?.stores || []);
+    }).catch(() => {
+      if (active) setStores([]);
+    });
+    return () => { active = false; };
+  }, [startStrKey, endStrKey]);
 
   useEffect(() => {
     setViewNotice(null);
@@ -94,71 +105,42 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
     setLoading(true);
     setError(null);
     try {
-      const res = await axios.get("/api/data-center/products", {
-        params: {
-          startDate: startStrKey,
-          endDate: endStrKey
-        }
+      const response = await axios.get("/api/data-center/products", {
+        params: { startDate: startStrKey, endDate: endStrKey, storeId }
       });
-     const rows = Array.isArray(res.data?.data)
-  ? res.data.data
-  : Array.isArray(res.data?.products)
-    ? res.data.products
-    : Array.isArray(res.data)
-      ? res.data
-      : [];
+      const rows = Array.isArray(response.data?.products) ? response.data.products : [];
+      setResponseDateRange(response.data?.dateRange || response.data?.appliedFilters || null);
+      setDataHealthStatus(response.data?.dataHealth?.status || (rows.length > 0 ? "READY" : "EMPTY"));
+      setDataHealth(response.data?.dataHealth || null);
+      setSummary(response.data?.summary || null);
 
-      const startStr = startStrKey;
-      const endStr = endStrKey;
-      const requestKey = currentRequestKey;
-      setResponseDateRange(res.data?.dateRange || res.data?.appliedFilters || null);
-      setDataHealthStatus(res.data?.dataHealth?.status || (rows.length > 0 ? "READY" : "EMPTY"));
-      setDataHealth(res.data?.dataHealth || null);
-      if (isDateRangeMismatch(res.data, startStr, endStr)) {
-        const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
-        if (!safeLastGoodData) {
-          setProducts([]);
-          setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
-          return;
-        }
-        setProducts(safeLastGoodData.data || []);
+      if (isDateRangeMismatch(response.data, startStrKey, endStrKey)) {
+        const safeData = getSafeLastGoodData(lastGoodData, currentRequestKey);
+        setProducts(safeData?.data || []);
         setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
         return;
       }
-      if (shouldPreserveLastGoodData(res.data, rows, lastGoodData, requestKey)) {
-        const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
-        if (safeLastGoodData) {
-          setProducts(safeLastGoodData.data || []);
+      if (shouldPreserveLastGoodData(response.data, rows, lastGoodData, currentRequestKey)) {
+        const safeData = getSafeLastGoodData(lastGoodData, currentRequestKey);
+        if (safeData) {
+          setProducts(safeData.data || []);
           setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
           return;
         }
       }
-
       setProducts(rows);
-      setLastGoodData(makeLastGoodData(requestKey, rows, { dataHealth: res.data?.dataHealth || null }));
+      setLastGoodData(makeLastGoodData(currentRequestKey, rows));
       setViewNotice(null);
-    } catch (err: any) {
-      console.error("Failed to load product intelligence:", err);
-      const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
-      if (safeLastGoodData) {
-        setProducts(safeLastGoodData.data || []);
+    } catch (requestError: any) {
+      const safeData = getSafeLastGoodData(lastGoodData, currentRequestKey);
+      if (safeData) {
+        setProducts(safeData.data || []);
         setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-        setError(null);
       } else {
         setProducts([]);
+        setSummary(null);
         setDataHealthStatus("REQUEST_FAILED");
-        setDataHealth({
-          status: "REQUEST_FAILED",
-          reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
-          message: "当前商品筛选周期请求失败，未使用其他日期周期的旧商品数据。",
-          dateRange: {
-            startDate: startStrKey,
-            endDate: endStrKey,
-            timezone: "America/Los_Angeles"
-          }
-        });
-        setViewNotice("当前商品筛选周期请求失败，未展示其他日期周期的旧数据。");
-        setError(err.response?.data?.details || err.message || "Failed to load product intelligence");
+        setError(requestError.response?.data?.details || requestError.message || "商品订单分析加载失败");
       }
     } finally {
       setLoading(false);
@@ -167,111 +149,70 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
 
   useEffect(() => {
     fetchProducts();
-  }, [startDate, endDate]);
+  }, [startStrKey, endStrKey, storeId]);
 
   const handleSyncProducts = async () => {
     setSyncing(true);
     const toastId = toast.loading("正在执行商品视图同步...");
-    const days = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000) + 1);
-
-    setSyncStatus({
-      status: "running",
-      message: "正在执行商品视图同步...",
-      progressPercent: 15,
-      currentStep: 1,
-      totalSteps: 1,
-      stepLabel: "商品视图同步"
-    });
-
+    setSyncStatus({ status: "running", message: "正在执行商品视图同步...", progressPercent: 15 });
     try {
       const result = await triggerSyncTask({
         taskType: "sync_view_products",
         startDate: startStrKey,
         endDate: endStrKey,
-        days,
+        storeId: storeId === "all" ? undefined : storeId,
+        days: Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000) + 1),
         limit: 200
       });
-
       setSyncStatus(mapSyncResultToPanel(result));
-      if (String(result?.status || "").toUpperCase() === "RUNNING") {
-        toast.info("商品同步任务正在运行，请稍后查看进度。", { id: toastId });
-      } else {
-        toast.success(result.message || "商品视图同步完成，正在刷新页面数据。", { id: toastId });
-      }
+      toast.success(result.message || "商品视图同步完成。", { id: toastId });
       await fetchProducts();
-    } catch (error: any) {
-      const panel = mapSyncErrorToPanel(error);
-      const data = error.data || error.response?.data || error.response;
+    } catch (syncError: any) {
+      const panel = mapSyncErrorToPanel(syncError);
       setSyncStatus(panel);
-      if (panel.status === "running") {
-        toast.info("已有同步任务正在运行，请稍后查看进度。", { id: toastId });
-        return;
-      }
-      if (panel.status === "success") {
-        toast.info(panel.message || "商品同步完成，当前日期范围暂无新的商品订单数据。", { id: toastId });
-        await fetchProducts();
-        return;
-      }
-      if (panel.status === "warning") {
-        toast.warning(panel.message || "商品同步部分完成，正在刷新已同步数据。", { id: toastId });
-        await fetchProducts();
-        return;
-      }
-      toast.error("同步数据失败: " + (panel.message || data?.message || data?.details || data?.error || error.message), { id: toastId });
+      toast.error(panel.message || "商品视图同步失败。", { id: toastId });
     } finally {
       setSyncing(false);
     }
   };
 
-  const currency = (val: number | null) => {
-    if (val === null || val === undefined) return "N/A";
-    return "$" + val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
-
-  const percentage = (val: number | null) => {
-    if (val === null || val === undefined) return "N/A";
-    return (val * 100).toFixed(1) + "%";
-  };
-
-  const formatNullableDate = (dateStr: string | null) => {
-    if (!dateStr) return "-";
-    try {
-      return format(new Date(dateStr), "yyyy-MM-dd HH:mm");
-    } catch {
-      return dateStr;
-    }
-  };
-
-  // Top summary aggregation
-  const totalRevenue = products.reduce((sum, p) => sum + (p.revenue || 0), 0);
-  const totalOrders = products.reduce((sum, p) => sum + (p.orders || 0), 0);
-  const totalProfit = products.reduce((sum, p) => sum + (p.profit || 0), 0);
-  const avgRefundRate = products.length > 0 
-    ? products.reduce((sum, p) => sum + (p.refundRate || 0), 0) / products.length 
-    : 0;
+  const currency = (value: number | null | undefined) => value === null || value === undefined
+    ? "N/A"
+    : "$" + value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const percentage = (value: number | null | undefined) => value === null || value === undefined
+    ? "N/A"
+    : (value * 100).toFixed(1) + "%";
+  const weightedRefundRate = summary?.refundRate ?? (
+    products.reduce((sum, product) => sum + product.orders, 0) > 0
+      ? products.reduce((sum, product) => sum + product.refundedOrders, 0) /
+        products.reduce((sum, product) => sum + product.orders, 0)
+      : null
+  );
+  const revenueComplete = summary?.revenueComplete ?? products.every(product => product.revenue !== null);
+  const totalRevenue = revenueComplete
+    ? summary?.totalProductLineRevenue ?? products.reduce((sum, product) => sum + Number(product.revenue), 0)
+    : null;
+  const totalOrders = summary?.totalOrders ?? products.reduce((sum, product) => sum + product.orders, 0);
 
   return (
-  <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white border border-slate-200/80 shadow-sm">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <PackageSearch className="w-5 h-5 text-blue-500 shrink-0" />
-          <h3 className="font-bold text-slate-900 truncate">商品经营数据一览</h3>
-          <span className="text-xs text-slate-500">| 当前统计期间：{startStrKey} 至 {endStrKey}</span>
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-xl font-bold text-slate-900"><PackageSearch className="h-5 w-5 text-blue-600" />商品订单分析</h2>
+          <p className="mt-1 text-sm text-slate-500">销售额仅统计商品订单行；不使用整单金额分摊。</p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-9 px-3 border-slate-200 text-slate-700 bg-white hover:bg-slate-50"
-          onClick={handleSyncProducts}
-          disabled={loading || syncing}
-        >
-          <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
-          同步数据
-        </Button>
+        <div className="flex items-center gap-3">
+          <select value={storeId} onChange={event => setStoreId(event.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+            <option value="all">全部店铺</option>
+            {stores.map(store => <option key={store.id} value={String(store.id)}>{store.name}</option>)}
+          </select>
+          <Button variant="outline" size="sm" onClick={handleSyncProducts} disabled={loading || syncing}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />同步数据
+          </Button>
+        </div>
       </div>
 
       <SyncStatusPanel status={syncStatus} />
-
       <DataViewTraceBar
         compactScopeLabel="商品订单口径"
         currentStartDate={startStrKey}
@@ -283,248 +224,73 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
         status={dataHealthStatus}
         factRows={dataHealth?.factRows}
         structureRows={dataHealth?.structureRows}
-        queryDebug={dataHealth?.queryDebug}
-        source="Order"
-        scope="all_stores"
+        source="Order 商品行"
+        scope={storeId === "all" ? "全部店铺" : "已选店铺"}
       />
-      {viewNotice && (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-          {viewNotice}
-        </div>
-      )}
+      {viewNotice && <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">{viewNotice}</div>}
+
       {loading ? (
-        <div className="flex flex-col items-center justify-center min-h-[400px] bg-white rounded-2xl border border-slate-100 p-8 space-y-3">
-          <div className="w-10 h-10 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
-          <span className="text-sm text-slate-500 font-medium">正在基于真实订单流水聚合计算商品情报...</span>
-        </div>
+        <div className="rounded-2xl border border-slate-100 bg-white p-12 text-center text-sm text-slate-500">正在聚合商品订单行...</div>
       ) : error ? (
-        <div className="p-8 bg-red-50 rounded-2xl border border-red-200 text-center space-y-3">
-          <div className="text-lg font-bold text-red-800">聚合服务出错</div>
-          <p className="text-sm text-red-600">{error}</p>
-          <button onClick={fetchProducts} className="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-800 rounded-xl text-sm font-semibold transition-colors">
-            重试加载
-          </button>
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-8 text-center text-red-700">
+          <p>{error}</p><button onClick={fetchProducts} className="mt-3 rounded-lg bg-red-100 px-4 py-2 text-sm font-semibold">重试</button>
         </div>
       ) : (
         <>
-          {/* Top stats boxes */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
-              <span className="text-sm text-slate-500 font-medium">商品销售额</span>
-              <h3 className="text-2xl font-bold text-slate-900 mt-1">{currency(totalRevenue)}</h3>
-              <p className="text-xs text-slate-400 mt-2 flex items-center gap-1">
-                <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                根据真实订单行计算 (orderTotal)
-              </p>
-            </div>
-            
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
-              <span className="text-sm text-slate-500 font-medium">商品订单数</span>
-              <h3 className="text-2xl font-bold text-slate-900 mt-1">{totalOrders} 笔</h3>
-              <p className="text-xs text-slate-400 mt-2">已剔除未支付及退款订单</p>
-            </div>
-
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
-              <span className="text-sm text-slate-500 font-medium">商品毛利</span>
-              <h3 className="text-2xl font-bold text-slate-950 mt-1">{currency(totalProfit)}</h3>
-              <p className="text-xs text-slate-400 mt-2">基于订单实付与生产成本差额</p>
-            </div>
-
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
-              <span className="text-sm text-slate-500 font-medium">商品退款率</span>
-              <h3 className="text-2xl font-bold text-slate-900 mt-1">{percentage(avgRefundRate)}</h3>
-              <p className="text-xs text-slate-400 mt-2">退款订单 / 进件总订单比例</p>
-            </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+            {[
+              ["商品行销售额", currency(totalRevenue)],
+              ["商品订单数", `${totalOrders.toLocaleString()} 笔`],
+              ["商品退款订单率", percentage(weightedRefundRate)],
+              ["商品利润", "N/A"]
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <span className="text-sm font-medium text-slate-500">{label}</span>
+                <h3 className="mt-1 text-2xl font-bold text-slate-900">{value}</h3>
+                {label === "商品利润" && <p className="mt-2 text-xs text-amber-700">商品利润分配规则尚未建立</p>}
+                {label === "商品行销售额" && !revenueComplete && <p className="mt-2 text-xs text-amber-700">部分商品行销售额不可用</p>}
+              </div>
+            ))}
           </div>
 
-          {/* Main List Table */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-slate-900 text-lg flex items-center gap-2">
-                  <PackageSearch className="w-5 h-5 text-blue-600" />
-                  真实商品订单表现排行榜
-                </h3>
-                <p className="text-slate-500 text-xs mt-1">
-                  当前根据订单流入情况进行全量排名。未注入任何种子伪造数据。
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 text-slate-600 rounded-full border border-slate-200">
-                  发现真实商品款式: {products.length} 款
-                </span>
-              </div>
-            </div>
-
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-100 px-6 py-5"><h3 className="text-lg font-bold text-slate-900">商品订单行表现</h3></div>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left whitespace-nowrap">
-                <thead className="bg-slate-50/85 text-slate-500 border-b border-slate-100">
+              <table className="w-full whitespace-nowrap text-left text-sm">
+                <thead className="border-b border-slate-100 bg-slate-50 text-slate-600">
                   <tr>
-                    <th className="px-6 py-3.5 font-semibold text-slate-700">商品名称与标识</th>
-                    <th className="px-6 py-3.5 font-semibold text-slate-700">类目 / 店铺</th>
-                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-right">商品订单</th>
-                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-right">商品销售额</th>
-                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-right">净利润</th>
-                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-right">退款率</th>
-                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-right">广告花费 (adSpend)</th>
-                    <th className="px-6 py-3.5 font-semibold text-slate-700 text-right">商品 ROAS</th>
-                    <th className="px-6 py-3.5 font-semibold text-slate-700">数据追踪</th>
+                    <th className="px-6 py-3.5">商品</th>
+                    <th className="px-6 py-3.5">类目</th>
+                    <th className="px-6 py-3.5 text-right">商品订单</th>
+                    <th className="px-6 py-3.5 text-right">退款订单</th>
+                    <th className="px-6 py-3.5 text-right">商品行销售额</th>
+                    <th className="px-6 py-3.5 text-right">平均订单行销售额</th>
+                    <th className="px-6 py-3.5 text-right">退款率</th>
+                    <th className="px-6 py-3.5">数据提示</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {products.map((p, index) => (
-                    
-                      <tr key={p.productId} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="px-6 py-4">
-                          <div className="flex flex-col gap-1 max-w-[280px]">
-                            <span 
-                               className="text-[13.5px] font-semibold text-slate-900 truncate leading-tight"
-                               title={p.productName}
-                            >
-                              {p.productName}
-                            </span>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="text-[11px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200">
-                                SKU: {p.sku || p.productId}
-                              </span>
-                              
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex flex-col">
-                            <span className="text-[11px] text-slate-500 font-medium uppercase">{p.category || "Uncategorized"}</span>
-                            <span className="text-[11px] text-slate-400">店铺 ID: {p.storeId}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-right font-medium text-slate-800">{p.orders}</td>
-                        <td className="px-6 py-4 text-right text-emerald-600 font-bold">{currency(p.revenue)}</td>
-                        <td className="px-6 py-4 text-right text-slate-600 font-medium">{currency(p.profit)}</td>
-                        <td className="px-6 py-4 text-right text-slate-500 font-mono text-xs">{percentage(p.refundRate)}</td>
-                        <td className="px-6 py-4 text-right font-mono text-xs text-slate-400">N/A</td>
-                        <td className="px-6 py-4 text-right font-mono text-xs text-slate-400">N/A</td>
-                        <td className="px-6 py-4">
-                          <button 
-                            onClick={() => setSelectedProduct(p)}
-                            className="text-xs px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200/90 text-slate-700 font-semibold rounded-lg border border-slate-200 tracking-wide transition-all active:scale-[0.98]"
-                          >
-                            审计可信度
-                          </button>
-                        </td>
-                      </tr>
-                   ))}
-                  
-                  {products.length === 0 && (
-                    <tr>
-                      <td colSpan={9} className="px-6 py-10">
-                        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">
-                          <AlertTriangle className="w-7 h-7 text-slate-400 mx-auto mb-2" />
-                          当前日期范围暂无商品订单数据。请扩大日期范围或同步店铺订单数据。
-                        </div>
+                  {products.map(product => (
+                    <tr key={product.id} className="hover:bg-slate-50">
+                      <td className="px-6 py-4"><div className="font-semibold text-slate-900">{product.productName}</div><div className="text-xs text-slate-400">SKU: {product.sku}</div></td>
+                      <td className="px-6 py-4 text-slate-500">{product.category}</td>
+                      <td className="px-6 py-4 text-right">{product.orders}</td>
+                      <td className="px-6 py-4 text-right">{product.refundedOrders}</td>
+                      <td className="px-6 py-4 text-right font-semibold text-emerald-700">{currency(product.revenue)}</td>
+                      <td className="px-6 py-4 text-right">{currency(product.averageOrderValue)}</td>
+                      <td className="px-6 py-4 text-right">{percentage(product.refundRate)}</td>
+                      <td className="max-w-[260px] whitespace-normal px-6 py-4 text-xs text-slate-500">
+                        {product.warnings.map(warning => PRODUCT_WARNING_LABELS[warning] || "部分数据需要进一步核对。").join(" ")}
                       </td>
                     </tr>
+                  ))}
+                  {products.length === 0 && (
+                    <tr><td colSpan={8} className="px-6 py-12 text-center text-sm text-slate-500"><AlertTriangle className="mx-auto mb-2 h-7 w-7" />当前范围暂无商品订单数据。</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
           </div>
-
-          {/* Verification Modal / Side drawer for Trust and Transparency Auditing */}
-          {selectedProduct && (
-            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-xl w-full overflow-hidden flex flex-col max-h-[85vh]">
-                <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                  <div className="flex items-center gap-2">
-                    <ShieldCheck className="w-5 h-5 text-indigo-600" />
-                    <div>
-                      <h4 className="font-bold text-slate-950 text-base">商品级 AI 可信度合规审计</h4>
-                      <p className="text-[11px] text-slate-500 mt-0.5">商品 ID: {selectedProduct.productId}</p>
-                    </div>
-                  </div>
-                  <button 
-                    onClick={() => setSelectedProduct(null)}
-                    className="text-slate-400 hover:text-slate-600 text-lg font-bold"
-                  >
-                    ×
-                  </button>
-                </div>
-
-                <div className="p-6 space-y-5 overflow-y-auto">
-                  <div className="space-y-1.5">
-                    <span className="text-xs text-slate-400 uppercase font-semibold">对账商品</span>
-                    <p className="text-slate-900 font-bold text-sm leading-snug">{selectedProduct.productName}</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                    <div>
-                      <span className="text-xs text-slate-400 block">营收聚合路径</span>
-                      <strong className="text-sm text-slate-900 capitalize font-semibold">{selectedProduct.source}</strong>
-                    </div>
-                    <div>
-                      <span className="text-xs text-slate-400 block">第一单录入时间</span>
-                      <strong className="text-xs text-slate-900 font-mono">{formatNullableDate(selectedProduct.firstOrderAt)}</strong>
-                    </div>
-                    <div>
-                      <span className="text-xs text-slate-400 block">最末单录入时间</span>
-                      <strong className="text-xs text-slate-900 font-mono">{formatNullableDate(selectedProduct.lastOrderAt)}</strong>
-                    </div>
-                    <div>
-                      <span className="text-xs text-slate-400 block">退货数 vs 总进件笔数</span>
-                      <strong className="text-xs text-indigo-700 font-mono font-semibold">
-                        {percentage(selectedProduct.refundRate)} 退款率
-                      </strong>
-                    </div>
-                  </div>
-
-                  {/* Trust details */}
-                  <div className="space-y-4">
-                    <h5 className="text-[12.5px] font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5 border-b border-dashed border-slate-200 pb-1.5">
-                      <Calendar className="w-4 h-4 text-blue-500" /> 
-                      可信对账与归因链路
-                    </h5>
-
-                    <div className="space-y-3.5 text-[12.5px] text-slate-600 leading-relaxed">
-                      <div className="flex items-start gap-2.5">
-                        <div className="p-1 bg-indigo-50 text-indigo-600 rounded-lg mt-0.5 font-mono text-xs font-semibold">A</div>
-                        <div>
-                          <strong className="text-slate-900">归因保护:</strong>
-                          <p className="text-slate-500 text-xs mt-0.5">
-                            由于系统内未重建真实 Product-to-Ad mapping，故将商品级 <code>adSpend</code>/<code>ROAS</code> 直接声明为空。坚决防范由分摊估算机制带来的数据幻觉。
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-start gap-2.5">
-                        <div className="p-1 bg-emerald-50 text-emerald-600 rounded-lg mt-0.5 font-mono text-xs font-semibold">B</div>
-                        <div>
-                          <strong className="text-slate-900">数据源合规机制 (Compliance Check):</strong>
-                          <p className="text-slate-500 text-xs mt-0.5">
-                            该商品 metadata 来自于数据库 Product 字典。订单排除包含待定、取消、被退回在内的明显无效记录。
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <span className="text-xs text-slate-400 uppercase font-semibold">数据来源 JSON</span>
-                    <pre className="bg-slate-950 text-[#86e2d5] text-xs p-4 rounded-xl font-mono overflow-auto max-h-[160px]">
-                      {JSON.stringify(selectedProduct.dataSourceExplain, null, 2)}
-                    </pre>
-                  </div>
-                </div>
-
-                <div className="p-4 border-t border-slate-100 bg-slate-50/80 flex justify-end">
-                  <button 
-                    onClick={() => setSelectedProduct(null)}
-                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-xl text-xs tracking-wider transition-all"
-                  >
-                    确认审计可信度
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
         </>
       )}
     </div>

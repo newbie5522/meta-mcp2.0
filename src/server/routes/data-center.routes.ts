@@ -1101,16 +1101,14 @@ router.get("/audience", async (req, res) => {
  * Order country metrics are unavailable when Order schema lacks country fields.
  */
 router.get("/countries", async (req, res) => {
-  const { storeId, minSpend, minOrders, includeUnmappedSpend } = req.query;
+  const { storeId, minOrders, includeUnmappedSpend } = req.query;
 
   try {
     const { startStr, endStr } = getAppliedDateRange(req.query);
     const appliedFilters = buildAppliedFilters({ startStr, endStr, storeId });
 
-    const minSRaw = minSpend ? parseFloat(String(minSpend)) : 0;
     const minORaw = minOrders ? parseInt(String(minOrders), 10) : 0;
 
-    const minS = Number.isFinite(minSRaw) ? minSRaw : 0;
     const minO = Number.isFinite(minORaw) ? minORaw : 0;
 
     const normalizedStoreId =
@@ -1124,7 +1122,7 @@ router.get("/countries", async (req, res) => {
       startStr,
       endStr,
       normalizedStoreId,
-      minS,
+      0,
       minO,
       incUnmapped
     );
@@ -1143,7 +1141,7 @@ router.get("/countries", async (req, res) => {
         metaScope: "仅在有店铺订单国家上展示匹配到的 Meta 国家指标；Meta-only 国家请看受众页 country tab",
         storeScope: "店铺订单按 Order.store_local_date 和收货/账单国家统计",
         dateField: "store_local_date",
-        storeId,
+        storeId: normalizedStoreId || "all",
         includeUnmapped: incUnmapped,
         includeZeroSpend: true,
         mappedOnly: !incUnmapped
@@ -1156,7 +1154,7 @@ router.get("/countries", async (req, res) => {
         dateRange: buildDateRange(startStr, endStr),
         queryDebug: buildQueryDebug({
           source: "FactAudienceBreakdown + Order",
-          storeId,
+          storeId: normalizedStoreId || "all",
           includeUnmapped: incUnmapped,
           includeZeroSpend: true,
           mappedOnly: !incUnmapped,
@@ -1187,10 +1185,28 @@ router.get("/countries", async (req, res) => {
  */
 router.get("/products", async (req, res) => {
   try {
+    const { storeId } = req.query;
     const { startStr, endStr } = getAppliedDateRange(req.query);
-    const appliedFilters = buildAppliedFilters({ startStr, endStr });
+    const normalizedStoreId = storeId && storeId !== "undefined" ? String(storeId) : "all";
+    const appliedFilters = buildAppliedFilters({ startStr, endStr, storeId: normalizedStoreId });
 
-    const products = await getProductIntelligence(startStr, endStr);
+    const products = await getProductIntelligence(startStr, endStr, normalizedStoreId);
+    const revenueComplete = products.every(product => product.revenue !== null);
+    const totalProductLineRevenue = revenueComplete
+      ? products.reduce((sum, product) => sum + Number(product.revenue), 0)
+      : null;
+    const totalOrders = products.reduce((sum, product) => sum + product.orders, 0);
+    const refundedOrders = products.reduce((sum, product) => sum + product.refundedOrders, 0);
+    const refundRate = totalOrders > 0 ? refundedOrders / totalOrders : null;
+    const summary = {
+      productsCount: products.length,
+      totalOrders,
+      refundedOrders,
+      refundRate,
+      totalProductLineRevenue,
+      revenueComplete,
+      profitAvailable: false
+    };
 
     return res.json({
       success: true,
@@ -1200,6 +1216,7 @@ router.get("/products", async (req, res) => {
       endDate: endStr,
       data: products,
       products,
+      summary,
       count: products.length,
       dataScope: buildDataScope({
         page: "products",
@@ -1210,7 +1227,8 @@ router.get("/products", async (req, res) => {
         includeUnmapped: false,
         includeZeroSpend: true,
         mappedOnly: false,
-        scope: "all_stores"
+        storeId: normalizedStoreId,
+        scope: normalizedStoreId === "all" ? "all_stores" : `store:${normalizedStoreId}`
       }),
       dataHealth: {
         status: products.length > 0 ? "READY" : "EMPTY",
@@ -1218,9 +1236,12 @@ router.get("/products", async (req, res) => {
         structureRows: products.length,
         dateRange: buildDateRange(startStr, endStr),
         source: "Order",
+        revenueComplete,
+        profitAvailable: false,
         queryDebug: buildQueryDebug({
           source: "Order",
-          scope: "all_stores",
+          storeId: normalizedStoreId,
+          scope: normalizedStoreId === "all" ? "all_stores" : `store:${normalizedStoreId}`,
           includeUnmapped: false,
           includeZeroSpend: true,
           mappedOnly: false,
@@ -1233,6 +1254,8 @@ router.get("/products", async (req, res) => {
       dataSourceExplain: {
         primarySource: "Order",
         metadataSource: "Product",
+        revenueSource: "Order.revenue product line values",
+        profitAvailable: false,
         dateFilterApplied: true,
         noMockData: true
       }

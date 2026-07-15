@@ -11,6 +11,83 @@ import { extractOrderLedgerAmount } from "./store-ledger.service.js";
 
 export type StorePlatform = "shopline" | "shopify" | "shoplazza";
 
+export type PlatformOrderValidity = {
+  valid: boolean;
+  reason: string | null;
+};
+
+const PLATFORM_ALLOWED_PAYMENT_STATUSES: Record<StorePlatform, ReadonlySet<string>> = {
+  shopline: new Set([
+    "paid",
+    "pending",
+    "authorized",
+    "partially_paid",
+    "partially_refunded",
+    "refunded"
+  ]),
+  shopify: new Set([
+    "paid",
+    "authorized",
+    "partially_paid",
+    "partially_refunded",
+    "refunded"
+  ]),
+  shoplazza: new Set([
+    "paid",
+    "authorized",
+    "partially_paid",
+    "partially_refunded",
+    "refunded"
+  ])
+};
+
+const EXCLUDED_PAYMENT_STATUSES = new Set([
+  "waiting",
+  "unpaid",
+  "failed",
+  "cancelled",
+  "canceled",
+  "voided"
+]);
+
+export function classifyPlatformOrderValidity(input: {
+  platform: StorePlatform;
+  paymentStatus?: string | null;
+  fulfillmentStatus?: string | null;
+  cancelledAt?: unknown;
+}): PlatformOrderValidity {
+  const paymentStatus = String(input.paymentStatus || "").trim().toLowerCase();
+  const fulfillmentStatus = String(input.fulfillmentStatus || "").trim().toLowerCase();
+  const allowedStatuses = PLATFORM_ALLOWED_PAYMENT_STATUSES[input.platform];
+
+  if (!allowedStatuses) {
+    return { valid: false, reason: "PLATFORM_ORDER_RULE_UNAVAILABLE" };
+  }
+  if (!paymentStatus) {
+    return { valid: false, reason: "PAYMENT_STATUS_UNAVAILABLE" };
+  }
+  if (
+    input.cancelledAt !== null &&
+    input.cancelledAt !== undefined &&
+    input.cancelledAt !== ""
+  ) {
+    return { valid: false, reason: "ORDER_CANCELLED" };
+  }
+  if (fulfillmentStatus === "cancelled" || fulfillmentStatus === "canceled") {
+    return { valid: false, reason: "FULFILLMENT_CANCELLED" };
+  }
+  if (allowedStatuses.has(paymentStatus)) {
+    return { valid: true, reason: null };
+  }
+  if (
+    EXCLUDED_PAYMENT_STATUSES.has(paymentStatus) ||
+    (paymentStatus === "pending" && input.platform !== "shopline")
+  ) {
+    return { valid: false, reason: "PAYMENT_STATUS_EXCLUDED" };
+  }
+  return { valid: false, reason: "PAYMENT_STATUS_UNRECOGNIZED" };
+}
+
 export type CanonicalOrder = {
   platform: StorePlatform;
   storeId: number;
@@ -79,13 +156,6 @@ function sanitizeUrl(url: string): string {
   } catch (e) {
     return url;
   }
-}
-
-// Check order payment status if it is valid for counting/financial metrics
-export function isPaymentStatusExcluded(status: string | null | undefined): boolean {
-  if (!status) return false;
-  const s = status.toLowerCase().trim();
-  return ["waiting", "unpaid", "pending", "cancelled", "voided"].includes(s);
 }
 
 function money(value: any): number {
@@ -488,7 +558,12 @@ export async function fetchStoreOrdersCanonical(params: {
     const rawTime = getRawTimeByAttribution(co, bestAttributionField);
     if (!rawTime) return false;
     const localDate = getStoreLocalDate(rawTime, storeTimezone);
-    return localDate >= params.startDate && localDate <= params.endDate && !isPaymentStatusExcluded(co.paymentStatus);
+    return localDate >= params.startDate && localDate <= params.endDate && classifyPlatformOrderValidity({
+      platform: params.platform,
+      paymentStatus: co.paymentStatus,
+      fulfillmentStatus: co.fulfillmentStatus,
+      cancelledAt: co.cancelledAt
+    }).valid;
   });
 
   for (const co of convertedOrdersInSelectedRange) {
@@ -515,7 +590,12 @@ export async function fetchStoreOrdersCanonical(params: {
       const rawTime = getRawTimeByAttribution(co, attr) || co.rawCreatedAt;
       if (!rawTime) return false;
       const localDate = getStoreLocalDate(rawTime, storeTimezone);
-      return localDate >= params.startDate && localDate <= params.endDate && !isPaymentStatusExcluded(co.paymentStatus);
+      return localDate >= params.startDate && localDate <= params.endDate && classifyPlatformOrderValidity({
+        platform: params.platform,
+        paymentStatus: co.paymentStatus,
+        fulfillmentStatus: co.fulfillmentStatus,
+        cancelledAt: co.cancelledAt
+      }).valid;
     });
 
     attributionFieldStats[attr] = {
@@ -571,8 +651,13 @@ export async function fetchStoreOrdersCanonical(params: {
   // Keep all converted order list for diagnostics, filter strict for canonical response
   const canonicalOrders = targetOrders.filter(co => {
     const inRange = co.storeLocalDate >= params.startDate && co.storeLocalDate <= params.endDate;
-    const isExcluded = isPaymentStatusExcluded(co.paymentStatus);
-    return inRange && !isExcluded;
+    const validity = classifyPlatformOrderValidity({
+      platform: co.platform,
+      paymentStatus: co.paymentStatus,
+      fulfillmentStatus: co.fulfillmentStatus,
+      cancelledAt: co.cancelledAt
+    });
+    return inRange && validity.valid;
   });
 
   const apiOrdersCount = targetOrders.length;

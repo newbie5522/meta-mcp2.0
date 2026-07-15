@@ -20,9 +20,9 @@ vi.mock("../../db/index.js", () => ({
 import {
   getStoreOrderFacts,
   getStoreOrderSummary,
-  isPaymentStatusExcluded,
   normalizeStoreOrderFacts
 } from "./order-fact.service";
+import { classifyPlatformOrderValidity } from "./store-sync-core";
 
 const dateRange = {
   startDate: "2026-07-01",
@@ -57,10 +57,10 @@ beforeEach(() => {
 });
 
 describe("store order fact shared contract", () => {
-  it("excludes unpaid statuses from shared order facts", async () => {
+  it("uses one platform-specific payment status contract for sync and facts", async () => {
     // Arrange
-    const excludedStatuses = ["waiting", "unpaid", "pending", "cancelled", "voided"];
-    const includedStatuses = ["paid", "completed", "fulfilled", null, "", "  PAID  "];
+    const excludedStatuses = ["waiting", "unpaid", "failed", "cancelled", "canceled", "voided"];
+    const includedStatuses = ["paid", "authorized", "partially_paid", "partially_refunded", "refunded", "  PAID  "];
     prismaMock.order.findMany.mockResolvedValueOnce([
       ...excludedStatuses.map((status, index) => orderFixture({
         id: `excluded-${index}`,
@@ -79,12 +79,11 @@ describe("store order fact shared contract", () => {
 
     // Assert
     for (const status of excludedStatuses) {
-      expect(isPaymentStatusExcluded(status)).toBe(true);
+      expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: status }).valid).toBe(false);
     }
     for (const status of includedStatuses) {
-      expect(isPaymentStatusExcluded(status)).toBe(false);
+      expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: status }).valid).toBe(true);
     }
-    expect(isPaymentStatusExcluded("  Waiting  ")).toBe(true);
     const normalized = normalizeStoreOrderFacts(rows);
     expect(normalized.orders.map(order => order.rows[0].orderId)).toEqual([
       "included-0",
@@ -94,6 +93,31 @@ describe("store order fact shared contract", () => {
       "included-4",
       "included-5"
     ]);
+  });
+
+  it("distinguishes pending by platform and rejects unknown validity inputs", () => {
+    expect(classifyPlatformOrderValidity({ platform: "shopline", paymentStatus: "pending" }).valid).toBe(true);
+    expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: "pending" }).valid).toBe(false);
+    expect(classifyPlatformOrderValidity({ platform: "shoplazza", paymentStatus: "pending" }).valid).toBe(false);
+    expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: "refunded" }).valid).toBe(true);
+    expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: "partially_refunded" }).valid).toBe(true);
+    expect(classifyPlatformOrderValidity({
+      platform: "shopline",
+      paymentStatus: "paid",
+      cancelledAt: "2026-07-02T00:00:00.000Z"
+    }).valid).toBe(false);
+    expect(classifyPlatformOrderValidity({ platform: "shopline", paymentStatus: "mystery" })).toEqual({
+      valid: false,
+      reason: "PAYMENT_STATUS_UNRECOGNIZED"
+    });
+
+    const normalized = normalizeStoreOrderFacts([
+      orderFixture({ id: "unknown-platform", orderId: "unknown-platform", storePlatform: "unknown" }),
+      orderFixture({ id: "unknown-status", orderId: "unknown-status", paymentStatus: "mystery" })
+    ]);
+    expect(normalized.orders).toHaveLength(0);
+    expect(normalized.warnings).toContain("PLATFORM_ORDER_RULE_UNAVAILABLE");
+    expect(normalized.warnings).toContain("PAYMENT_STATUS_UNRECOGNIZED");
   });
 
   it("deduplicates line rows by real orderId", () => {

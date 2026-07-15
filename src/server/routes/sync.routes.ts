@@ -15,28 +15,10 @@ import { refreshMetaDataCenterLedger } from "../services/datacenter-meta-ledger.
 import { syncMetaAudienceBreakdown } from "../services/meta-audience-breakdown-sync.service.js";
 import { v4 as uuidv4 } from "uuid";
 import { SyncTaskType, SyncTriggerRequest, SyncTriggerResponse } from "../types/sync-tasks.js";
+import { isManualSyncRequired } from "../services/sync-manual-guard.js";
 
 const router = Router();
 const STALE_RUNNING_TASK_MINUTES = 30;
-
-// ============================================================
-// 🔐 权限控制
-// ============================================================
-
-function isManualSyncEnabled(): boolean {
-  return process.env.ENABLE_MANUAL_SYNC === "true";
-}
-
-function requireManualSyncEnabled(req: any, res: any, next: any) {
-  if (!isManualSyncEnabled()) {
-    return res.status(403).json({
-      success: false,
-      error: "MANUAL_SYNC_DISABLED",
-      message: "Manual sync endpoints are disabled by default. Set ENABLE_MANUAL_SYNC=true to enable them explicitly."
-    });
-  }
-  return next();
-}
 
 function parseSyncMetadata(log: any) {
   if (!log?.metadata) return {};
@@ -437,9 +419,6 @@ router.post("/sync/trigger", async (req, res) => {
     includeUnmapped
   } = req.body as SyncTriggerRequest;
 
-  // 生成唯一的 chainId
-  const chainId = uuidv4();
-
   // 参数验证
   if (!taskType) {
     return res.status(400).json({
@@ -460,6 +439,20 @@ router.post("/sync/trigger", async (req, res) => {
       validTypes: validTaskTypes
     });
   }
+
+  if (
+    isManualSyncRequired({ taskType, rebuild, baselineRevenue }) &&
+    process.env.ENABLE_MANUAL_SYNC !== "true"
+  ) {
+    return res.status(403).json({
+      success: false,
+      error: "MANUAL_SYNC_DISABLED",
+      message: "Manual sync is disabled."
+    });
+  }
+
+  // Guard all dangerous work before chain creation, running-task checks, or sync calls.
+  const chainId = uuidv4();
 
   try {
     console.log(`[Sync Trigger] Chain ${chainId} started with taskType: ${taskType}`);
