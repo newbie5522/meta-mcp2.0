@@ -65,12 +65,17 @@ export const DATA_CONTRACT = {
     },
     audienceBreakdown: {
       target: "FactAudienceBreakdown",
-      endpoint: "/api/sync/meta-audience-breakdown",
-      autoLightRefreshAllowed: false
+      endpoint: "/api/sync/trigger",
+      scheduledBy: "auto_view_refresh"
     },
     autoLightRefresh: {
       targets: ["DataCenterMetaAccountDaily", "DataCenterStoreDaily"],
       forbiddenTargets: ["FactAudienceBreakdown", "nonCanonicalPerformanceTables"]
+    },
+    autoViewRefresh: {
+      minimumIntervalMinutes: 60,
+      targets: ["FactAudienceBreakdown", "FactMetaPerformance level=ad", "Ad", "AdCreative"],
+      executor: "sync-view-task-executor"
     }
   }
 } as const;

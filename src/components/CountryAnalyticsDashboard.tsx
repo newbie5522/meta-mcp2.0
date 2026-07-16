@@ -12,6 +12,7 @@ import {
   shouldPreserveLastGoodData
 } from "@/lib/data-view-state";
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
+import { DataCoverageBanner } from "./common/DataCoverageBanner";
 
 interface StoreOption {
   id: number;
@@ -26,19 +27,19 @@ interface CountryAnalyticsRecord {
   orderCount: number | null;
   orderProfit: number | null;
   refundRate: number | null;
-  metaSpend: number;
-  metaPurchases: number;
-  metaPurchaseValue: number;
+  metaSpend: number | null;
+  metaPurchases: number | null;
+  metaPurchaseValue: number | null;
   metaRoas: number | null;
 }
 
 interface CountryAnalyticsData {
   rows: CountryAnalyticsRecord[];
   summary: {
-    orderCountriesCount: number;
+    orderCountriesCount: number | null;
     totalOrderRevenue: number | null;
     totalOrderCount: number | null;
-    totalMetaSpend: number;
+    totalMetaSpend: number | null;
   };
   dataHealth: {
     orderCountryAvailable: boolean;
@@ -70,6 +71,8 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
   const [lastGoodData, setLastGoodData] = useState<any | null>(null);
   const [viewNotice, setViewNotice] = useState<string | null>(null);
   const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string; timezone?: string } | null>(null);
+  const [storeCoverage, setStoreCoverage] = useState<any | null>(null);
+  const [metaCoverage, setMetaCoverage] = useState<any | null>(null);
   const startStrKey = format(startDate, "yyyy-MM-dd");
   const endStrKey = format(endDate, "yyyy-MM-dd");
   const currentRequestKey = buildDataViewRequestKey({
@@ -111,10 +114,11 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
         }
       });
       const rows = response.data?.rows || [];
+      setStoreCoverage(response.data?.storeCoverage || response.data?.coverage || null);
+      setMetaCoverage(response.data?.metaCoverage || null);
       setResponseDateRange(response.data?.dateRange || response.data?.appliedFilters || null);
       if (isDateRangeMismatch(response.data, startStrKey, endStrKey)) {
-        const safeData = getSafeLastGoodData(lastGoodData, currentRequestKey);
-        setData(safeData?.data || null);
+        setData(null);
         setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
         return;
       }
@@ -130,14 +134,11 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
       setLastGoodData(makeLastGoodData(currentRequestKey, response.data));
       setViewNotice(null);
     } catch (requestError: any) {
-      const safeData = getSafeLastGoodData(lastGoodData, currentRequestKey);
-      if (safeData) {
-        setData(safeData.data || null);
-        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-      } else {
-        setData(null);
-        setError(requestError.response?.data?.details || requestError.message || "国家订单分析加载失败");
-      }
+      setData(null);
+      setStoreCoverage({ status: "ERROR" });
+      setMetaCoverage({ status: "ERROR" });
+      setViewNotice("当前国家筛选周期请求失败，未展示旧数据。");
+      setError(requestError.response?.data?.details || requestError.message || "国家订单分析加载失败");
     } finally {
       setLoading(false);
     }
@@ -183,14 +184,20 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
         </label>
       </div>
 
+      <div className="grid gap-2 md:grid-cols-2">
+        <DataCoverageBanner coverage={storeCoverage} />
+        <DataCoverageBanner coverage={metaCoverage} />
+      </div>
+
       <DataViewTraceBar
         currentStartDate={startStrKey}
         currentEndDate={endStrKey}
         responseStartDate={responseDateRange?.startDate}
         responseEndDate={responseDateRange?.endDate}
+        latestAvailableDate={storeCoverage?.latestAvailableDate}
         timezone={responseDateRange?.timezone || "America/Los_Angeles"}
         rowCount={rows.length}
-        status={healthStatus}
+        status={storeCoverage?.status || healthStatus}
         level="country"
         factRows={data?.dataHealth?.factRows}
         structureRows={data?.dataHealth?.structureRows}

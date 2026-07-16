@@ -6,6 +6,8 @@ import prisma from "../../db/index.js";
 import { getBusinessNow } from "../../shared/business-time.js";
 import { refreshMetaDataCenterLedger } from "./datacenter-meta-ledger.service.js";
 import { refreshStoreDataCenterLedger } from "./datacenter-store-ledger.service.js";
+import { executeSyncViewTask } from "./sync-view-task-executor.service.js";
+import { deriveCanonicalSyncStatus } from "../types/sync-tasks.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezonePlugin);
@@ -14,6 +16,78 @@ const AUTO_REFRESH_ENABLED = process.env.DATA_CENTER_AUTO_REFRESH_ENABLED !== "f
 const AUTO_REFRESH_INTERVAL_MS = Number(process.env.DATA_CENTER_AUTO_REFRESH_INTERVAL_MS || 10 * 60 * 1000);
 const AUTO_REFRESH_STALE_SECONDS = Number(process.env.DATA_CENTER_AUTO_REFRESH_STALE_SECONDS || 10 * 60);
 const AUTO_REFRESH_LOOKBACK_DAYS = Number(process.env.DATA_CENTER_AUTO_REFRESH_LOOKBACK_DAYS || 3);
+const AUTO_VIEW_REFRESH_INTERVAL_MS = Math.max(
+  60 * 60 * 1000,
+  Number(process.env.DATA_CENTER_VIEW_REFRESH_INTERVAL_MS || 60 * 60 * 1000)
+);
+
+export async function ensureDataCenterViewFreshness(params?: {
+  requestedStartDate?: string;
+  requestedEndDate?: string;
+  storeId?: number | null;
+  force?: boolean;
+}) {
+  const endDate = params?.requestedEndDate || getBusinessNow().format("YYYY-MM-DD");
+  const startDate = params?.requestedStartDate || getBusinessNow().subtract(AUTO_REFRESH_LOOKBACK_DAYS - 1, "day").format("YYYY-MM-DD");
+  const recent = !params?.force && await prisma.dataCenterRefreshRun.findFirst({
+    where: {
+      type: "auto_view_refresh",
+      status: { in: ["SUCCESS", "PARTIAL_SUCCESS", "NO_NEW_DATA"] },
+      finishedAt: { gte: new Date(Date.now() - AUTO_VIEW_REFRESH_INTERVAL_MS) }
+    },
+    orderBy: { startedAt: "desc" }
+  });
+  if (recent) return { skipped: true, status: "NO_NEW_DATA", reason: "AUTO_VIEW_REFRESH_INTERVAL_NOT_DUE", startDate, endDate };
+
+  const running = await prisma.dataCenterRefreshRun.findFirst({
+    where: { type: "auto_view_refresh", status: "running", startedAt: { gte: dayjs().subtract(30, "minute").toDate() } }
+  });
+  if (running) return { skipped: true, status: "NO_NEW_DATA", reason: "AUTO_VIEW_REFRESH_ALREADY_RUNNING", startDate, endDate };
+
+  const run = await prisma.dataCenterRefreshRun.create({
+    data: { type: "auto_view_refresh", scope: "datacenter_views", startDate, endDate, status: "running", startedAt: new Date() }
+  });
+  const days = Math.max(1, dayjs(endDate).diff(dayjs(startDate), "day") + 1);
+  const receipts: any[] = [];
+  const failedSlices: any[] = [];
+  for (const taskType of ["sync_view_audience", "sync_view_creatives"] as const) {
+    try {
+      receipts.push(await executeSyncViewTask({
+        taskType,
+        startDate,
+        endDate,
+        days,
+        storeId: params?.storeId || null,
+        triggeredBy: "auto_view_refresh"
+      }));
+    } catch (error: any) {
+      failedSlices.push({ taskType, message: error?.message || String(error) });
+    }
+  }
+  const totals = receipts.reduce((sum, receipt) => ({
+    recordsFetched: sum.recordsFetched + Number(receipt.recordsFetched || 0),
+    recordsSaved: sum.recordsSaved + Number(receipt.recordsSaved || 0),
+    recordsUpdated: sum.recordsUpdated + Number(receipt.recordsUpdated || 0),
+    failedAccounts: [...sum.failedAccounts, ...(receipt.failedAccounts || [])],
+    failedSlices: [...sum.failedSlices, ...(receipt.failedSlices || []), ...(receipt.status === "FAILED" ? [{ taskType: receipt.taskType, message: receipt.message }] : [])],
+    truncated: sum.truncated || Boolean(receipt.truncated)
+  }), { recordsFetched: 0, recordsSaved: 0, recordsUpdated: 0, failedAccounts: [] as any[], failedSlices: [...failedSlices] as any[], truncated: false });
+  const status = deriveCanonicalSyncStatus(totals);
+  const finishedAt = new Date();
+  await prisma.dataCenterRefreshRun.update({
+    where: { id: run.id },
+    data: {
+      status,
+      recordsFetched: totals.recordsFetched,
+      recordsSaved: totals.recordsSaved,
+      recordsUpdated: totals.recordsUpdated,
+      diagnosticsJson: JSON.stringify({ receipts, failedSlices: totals.failedSlices }),
+      error: status === "FAILED" ? "AUTO_VIEW_REFRESH_FAILED" : null,
+      finishedAt
+    }
+  });
+  return { skipped: false, status, reason: "COMPLETED", startDate, endDate, receipts, ...totals, finishedAt: finishedAt.toISOString() };
+}
 
 export async function ensureDataCenterFreshness(params?: {
   reason?: "server_boot" | "timer" | "api_request" | "manual_internal";
@@ -361,6 +435,14 @@ export function startDataCenterAutoRefreshLoop() {
       console.error("[DataCenterAutoRefresh] timer refresh failed", err);
     });
   }, AUTO_REFRESH_INTERVAL_MS);
+
+  setTimeout(() => {
+    ensureDataCenterViewFreshness().catch(err => console.error("[DataCenterAutoRefresh] boot view refresh failed", err));
+  }, 15000);
+
+  setInterval(() => {
+    ensureDataCenterViewFreshness().catch(err => console.error("[DataCenterAutoRefresh] timer view refresh failed", err));
+  }, AUTO_VIEW_REFRESH_INTERVAL_MS);
 }
 
 export async function getFreshnessMeta() {

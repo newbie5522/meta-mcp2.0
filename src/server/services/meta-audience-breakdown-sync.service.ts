@@ -1,113 +1,130 @@
 import axios from "axios";
 import prisma from "../../db/index.js";
-import dayjs from "dayjs";
-import { getMetaToken, normalizeMetaAccountId, getNumericAccountId } from "../utils.js";
+import { getMetaToken, getNumericAccountId, normalizeMetaAccountId } from "../utils.js";
+import {
+  deriveCanonicalSyncStatus,
+  type CanonicalSyncStatus,
+  type SyncExecutionResult
+} from "../types/sync-tasks.js";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function fetchBreakdownEdges(path: string, params: Record<string, any>, token: string, maxPages = 10) {
-  const url = `https://graph.facebook.com/v19.0${path}`;
-  const rows: any[] = [];
-  let after: string | undefined;
+export type AudienceDimension = "country" | "age" | "gender" | "publisher_platform";
 
-  const activeParams = { ...params };
-
-  for (let page = 0; page < maxPages; page++) {
-    let retries = 5;
-    let success = false;
-    let lastErr: any = null;
-
-    while (retries > 0 && !success) {
-      try {
-        const res = await axios.get(url, {
-          params: { ...activeParams, access_token: token, after }
-        });
-        const data = res.data?.data || [];
-        rows.push(...data);
-        after = res.data?.paging?.cursors?.after;
-        success = true;
-        if (!after || !res.data?.paging?.next) break;
-      } catch (err: any) {
-        lastErr = err;
-        const fbError = err.response?.data?.error;
-        const msg = fbError?.message || err.message || "";
-        const code = fbError?.code;
-        const subcode = fbError?.error_subcode;
-
-        console.warn(`[Meta Audience Fetch Warn] Attempt failed for path ${path} (Retries left: ${retries - 1}). Error: [Code ${code}, Subcode ${subcode}] ${msg}`);
-        
-        const isReduceDataError =
-          code === 1 ||
-          msg.toLowerCase().includes("reduce the amount of data") ||
-          msg.toLowerCase().includes("please reduce") ||
-          msg.toLowerCase().includes("too much data") ||
-          msg.toLowerCase().includes("reduce amount");
-
-        if (isReduceDataError) {
-          const oldLimit = activeParams.limit || 1000;
-          const newLimit = Math.max(100, Math.floor(oldLimit / 4));
-          console.warn(`[Meta Audience Fetch] Reducing pagination limit from ${oldLimit} to ${newLimit}...`);
-          activeParams.limit = newLimit;
-          await delay(2000);
-          continue;
-        }
-
-        const isRateLimitError =
-          code === 4 ||
-          code === 17 ||
-          code === 341 ||
-          subcode === 1504022 ||
-          msg.toLowerCase().includes("request limit reached") ||
-          msg.toLowerCase().includes("rate limit") ||
-          msg.toLowerCase().includes("too many requests");
-
-        if (isRateLimitError) {
-          console.warn(`[Meta Audience Fetch] Rate limit hit. Cooling off for 15s...`);
-          await delay(15000);
-          retries--;
-          continue;
-        }
-
-        const waitMs = (6 - retries) * 1500;
-        await delay(waitMs);
-        retries--;
-      }
-    }
-
-    if (!success && lastErr) {
-      const fbError = lastErr.response?.data?.error;
-      const msg = fbError?.message || lastErr.message || "";
-      const code = fbError?.code;
-      const subcode = fbError?.error_subcode;
-      
-      const isTransient = code === 1 || subcode === 99 || msg.includes("An unknown error occurred") || msg.includes("timeout") || lastErr.code === "ECONNABORTED";
-      
-      if (isTransient) {
-        console.error(`[Meta Audience Fetch] Transient error for ${path}, returning partial rows.`);
-        break; 
-      } else {
-        console.error(`[Meta Audience Fetch] Fatal error fetching ${path}:`, lastErr.response?.data || lastErr.message);
-        throw lastErr;
-      }
-    }
-  }
-  return rows;
+export interface FailedAudienceSlice {
+  accountId?: string;
+  dimension?: string;
+  page?: number;
+  message: string;
+  code?: string | number;
+  fbtraceId?: string;
+  transient?: boolean;
+  truncated?: boolean;
 }
 
-export async function syncMetaAudienceBreakdown(options: {
-  startDate: string;
-  endDate: string;
-  storeId?: number | null;
-  accountIds?: string[];
-  dimensions?: Array<"country" | "age" | "gender" | "publisher_platform">;
-  includeUnmapped?: boolean;
-}): Promise<{
+export interface AudienceEdgeReceipt {
+  rows: any[];
+  failedSlices: FailedAudienceSlice[];
+  truncated: boolean;
+  coverageComplete: boolean;
+}
+
+function errorDetail(error: any) {
+  const apiError = error?.response?.data?.error || {};
+  return {
+    message: String(apiError.message || error?.message || "Unknown Meta API error"),
+    code: apiError.code ?? error?.code,
+    subcode: apiError.error_subcode,
+    fbtraceId: apiError.fbtrace_id
+  };
+}
+
+function isTransientError(detail: ReturnType<typeof errorDetail>) {
+  const message = detail.message.toLowerCase();
+  return detail.code === 1 || detail.subcode === 99 || message.includes("unknown error") ||
+    message.includes("timeout") || message.includes("temporar");
+}
+
+export async function fetchAudienceBreakdownEdges(
+  path: string,
+  params: Record<string, any>,
+  token: string,
+  maxPages = 10
+): Promise<AudienceEdgeReceipt> {
+  const url = `https://graph.facebook.com/v19.0${path}`;
+  const rows: any[] = [];
+  const failedSlices: FailedAudienceSlice[] = [];
+  const activeParams = { ...params };
+  let after: string | undefined;
+  let hasNextPage = false;
+
+  for (let page = 0; page < maxPages; page++) {
+    let response: any = null;
+    let lastError: any = null;
+
+    for (let attempt = 0; attempt < 5 && !response; attempt++) {
+      try {
+        response = await axios.get(url, {
+          params: { ...activeParams, access_token: token, after }
+        });
+      } catch (error: any) {
+        lastError = error;
+        const detail = errorDetail(error);
+        const message = detail.message.toLowerCase();
+        const shouldReduce = detail.code === 1 || message.includes("reduce the amount") || message.includes("too much data");
+        if (shouldReduce) {
+          activeParams.limit = Math.max(100, Math.floor(Number(activeParams.limit || 1000) / 4));
+        }
+        const rateLimited = [4, 17, 341].includes(Number(detail.code)) ||
+          message.includes("rate limit") || message.includes("too many requests");
+        if (attempt < 4) await delay(rateLimited ? 15000 : Math.min(5000, (attempt + 1) * 1000));
+      }
+    }
+
+    if (!response) {
+      const detail = errorDetail(lastError);
+      if (!isTransientError(detail)) throw lastError;
+      failedSlices.push({
+        page: page + 1,
+        message: detail.message,
+        code: detail.code,
+        fbtraceId: detail.fbtraceId,
+        transient: true
+      });
+      return { rows, failedSlices, truncated: false, coverageComplete: false };
+    }
+
+    rows.push(...(response.data?.data || []));
+    after = response.data?.paging?.cursors?.after;
+    hasNextPage = Boolean(after && response.data?.paging?.next);
+    if (!hasNextPage) {
+      return { rows, failedSlices, truncated: false, coverageComplete: true };
+    }
+  }
+
+  if (hasNextPage) {
+    failedSlices.push({
+      page: maxPages,
+      message: `Pagination stopped at maxPages=${maxPages} while a next page remained.`,
+      truncated: true
+    });
+  }
+  return {
+    rows,
+    failedSlices,
+    truncated: hasNextPage,
+    coverageComplete: !hasNextPage
+  };
+}
+
+export interface AudienceSyncResult extends SyncExecutionResult {
   success: boolean;
-  status: "SUCCESS" | "PARTIAL" | "FAILED";
-  recordsFetched: number;
-  recordsSaved: number;
-  recordsUpdated: number;
+  status: CanonicalSyncStatus;
+  reason: string | null;
+  message: string;
   accountsSynced: number;
+  targetAccountsCount: number;
+  dimensionsRequested: string[];
   dimensionsSynced: string[];
   failedAccounts: Array<{
     accountId: string;
@@ -116,240 +133,197 @@ export async function syncMetaAudienceBreakdown(options: {
     code?: string | number;
     fbtraceId?: string;
   }>;
-}> {
-  const { startDate, endDate, storeId, accountIds, dimensions, includeUnmapped = true } = options;
-  const activeDimensions = dimensions && dimensions.length > 0 ? dimensions : ["country", "age", "gender", "publisher_platform"];
+  failedSlices: FailedAudienceSlice[];
+}
 
-  console.log(`[Meta Audience Breakdown Sync service] Started. Range: ${startDate} to ${endDate}, storeId=${storeId}, dimensions=[${activeDimensions.join(", ")}]`);
-
+export async function syncMetaAudienceBreakdown(options: {
+  startDate: string;
+  endDate: string;
+  storeId?: number | null;
+  accountIds?: string[];
+  dimensions?: AudienceDimension[];
+  includeUnmapped?: boolean;
+  maxPages?: number;
+}): Promise<AudienceSyncResult> {
+  const {
+    startDate,
+    endDate,
+    storeId,
+    accountIds,
+    dimensions,
+    includeUnmapped = true,
+    maxPages = 10
+  } = options;
+  const activeDimensions: AudienceDimension[] = dimensions?.length
+    ? dimensions
+    : ["country", "age", "gender", "publisher_platform"];
   const token = await getMetaToken();
-  if (!token) {
-    throw new Error("Missing Meta API OAuth token. Please configure token in Settings/Config first.");
-  }
+  if (!token) throw new Error("Missing Meta API OAuth token. Please configure token first.");
 
-  // 1. Resolve Target Accounts
   let queryWhere: any = {};
-  if (accountIds && accountIds.length > 0) {
-    const normalizedIds = accountIds.map(id => normalizeMetaAccountId(id));
-    queryWhere.fb_account_id = { in: normalizedIds };
-  } else if (storeId) {
+  if (accountIds?.length) {
+    queryWhere.fb_account_id = { in: accountIds.map(normalizeMetaAccountId) };
+  } else if (storeId !== null && storeId !== undefined) {
     const targetStoreId = Number(storeId);
-    // Find all mapping
-    const mappings = await prisma.accountMapping.findMany({
-      where: { storeId: targetStoreId }
-    });
-    const mappedFbIds = mappings.map(m => normalizeMetaAccountId(m.fbAccountId)).filter(Boolean);
-    const directAccounts = await prisma.adAccount.findMany({
-      where: { storeId: targetStoreId }
-    });
-    const directFbIds = directAccounts.map(a => normalizeMetaAccountId(a.fb_account_id)).filter(Boolean);
-    const targetFbIds = Array.from(new Set([...mappedFbIds, ...directFbIds]));
-
-    if (includeUnmapped) {
-      queryWhere = {
-        OR: [
-          { fb_account_id: { in: targetFbIds } },
-          { storeId: targetStoreId },
-          { storeId: null }
-        ]
-      };
-    } else {
-      queryWhere = {
-        OR: [
-          { fb_account_id: { in: targetFbIds } },
-          { storeId: targetStoreId }
-        ]
-      };
-    }
+    const [mappings, directAccounts] = await Promise.all([
+      prisma.accountMapping.findMany({ where: { storeId: targetStoreId } }),
+      prisma.adAccount.findMany({ where: { storeId: targetStoreId } })
+    ]);
+    const targetIds = Array.from(new Set([
+      ...mappings.map((mapping) => normalizeMetaAccountId(mapping.fbAccountId)),
+      ...directAccounts.map((account) => normalizeMetaAccountId(account.fb_account_id))
+    ].filter(Boolean)));
+    queryWhere = includeUnmapped
+      ? { OR: [{ fb_account_id: { in: targetIds } }, { storeId: targetStoreId }, { storeId: null }] }
+      : { OR: [{ fb_account_id: { in: targetIds } }, { storeId: targetStoreId }] };
   } else if (!includeUnmapped) {
     queryWhere.storeId = { not: null };
   }
 
-  const accounts = await prisma.adAccount.findMany({
-    where: queryWhere,
-    include: { store: true }
-  });
+  const accounts = await prisma.adAccount.findMany({ where: queryWhere, include: { store: true } });
+  let recordsFetched = 0;
+  let recordsSaved = 0;
+  let recordsUpdated = 0;
+  let accountsSynced = 0;
+  let truncated = false;
+  const failedAccounts: AudienceSyncResult["failedAccounts"] = [];
+  const failedSlices: FailedAudienceSlice[] = [];
+  const dimensionsSynced = new Set<string>();
 
-  console.log(`[Meta Audience Breakdown Sync service] Found ${accounts.length} ad accounts for processing.`);
+  for (const account of accounts) {
+    const accountId = normalizeMetaAccountId(account.fb_account_id);
+    const numericAccountId = getNumericAccountId(account.fb_account_id);
+    let accountComplete = true;
 
-  let totalFetched = 0;
-  let totalSaved = 0;
-  let totalUpdated = 0;
-  let accountsSyncedCount = 0;
-
-  const failedAccounts: Array<{
-    accountId: string;
-    dimension?: string;
-    message: string;
-    code?: string | number;
-    fbtraceId?: string;
-  }> = [];
-
-  for (const acc of accounts) {
-    const actId = normalizeMetaAccountId(acc.fb_account_id);
-    const numericAccountId = getNumericAccountId(acc.fb_account_id);
-    let accountHadSuccess = false;
-
-    console.log(`[Meta Audience Breakdown Sync service] Syncing account: ${actId}`);
-
-    for (const bType of activeDimensions) {
+    for (const dimension of activeDimensions) {
       try {
-        const rows = await fetchBreakdownEdges(`/act_${numericAccountId}/insights`, {
+        const receipt = await fetchAudienceBreakdownEdges(`/act_${numericAccountId}/insights`, {
           level: "account",
           time_increment: 1,
-          time_range: JSON.stringify({
-            since: startDate,
-            until: endDate,
-          }),
-          breakdowns: bType,
+          time_range: JSON.stringify({ since: startDate, until: endDate }),
+          breakdowns: dimension,
           fields: "account_id,account_name,date_start,date_stop,spend,impressions,reach,clicks,cpc,cpm,ctr,actions,action_values",
           limit: 1000
-        }, token, 10);
+        }, token, maxPages);
+        recordsFetched += receipt.rows.length;
+        truncated ||= receipt.truncated;
+        if (!receipt.coverageComplete) accountComplete = false;
+        failedSlices.push(...receipt.failedSlices.map((slice) => ({ ...slice, accountId, dimension })));
+        if (receipt.coverageComplete) dimensionsSynced.add(dimension);
 
-        totalFetched += rows.length;
-        if (rows.length > 0) {
-          accountHadSuccess = true;
-        }
-
-        for (const row of rows) {
-          const dateStr = row.date_start;
-          if (!dateStr) continue;
-
-          let dimVal = "";
-          if (bType === "country") dimVal = row.country || "";
-          else if (bType === "age") dimVal = row.age || "";
-          else if (bType === "gender") dimVal = row.gender || "";
-          else if (bType === "publisher_platform") dimVal = row.publisher_platform || "";
-
-          if (!dimVal) continue;
-
-          const spend = parseFloat(row.spend || 0);
-          const impressions = parseInt(row.impressions || 0, 10);
-          const clicks = parseInt(row.clicks || 0, 10);
-
-          let purchases = 0;
-          let purchaseValue = 0;
-
-          // Parse purchases from actions array
-          if (Array.isArray(row.actions)) {
-            const pAction = row.actions.find((a: any) => 
-              a.action_type === "purchase" || 
-              a.action_type === "offsite_conversion.fb_pixel_purchase" ||
-              a.action_type === "onsite_conversion.purchase" ||
-              a.action_type === "omni_purchase"
-            );
-            purchases = parseInt(pAction?.value || 0, 10);
-          }
-          // Parse purchase value from action_values array
-          if (Array.isArray(row.action_values)) {
-            const pValAction = row.action_values.find((a: any) => 
-              a.action_type === "purchase" || 
-              a.action_type === "offsite_conversion.fb_pixel_purchase" ||
-              a.action_type === "onsite_conversion.purchase" ||
-              a.action_type === "omni_purchase"
-            );
-            purchaseValue = parseFloat(pValAction?.value || 0);
-          }
-
-          const dataObj = {
-            date: dateStr,
+        for (const row of receipt.rows) {
+          const date = row.date_start;
+          const dimensionValue = String(row[dimension] || "");
+          if (!date || !dimensionValue) continue;
+          const purchases = Array.isArray(row.actions)
+            ? Number(row.actions.find((action: any) => [
+                "purchase",
+                "offsite_conversion.fb_pixel_purchase",
+                "onsite_conversion.purchase",
+                "omni_purchase"
+              ].includes(action.action_type))?.value || 0)
+            : 0;
+          const purchaseValue = Array.isArray(row.action_values)
+            ? Number(row.action_values.find((action: any) => [
+                "purchase",
+                "offsite_conversion.fb_pixel_purchase",
+                "onsite_conversion.purchase",
+                "omni_purchase"
+              ].includes(action.action_type))?.value || 0)
+            : 0;
+          const key = {
+            date,
             level: "account",
-            account_id: actId,
+            account_id: accountId,
+            dimension_type: dimension,
+            dimension_value: dimensionValue,
+            dimension_value_secondary: "",
             campaign_id: "",
             adset_id: "",
-            ad_id: "",
-            dimension_type: bType,
-            dimension_value: dimVal,
-            dimension_value_secondary: "",
-            spend,
-            impressions,
-            clicks,
-            purchases,
-            purchase_value: purchaseValue,
-            synced_at: new Date(),
-            raw_payload: JSON.stringify(row)
+            ad_id: ""
           };
-
           const existing = await prisma.factAudienceBreakdown.findUnique({
-            where: {
-              date_level_account_id_dimension_type_dimension_value_dimensi_key: {
-                date: dateStr,
-                level: "account",
-                account_id: actId,
-                dimension_type: bType,
-                dimension_value: dimVal,
-                dimension_value_secondary: "",
-                campaign_id: "",
-                adset_id: "",
-                ad_id: ""
-              }
+            where: { date_level_account_id_dimension_type_dimension_value_dimensi_key: key }
+          });
+          if (existing) recordsUpdated++;
+          await prisma.factAudienceBreakdown.upsert({
+            where: { date_level_account_id_dimension_type_dimension_value_dimensi_key: key },
+            update: {
+              ...key,
+              spend: Number(row.spend || 0),
+              impressions: Number(row.impressions || 0),
+              clicks: Number(row.clicks || 0),
+              purchases,
+              purchase_value: purchaseValue,
+              synced_at: new Date(),
+              raw_payload: JSON.stringify(row)
+            },
+            create: {
+              ...key,
+              spend: Number(row.spend || 0),
+              impressions: Number(row.impressions || 0),
+              clicks: Number(row.clicks || 0),
+              purchases,
+              purchase_value: purchaseValue,
+              synced_at: new Date(),
+              raw_payload: JSON.stringify(row)
             }
           });
-
-          if (existing) {
-            totalUpdated++;
-          }
-          totalSaved++;
-
-          await prisma.factAudienceBreakdown.upsert({
-            where: {
-              date_level_account_id_dimension_type_dimension_value_dimensi_key: {
-                date: dateStr,
-                level: "account",
-                account_id: actId,
-                dimension_type: bType,
-                dimension_value: dimVal,
-                dimension_value_secondary: "",
-                campaign_id: "",
-                adset_id: "",
-                ad_id: ""
-              }
-            },
-            update: dataObj,
-            create: dataObj
-          });
+          recordsSaved++;
         }
-      } catch (err: any) {
-        const errorDetail = err.response?.data?.error || {};
-        const msg = errorDetail.message || err.message || "Unknown Meta API error";
-        const code = errorDetail.code || null;
-        const fbtraceId = errorDetail.fbtrace_id || null;
-
-        console.error(`[Meta Audience Breakdown Sync service] Failed for account ${actId}, dim ${bType}: ${msg}`);
+      } catch (error: any) {
+        accountComplete = false;
+        const detail = errorDetail(error);
         failedAccounts.push({
-          accountId: actId,
-          dimension: bType,
-          message: msg,
-          code,
-          fbtraceId
+          accountId,
+          dimension,
+          message: detail.message,
+          code: detail.code,
+          fbtraceId: detail.fbtraceId
         });
       }
     }
-
-    if (accountHadSuccess) {
-      accountsSyncedCount++;
-    }
+    if (accountComplete) accountsSynced++;
   }
 
-  let status: "SUCCESS" | "PARTIAL" | "FAILED" = "SUCCESS";
-  if (failedAccounts.length > 0) {
-    if (accountsSyncedCount > 0) {
-      status = "PARTIAL";
-    } else {
-      status = "FAILED";
-    }
-  } else if (totalFetched === 0 && accounts.length > 0) {
-    status = "FAILED";
-  }
+  const status = deriveCanonicalSyncStatus({
+    recordsFetched,
+    recordsSaved,
+    recordsUpdated,
+    failedAccounts,
+    failedSlices,
+    truncated
+  });
+  const coverageComplete = accounts.length > 0 && status !== "FAILED" && status !== "PARTIAL_SUCCESS" && !truncated;
+  const reason = status === "FAILED"
+    ? "AUDIENCE_BREAKDOWN_SYNC_FAILED"
+    : status === "PARTIAL_SUCCESS"
+      ? "AUDIENCE_BREAKDOWN_PARTIAL"
+      : status === "NO_NEW_DATA"
+        ? accounts.length === 0 ? "NO_TARGET_ACCOUNTS" : "NO_AUDIENCE_BREAKDOWN_ROWS"
+        : null;
 
   return {
     success: status !== "FAILED",
     status,
-    recordsFetched: totalFetched,
-    recordsSaved: totalSaved,
-    recordsUpdated: totalUpdated,
-    accountsSynced: accountsSyncedCount,
-    dimensionsSynced: activeDimensions,
-    failedAccounts
+    reason,
+    message: status === "FAILED"
+      ? "Meta 受众 breakdown 同步失败。"
+      : status === "PARTIAL_SUCCESS"
+        ? "Meta 受众 breakdown 仅完成部分范围。"
+        : status === "NO_NEW_DATA"
+          ? "Meta API 当前日期范围未返回受众 breakdown 数据。"
+          : "Meta 受众 breakdown 同步完成。",
+    recordsFetched,
+    recordsSaved,
+    recordsUpdated,
+    accountsSynced,
+    targetAccountsCount: accounts.length,
+    dimensionsRequested: activeDimensions,
+    dimensionsSynced: Array.from(dimensionsSynced),
+    failedAccounts,
+    failedSlices,
+    truncated,
+    coverageComplete
   };
 }

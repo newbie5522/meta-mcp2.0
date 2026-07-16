@@ -42,7 +42,8 @@ function snapshot(label: string): ProductViewSnapshot {
       startDate: "2026-07-01",
       endDate: "2026-07-07",
       timezone: "Asia/Shanghai"
-    }
+    },
+    coverage: null
   };
 }
 
@@ -72,7 +73,7 @@ describe("Product view snapshot contract", () => {
     expect(decision.notice).toBeNull();
   });
 
-  it("restores the old complete snapshot on a date mismatch", () => {
+  it("clears the snapshot on a date mismatch", () => {
     const old = snapshot("old");
     const current = snapshot("mismatched");
     const decision = resolveProductSnapshot({
@@ -84,12 +85,12 @@ describe("Product view snapshot contract", () => {
       endDate: "2026-07-07"
     });
 
-    expect(decision.snapshot).toBe(old);
+    expect(decision.snapshot).toEqual(emptyProductSnapshot("DATE_RANGE_MISMATCH"));
     expect(decision.persist).toBe(false);
   });
 
-  it("restores the old complete snapshot for EMPTY or NO_NEW_DATA preservation", () => {
-    for (const status of ["EMPTY", "NO_NEW_DATA"]) {
+  it("does not reuse the old snapshot for empty or not-synced states", () => {
+    for (const status of ["EMPTY", "NO_NEW_DATA", "NOT_SYNCED", "ERROR"]) {
       const old = snapshot(`old-${status}`);
       const current = emptyProductSnapshot(status);
       const decision = resolveProductSnapshot({
@@ -101,17 +102,17 @@ describe("Product view snapshot contract", () => {
         endDate: "2026-07-07"
       });
 
-      expect(decision.snapshot).toBe(old);
-      expect(decision.persist).toBe(false);
+      expect(decision.snapshot).toEqual(current);
+      expect(decision.persist).toBe(true);
     }
   });
 
-  it("never mixes fallback rows with current summary, health, status, or date range", () => {
+  it("preserves a coherent snapshot only for an explicitly allowed same-key sync", () => {
     const old = snapshot("coherent-old");
     const current = snapshot("new-response");
     const decision = resolveProductSnapshot({
-      payload: { products: [], dataHealth: { status: "EMPTY" }, dateRange: current.responseDateRange },
-      currentSnapshot: { ...current, products: [], dataHealthStatus: "EMPTY" },
+      payload: { products: [], dataHealth: { status: "SYNC_RUNNING" }, allowStaleWhileRunning: true, dateRange: current.responseDateRange },
+      currentSnapshot: { ...current, products: [], dataHealthStatus: "SYNC_RUNNING" },
       lastGoodData: { requestKey, data: old },
       currentRequestKey: requestKey,
       startDate: "2026-07-01",
@@ -123,6 +124,7 @@ describe("Product view snapshot contract", () => {
     expect(decision.snapshot.dataHealth).toBe(old.dataHealth);
     expect(decision.snapshot.dataHealthStatus).toBe(old.dataHealthStatus);
     expect(decision.snapshot.responseDateRange).toBe(old.responseDateRange);
+    expect(decision.persist).toBe(false);
   });
 
   it("does not reuse a snapshot after storeId changes the request key", () => {

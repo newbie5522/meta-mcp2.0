@@ -3,13 +3,16 @@ import axios from "axios";
 import prisma from "../../db/index.js";
 import dayjs from "dayjs";
 import { getMetaToken, normalizeMetaAccountId, getNumericAccountId } from "../utils.js";
+import { deriveCanonicalSyncStatus } from "../types/sync-tasks.js";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function fetchEdges(path: string, params: Record<string, any>, token: string, maxPages = 10) {
+export async function fetchMetaInsightEdges(path: string, params: Record<string, any>, token: string, maxPages = 10) {
   const url = `https://graph.facebook.com/v19.0${path}`;
   const rows = [];
+  const failedSlices: any[] = [];
   let after: string | undefined;
+  let hasNextPage = false;
 
   // Clone the params block to allow dynamic limit pruning locally in pagination loop
   const activeParams = { ...params };
@@ -27,8 +30,11 @@ async function fetchEdges(path: string, params: Record<string, any>, token: stri
         const data = res.data?.data || [];
         rows.push(...data);
         after = res.data?.paging?.cursors?.after;
+        hasNextPage = Boolean(after && res.data?.paging?.next);
         success = true;
-        if (!after || !res.data?.paging?.next) break;
+        if (!hasNextPage) {
+          return { rows, failedSlices, truncated: false, coverageComplete: true };
+        }
       } catch (err: any) {
         lastErr = err;
         const fbError = err.response?.data?.error;
@@ -88,15 +94,31 @@ async function fetchEdges(path: string, params: Record<string, any>, token: stri
       const isTransient = code === 1 || subcode === 99 || msg.includes("An unknown error occurred") || msg.includes("timeout") || lastErr.code === "ECONNABORTED";
       
       if (isTransient) {
-        console.error(`[Meta API Fetch] Fallback recovery on transient/internal error [Code ${code}, Subcode ${subcode}] for ${path}. Returning cached/partial rows instead of crashing.`);
-        break; 
+        console.error(`[Meta API Fetch] Transient/internal error [Code ${code}, Subcode ${subcode}] for ${path}. Returning explicitly partial rows.`);
+        failedSlices.push({
+          path,
+          page: page + 1,
+          message: msg,
+          code,
+          subcode,
+          transient: true
+        });
+        return { rows, failedSlices, truncated: false, coverageComplete: false };
       } else {
         console.error(`[Meta API Fetch] Non-transient fatal error fetching path ${path}:`, lastErr.response?.data || lastErr.message);
         throw lastErr;
       }
     }
   }
-  return rows;
+  if (hasNextPage) {
+    failedSlices.push({
+      path,
+      page: maxPages,
+      message: `Pagination stopped at maxPages=${maxPages} while a next page remained.`,
+      truncated: true
+    });
+  }
+  return { rows, failedSlices, truncated: hasNextPage, coverageComplete: !hasNextPage };
 }
 
 interface SyncOptions {
@@ -190,6 +212,9 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
   let totalUpdated = 0;
   let totalFailed = 0;
   const fatalErrors: string[] = [];
+  const failedAccounts: Array<{ accountId: string; level: string; message: string; fbtraceId?: string }> = [];
+  const failedSlices: any[] = [];
+  let truncated = false;
 
   const levelCounts = {
     account: 0,
@@ -237,7 +262,7 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
       let sliceTraceId = "";
 
       try {
-        const insightRows = await fetchEdges(`/act_${numericAccountId}/insights`, {
+        const edgeReceipt = await fetchMetaInsightEdges(`/act_${numericAccountId}/insights`, {
           level: currentLevel,
           time_increment: 1,
           time_range: JSON.stringify({
@@ -247,6 +272,17 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
           fields,
           limit: 1000
         }, token, 10);
+        const insightRows = edgeReceipt.rows;
+        truncated ||= edgeReceipt.truncated;
+        failedSlices.push(...edgeReceipt.failedSlices.map((slice: any) => ({
+          ...slice,
+          accountId: actId,
+          level: currentLevel
+        })));
+        if (!edgeReceipt.coverageComplete) {
+          sliceFailedCount += edgeReceipt.failedSlices.length || 1;
+          totalFailed += edgeReceipt.failedSlices.length || 1;
+        }
 
         sliceFetchedCount = insightRows.length;
         totalFetched += sliceFetchedCount;
@@ -300,6 +336,11 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
             console.warn(`[Meta Insights Sync] Skip writing: entity_id resolved as empty at level "${currentLevel}"`);
             sliceFailedCount++;
             totalFailed++;
+            failedSlices.push({
+              accountId: actId,
+              level: currentLevel,
+              message: "Meta insight row did not contain the entity id required for its level."
+            });
             continue;
           }
 
@@ -393,6 +434,12 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
         sliceTraceId = err.response?.data?.error?.fbtrace_id || "";
         console.error(`[Meta Insights Sync] Error for level "${currentLevel}" under ${actId}:`, sliceErrorMessage);
         fatalErrors.push(`${actId}/${currentLevel}: ${sliceErrorMessage}${sliceTraceId ? ` (fbtrace_id: ${sliceTraceId})` : ""}`);
+        failedAccounts.push({
+          accountId: actId,
+          level: currentLevel,
+          message: sliceErrorMessage,
+          fbtraceId: sliceTraceId || undefined
+        });
         sliceFailedCount += 1;
         totalFailed += 1;
       }
@@ -435,27 +482,35 @@ export async function syncMetaInsightsForActiveAccounts(optionsOrDays: number | 
     await delay(500); // Polite rate limit preservation
   }
 
-  // Handle User Requirement: "如果 recordsFetched > 0 但 recordsSaved = 0，必须标记 PARTIAL 或 FAILED，并说明原因。"
   if (totalFetched > 0 && totalSaved === 0) {
-    const errorText = `[Meta Sync Warning] Fetched ${totalFetched} insights rows from Graph API, but 0 rows were written to the fact table. This might occur due to sandbox exclusions or missing mapping linkages.`;
-    console.error(errorText);
-    throw new Error(errorText);
-  }
-
-  if (totalFetched === 0 && totalSaved === 0 && totalFailed > 0) {
-    const uniqueErrors = [...new Set(fatalErrors)].slice(0, 5).join(" | ");
-    const errorText = `[Meta Sync Failed] Meta API returned no usable insight rows and ${totalFailed} request slice(s) failed. ${uniqueErrors}`;
-    console.error(errorText);
-    throw new Error(errorText);
+    failedSlices.push({
+      message: `Fetched ${totalFetched} insight rows but wrote zero fact rows.`,
+      reason: "FETCHED_ROWS_NOT_SAVED"
+    });
   }
 
   console.log(`[Meta Insights Sync] Multi-Level batch execution completed. Fetched: ${totalFetched}, Saved (New): ${totalSaved}, Updated (Overwrite): ${totalUpdated}, Failed: ${totalFailed}`);
+
+  const status = deriveCanonicalSyncStatus({
+    recordsFetched: totalFetched,
+    recordsSaved: totalSaved,
+    recordsUpdated: totalUpdated,
+    failedAccounts,
+    failedSlices,
+    truncated
+  });
 
   return {
     recordsFetched: totalFetched,
     recordsSaved: totalSaved,
     recordsUpdated: totalUpdated,
     recordsFailed: totalFailed,
-    levelCounts
+    failedAccounts,
+    failedSlices,
+    truncated,
+    coverageComplete: status === "SUCCESS" || status === "NO_NEW_DATA",
+    status,
+    levelCounts,
+    errors: [...new Set(fatalErrors)]
   };
 }

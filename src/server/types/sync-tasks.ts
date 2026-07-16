@@ -31,6 +31,61 @@ export enum SyncTaskType {
   SYNC_VIEW_PRODUCTS = 'sync_view_products'
 }
 
+export type CanonicalSyncStatus = "SUCCESS" | "NO_NEW_DATA" | "PARTIAL_SUCCESS" | "FAILED";
+
+export interface SyncExecutionResult {
+  recordsFetched: number;
+  recordsSaved: number;
+  recordsUpdated: number;
+  failedAccounts: unknown[];
+  failedSlices: unknown[];
+  truncated: boolean;
+  coverageComplete: boolean;
+  status: CanonicalSyncStatus;
+}
+
+export function deriveCanonicalSyncStatus(input: {
+  recordsFetched?: number;
+  recordsSaved?: number;
+  recordsUpdated?: number;
+  failedAccounts?: unknown[];
+  failedSlices?: unknown[];
+  truncated?: boolean;
+}): CanonicalSyncStatus {
+  const hasRecords =
+    Number(input.recordsFetched || 0) > 0 ||
+    Number(input.recordsSaved || 0) > 0 ||
+    Number(input.recordsUpdated || 0) > 0;
+  const hasFailure =
+    Boolean(input.truncated) ||
+    Boolean(input.failedAccounts?.length) ||
+    Boolean(input.failedSlices?.length);
+
+  if (hasFailure) return hasRecords ? "PARTIAL_SUCCESS" : "FAILED";
+  return hasRecords ? "SUCCESS" : "NO_NEW_DATA";
+}
+
+export function normalizeSyncExecutionResult(
+  input: Partial<SyncExecutionResult> & Pick<SyncExecutionResult, "recordsFetched" | "recordsSaved">
+): SyncExecutionResult {
+  const failedAccounts = Array.isArray(input.failedAccounts) ? input.failedAccounts : [];
+  const failedSlices = Array.isArray(input.failedSlices) ? input.failedSlices : [];
+  const truncated = Boolean(input.truncated);
+  const result = {
+    recordsFetched: Number(input.recordsFetched || 0),
+    recordsSaved: Number(input.recordsSaved || 0),
+    recordsUpdated: Number(input.recordsUpdated || 0),
+    failedAccounts,
+    failedSlices,
+    truncated,
+    coverageComplete: input.coverageComplete !== false && !truncated && failedAccounts.length === 0 && failedSlices.length === 0
+  };
+  return {
+    ...result,
+    status: deriveCanonicalSyncStatus(result)
+  };
+}
+
 /**
  * 前端请求体结构
  */

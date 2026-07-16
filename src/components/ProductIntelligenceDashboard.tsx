@@ -14,6 +14,7 @@ import {
   shouldPreserveLastGoodData
 } from "@/lib/data-view-state";
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
+import { DataCoverageBanner } from "./common/DataCoverageBanner";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 
@@ -44,9 +45,10 @@ export interface ProductIntelligenceRecord {
 }
 
 export interface ProductSummary {
-  productsCount: number;
-  totalOrders: number;
-  refundedOrders: number;
+  productsCount: number | null;
+  productOrderAssociations?: number | null;
+  totalOrders: number | null;
+  refundedOrders: number | null;
   refundRate: number | null;
   totalProductLineRevenue: number | null;
   revenueComplete: boolean;
@@ -63,6 +65,7 @@ export type ProductViewSnapshot = {
     endDate: string;
     timezone?: string;
   } | null;
+  coverage?: any | null;
 };
 
 export function emptyProductSnapshot(dataHealthStatus: string): ProductViewSnapshot {
@@ -71,7 +74,8 @@ export function emptyProductSnapshot(dataHealthStatus: string): ProductViewSnaps
     summary: null,
     dataHealth: null,
     dataHealthStatus,
-    responseDateRange: null
+    responseDateRange: null,
+    coverage: null
   };
 }
 
@@ -82,7 +86,8 @@ export function buildProductSnapshot(payload: any): ProductViewSnapshot {
     summary: payload?.summary || null,
     dataHealth: payload?.dataHealth || null,
     dataHealthStatus: payload?.dataHealth?.status || (products.length > 0 ? "READY" : "EMPTY"),
-    responseDateRange: payload?.dateRange || payload?.appliedFilters || null
+    responseDateRange: payload?.dateRange || payload?.appliedFilters || null,
+    coverage: payload?.productCoverage || payload?.coverage || null
   };
 }
 
@@ -94,10 +99,9 @@ export function resolveProductSnapshot(input: {
   startDate: string;
   endDate: string;
 }): { snapshot: ProductViewSnapshot; notice: string | null; persist: boolean } {
-  const safeData = getSafeLastGoodData(input.lastGoodData, input.currentRequestKey);
   if (isDateRangeMismatch(input.payload, input.startDate, input.endDate)) {
     return {
-      snapshot: safeData?.data || emptyProductSnapshot("DATE_RANGE_MISMATCH"),
+      snapshot: emptyProductSnapshot("DATE_RANGE_MISMATCH"),
       notice: DATE_RANGE_MISMATCH_MESSAGE,
       persist: false
     };
@@ -108,6 +112,7 @@ export function resolveProductSnapshot(input: {
     input.lastGoodData,
     input.currentRequestKey
   )) {
+    const safeData = getSafeLastGoodData(input.lastGoodData, input.currentRequestKey);
     return {
       snapshot: safeData?.data || emptyProductSnapshot(input.currentSnapshot.dataHealthStatus),
       notice: safeData ? CURRENT_RANGE_NOT_READY_MESSAGE : null,
@@ -134,6 +139,7 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
   const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string; timezone?: string } | null>(null);
   const [dataHealthStatus, setDataHealthStatus] = useState("UNKNOWN");
   const [dataHealth, setDataHealth] = useState<any | null>(null);
+  const [coverage, setCoverage] = useState<any | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
   const startStrKey = format(startDate, "yyyy-MM-dd");
@@ -153,6 +159,7 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
     setDataHealth(snapshot.dataHealth);
     setDataHealthStatus(snapshot.dataHealthStatus);
     setResponseDateRange(snapshot.responseDateRange);
+    setCoverage(snapshot.coverage || null);
   }
 
   useEffect(() => {
@@ -195,15 +202,9 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
         setLastGoodData(makeLastGoodData(currentRequestKey, currentSnapshot));
       }
     } catch (requestError: any) {
-      const safeData = getSafeLastGoodData(lastGoodData, currentRequestKey);
-      if (safeData) {
-        applyProductSnapshot(safeData.data);
-        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-      } else {
-        applyProductSnapshot(emptyProductSnapshot("REQUEST_FAILED"));
-        setViewNotice(null);
-        setError(requestError.response?.data?.details || requestError.message || "商品订单分析加载失败");
-      }
+      applyProductSnapshot(emptyProductSnapshot("ERROR"));
+      setViewNotice("当前商品筛选周期请求失败，未展示旧数据。");
+      setError(requestError.response?.data?.details || requestError.message || "商品订单分析加载失败");
     } finally {
       setLoading(false);
     }
@@ -244,17 +245,20 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
   const percentage = (value: number | null | undefined) => value === null || value === undefined
     ? "N/A"
     : (value * 100).toFixed(1) + "%";
-  const weightedRefundRate = summary?.refundRate ?? (
+  const metricsAvailable = ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(String(coverage?.status || dataHealthStatus).toUpperCase());
+  const weightedRefundRate = !metricsAvailable ? null : summary?.refundRate ?? (
     products.reduce((sum, product) => sum + product.orders, 0) > 0
       ? products.reduce((sum, product) => sum + product.refundedOrders, 0) /
         products.reduce((sum, product) => sum + product.orders, 0)
       : null
   );
   const revenueComplete = summary?.revenueComplete ?? products.every(product => product.revenue !== null);
-  const totalRevenue = revenueComplete
+  const totalRevenue = metricsAvailable && revenueComplete
     ? summary?.totalProductLineRevenue ?? products.reduce((sum, product) => sum + Number(product.revenue), 0)
     : null;
-  const totalOrders = summary?.totalOrders ?? products.reduce((sum, product) => sum + product.orders, 0);
+  const totalOrders = metricsAvailable
+    ? summary?.productOrderAssociations ?? summary?.totalOrders ?? products.reduce((sum, product) => sum + product.orders, 0)
+    : null;
 
   return (
     <div className="space-y-6">
@@ -275,15 +279,17 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
       </div>
 
       <SyncStatusPanel status={syncStatus} />
+      <DataCoverageBanner coverage={coverage} />
       <DataViewTraceBar
         compactScopeLabel="商品订单口径"
         currentStartDate={startStrKey}
         currentEndDate={endStrKey}
         responseStartDate={responseDateRange?.startDate}
         responseEndDate={responseDateRange?.endDate}
+        latestAvailableDate={coverage?.latestAvailableDate}
         timezone={responseDateRange?.timezone || "America/Los_Angeles"}
         rowCount={products.length}
-        status={dataHealthStatus}
+        status={coverage?.status || dataHealthStatus}
         factRows={dataHealth?.factRows}
         structureRows={dataHealth?.structureRows}
         source="Order 商品行"
@@ -302,7 +308,7 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
           <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
             {[
               ["商品行销售额", currency(totalRevenue)],
-              ["商品订单数", `${totalOrders.toLocaleString()} 笔`],
+              ["商品订单关联数", totalOrders === null ? "N/A" : `${totalOrders.toLocaleString()} 笔`],
               ["商品退款订单率", percentage(weightedRefundRate)],
               ["商品利润", "N/A"]
             ].map(([label, value]) => (

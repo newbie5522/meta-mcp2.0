@@ -1,19 +1,10 @@
-export const DATA_VIEW_PRESERVE_STATUSES = new Set([
-  "SYNC_RUNNING",
-  "NO_NEW_DATA",
-  "STRUCTURE_WITHOUT_FACTS",
-  "MISSING_META_BREAKDOWN",
-  "META_BREAKDOWN_NOT_READY",
-  "EMPTY_FACTS",
-  "EMPTY",
-  "EMPTY_STRUCTURE"
-]);
+export const DATA_VIEW_PRESERVE_STATUSES = new Set(["SYNC_RUNNING"]);
 
 export const DATE_RANGE_MISMATCH_MESSAGE =
-  "接口返回周期与当前筛选周期不一致，已保留同一请求下的上次成功数据。";
+  "接口返回周期与当前筛选周期不一致，当前数据已清空。";
 
 export const CURRENT_RANGE_NOT_READY_MESSAGE =
-  "当前请求暂无可展示的新数据，已保留同一请求下的上次成功数据。";
+  "正在同步；当前展示的是同一筛选范围上次成功结果。";
 
 type RequestKeyParts = Record<string, unknown>;
 
@@ -34,6 +25,7 @@ export function buildDataViewRequestKey(parts: RequestKeyParts) {
 
 export function getPayloadStatus(payload: any) {
   return String(
+    payload?.coverage?.status ||
     payload?.dataHealth?.status ||
     payload?.health?.status ||
     payload?.status ||
@@ -52,7 +44,8 @@ export function shouldPreserveLastGoodData(
     lastGoodData &&
       lastGoodData.requestKey === currentRequestKey &&
       rows.length === 0 &&
-      DATA_VIEW_PRESERVE_STATUSES.has(status)
+      status === "SYNC_RUNNING" &&
+      payload?.allowStaleWhileRunning === true
   );
 }
 

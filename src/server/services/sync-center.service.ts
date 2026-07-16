@@ -5,9 +5,10 @@ import dayjs from "dayjs";
 import { getMetaToken, normalizeMetaAccountId } from "../utils.js";
 import { ensureAdAccounts } from "./meta-hierarchy-sync.service.js";
 import { syncMetaInsightsForActiveAccounts } from "./meta-insights.service.js";
-import { syncMetaAudienceBreakdown } from "./audience-insights.service.js";
+import { syncMetaAudienceBreakdown } from "./meta-audience-breakdown-sync.service.js";
 import { syncStoreData } from "./store-sync.service.js";
 import { extractMetaAssetHash } from "./metaFetchPatch.service.js";
+import { normalizeSyncExecutionResult, type SyncExecutionResult } from "../types/sync-tasks.js";
 
 // Utility to generate a nice UUID
 function generateUUID(): string {
@@ -70,6 +71,12 @@ function buildSummaryMetrics(payload: Record<string, unknown>) {
 export interface TaskResult {
   recordsFetched: number;
   recordsSaved: number;
+  recordsUpdated?: number;
+  failedAccounts?: unknown[];
+  failedSlices?: unknown[];
+  truncated?: boolean;
+  coverageComplete?: boolean;
+  status?: SyncExecutionResult["status"];
   metadata?: any;
 }
 
@@ -77,6 +84,10 @@ export interface RunTaskOptions {
   parentChainId?: string | null;
   allowSameChainRunning?: boolean;
   parentViewTask?: boolean;
+  rangeStart?: string | null;
+  rangeEnd?: string | null;
+  scopeKey?: string | null;
+  coverageComplete?: boolean;
 }
 
 /**
@@ -104,7 +115,11 @@ export class SyncCenter {
     const initialMetadata = {
       description: `Running task ${taskType}`,
       parentTaskId,
-      originalStoreId: storeId !== null && storeId !== undefined ? String(storeId) : null
+      originalStoreId: storeId !== null && storeId !== undefined ? String(storeId) : null,
+      rangeStart: options.rangeStart || null,
+      rangeEnd: options.rangeEnd || null,
+      scopeKey: options.scopeKey || null,
+      coverageComplete: options.coverageComplete !== false
     };
 
     const existingRunningTask = await prisma.syncLog.findFirst({
@@ -160,6 +175,8 @@ export class SyncCenter {
           taskChainId,
           storeId: normalizedStoreId,
           adAccountId,
+          rangeStart: options.rangeStart ? dayjs(options.rangeStart).startOf("day").toDate() : null,
+          rangeEnd: options.rangeEnd ? dayjs(options.rangeEnd).endOf("day").toDate() : null,
           metadata: JSON.stringify(initialMetadata)
         }
       });
@@ -170,24 +187,42 @@ export class SyncCenter {
 
     try {
       const result = await executor();
+      const canonicalResult = normalizeSyncExecutionResult({
+        recordsFetched: result.recordsFetched,
+        recordsSaved: result.recordsSaved,
+        recordsUpdated: result.recordsUpdated ?? result.metadata?.recordsUpdated,
+        failedAccounts: result.failedAccounts ?? result.metadata?.failedAccounts,
+        failedSlices: result.failedSlices ?? result.metadata?.failedSlices,
+        truncated: result.truncated ?? result.metadata?.truncated,
+        coverageComplete:
+          result.coverageComplete ??
+          result.metadata?.coverageComplete ??
+          options.coverageComplete
+      });
 
       await prisma.syncLog.update({
         where: { id: taskId },
         data: {
-          status: "success",
+          status: canonicalResult.status === "FAILED" ? "failed" : "success",
           finishedAt: new Date(),
-          recordsFetched: result.recordsFetched,
-          recordsSaved: result.recordsSaved,
+          recordsFetched: canonicalResult.recordsFetched,
+          recordsSaved: canonicalResult.recordsSaved,
+          error: canonicalResult.status === "FAILED" ? "SYNC_TASK_FAILED" : null,
+          errorMessage: canonicalResult.status === "FAILED" ? "SYNC_TASK_FAILED" : null,
           metadata: JSON.stringify({
             parentTaskId,
             originalStoreId: storeId !== null && storeId !== undefined ? String(storeId) : null,
             ...result.metadata,
+            ...canonicalResult,
+            rangeStart: options.rangeStart || null,
+            rangeEnd: options.rangeEnd || null,
+            scopeKey: options.scopeKey || null,
             completedAt: new Date().toISOString()
           })
         }
       });
 
-      console.log(`[Sync Center | chain:${taskChainId}] Task ${taskType} completed successfully.`);
+      console.log(`[Sync Center | chain:${taskChainId}] Task ${taskType} completed with ${canonicalResult.status}.`);
       return taskId;
     } catch (err: any) {
       const errMsg = err.response?.data?.error?.message || err.message || "Unknown error";
@@ -272,6 +307,8 @@ export class SyncCenter {
       rebuild?: boolean;
     }
   ): Promise<string> {
+    const effectiveEndDate = endDateOverride || dayjs().format("YYYY-MM-DD");
+    const effectiveStartDate = startDateOverride || dayjs(effectiveEndDate).subtract(days, "day").format("YYYY-MM-DD");
     return this.runTask(
       "sync_store_orders",
       "shopline",
@@ -284,8 +321,8 @@ export class SyncCenter {
         const store = await prisma.store.findUnique({ where: { id: storeId } });
         if (!store) throw new Error(`Store with ID ${storeId} not found`);
 
-        const endDate = endDateOverride || dayjs().format("YYYY-MM-DD");
-        const startDate = startDateOverride || dayjs(endDate).subtract(days, "day").format("YYYY-MM-DD");
+        const endDate = effectiveEndDate;
+        const startDate = effectiveStartDate;
 
         console.log(`[Sync Center] Running syncStoreData for ${store.name} (${startDate} to ${endDate}) with options: ${JSON.stringify(options || {})}`);
         const syncResults = await syncStoreData(startDate, endDate, String(storeId), options);
@@ -328,6 +365,12 @@ export class SyncCenter {
             endDate
           }
         };
+      },
+      {
+        rangeStart: effectiveStartDate,
+        rangeEnd: effectiveEndDate,
+        scopeKey: `store:${storeId}`,
+        coverageComplete: true
       }
     );
   }
@@ -474,6 +517,7 @@ export class SyncCenter {
         let adsTotal = 0;
         let skippedAdsets = 0;
         let skippedAds = 0;
+        const failedAccounts: Array<{ accountId: string; message: string }> = [];
 
         for (const account of activeAccounts) {
           const actId = normalizeMetaAccountId(account.fb_account_id);
@@ -589,12 +633,18 @@ export class SyncCenter {
             }
           } catch (accErr: any) {
             console.log(`[Sync Center] Account structure info check for ${actId} failed (network status: ${accErr.message}). No sandbox fallback data will be written.`);
+            failedAccounts.push({ accountId: actId, message: accErr.message || "Structure sync failed" });
           }
         }
 
         return {
           recordsFetched: campaignsTotal + adsetsTotal + adsTotal,
           recordsSaved: campaignsTotal + adsetsTotal + adsTotal,
+          recordsUpdated: 0,
+          failedAccounts,
+          failedSlices: [],
+          truncated: false,
+          coverageComplete: failedAccounts.length === 0,
           metadata: {
             targetAccountsCount: activeAccounts.length,
             accountId: options.accountId || null,
@@ -606,11 +656,17 @@ export class SyncCenter {
             creativesFetched: creativeCountTotal,
             skippedAdsets,
             skippedAds,
+            failedAccounts,
             completedAt: new Date().toISOString()
           }
         };
       },
-      runOptions
+      {
+        ...runOptions,
+        scopeKey: runOptions.scopeKey || (normalizedTaskAccountId
+          ? `account:${normalizedTaskAccountId}`
+          : `accounts:${(options.accountIds || []).map(normalizeMetaAccountId).sort().join(",") || "active"}`)
+      }
     );
   }
 
@@ -625,6 +681,8 @@ export class SyncCenter {
     endDate: string | null = null,
     runOptions: RunTaskOptions = {}
   ): Promise<string> {
+    const effectiveEndDate = endDate || dayjs().format("YYYY-MM-DD");
+    const effectiveStartDate = startDate || dayjs(effectiveEndDate).subtract(days - 1, "day").format("YYYY-MM-DD");
     return this.runTask(
       "sync_meta_insights",
       "meta",
@@ -662,15 +720,23 @@ export class SyncCenter {
         return {
           recordsFetched,
           recordsSaved,
+          recordsUpdated,
+          failedAccounts,
+          failedSlices: Array.isArray(stats?.failedSlices) ? stats.failedSlices : [],
+          truncated: Boolean(stats?.truncated),
+          coverageComplete: stats?.coverageComplete !== false,
           metadata: {
             days,
-            startDate,
-            endDate,
+            startDate: effectiveStartDate,
+            endDate: effectiveEndDate,
             accountId,
             targetTable: "FactMetaPerformance",
             recordsUpdated,
             recordsFailed,
             failedAccounts,
+            failedSlices: Array.isArray(stats?.failedSlices) ? stats.failedSlices : [],
+            truncated: Boolean(stats?.truncated),
+            coverageComplete: stats?.coverageComplete !== false,
             accountsSynced: Number(stats?.accountsSynced || (accountId ? 1 : 0)),
             dimensionsSynced,
             status:
@@ -681,7 +747,13 @@ export class SyncCenter {
           }
         };
       },
-      runOptions
+      {
+        ...runOptions,
+        rangeStart: effectiveStartDate,
+        rangeEnd: effectiveEndDate,
+        scopeKey: runOptions.scopeKey || `account:${accountId ? normalizeMetaAccountId(accountId) : "active"}`,
+        coverageComplete: runOptions.coverageComplete !== false
+      }
     );
   }
 
@@ -716,20 +788,14 @@ export class SyncCenter {
           includeUnmapped: true
         });
 
-        if (stats.status === "FAILED") {
-          const failedAccounts = Array.isArray(stats.failedAccounts)
-            ? stats.failedAccounts
-            : [];
-          const failureDetail = failedAccounts.length > 0
-            ? failedAccounts.map(item => `${item.accountId}:${item.dimension || "unknown"}:${item.message || item.error || "unknown_error"}`).join("; ")
-            : stats.reason || stats.message || "Meta API 未返回受众 breakdown 数据，且没有提供具体失败账户。";
-
-          throw new Error(failureDetail);
-        }
-
         return {
           recordsFetched: stats.recordsFetched,
           recordsSaved: stats.recordsSaved,
+          recordsUpdated: stats.recordsUpdated,
+          failedAccounts: stats.failedAccounts,
+          failedSlices: stats.failedSlices,
+          truncated: stats.truncated,
+          coverageComplete: stats.coverageComplete,
           metadata: {
             days,
             startDate: startStr,
@@ -737,8 +803,11 @@ export class SyncCenter {
             accountId,
             targetTable: "FactAudienceBreakdown",
             recordsUpdated: stats.recordsUpdated,
-            recordsFailed: stats.failedAccounts.length,
+            recordsFailed: stats.failedAccounts.length + stats.failedSlices.length,
             failedAccounts: stats.failedAccounts,
+            failedSlices: stats.failedSlices,
+            truncated: stats.truncated,
+            coverageComplete: stats.coverageComplete,
             accountsSynced: stats.accountsSynced,
             targetAccountsCount: stats.targetAccountsCount,
             dimensionsRequested: stats.dimensionsRequested || ["country", "age", "gender", "publisher_platform"],
@@ -750,7 +819,13 @@ export class SyncCenter {
           }
         };
       },
-      runOptions
+      {
+        ...runOptions,
+        rangeStart: startDate || dayjs(endDate || undefined).subtract(days - 1, "day").format("YYYY-MM-DD"),
+        rangeEnd: endDate || dayjs().format("YYYY-MM-DD"),
+        scopeKey: runOptions.scopeKey || `account:${accountId ? normalizeMetaAccountId(accountId) : "active"}`,
+        coverageComplete: runOptions.coverageComplete !== false
+      }
     );
   }
 

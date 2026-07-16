@@ -144,39 +144,28 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
       };
 
       if (viewLevel === "accounts") {
-        const [accountsRes, structureRes] = await Promise.all([
-          axios.get("/api/data-center/ad-hierarchy/accounts", {
-            params: {
-              startDate: startStr,
-              endDate: endStr,
-              includeZeroSpend: includeZeroSpend ? "true" : "false",
-              _requestKey: requestKey
-            }
-          }),
-          axios.get("/api/data-center/structure", { params: structureParams })
-        ]);
+        const accountsRes = await axios.get("/api/data-center/ad-hierarchy/accounts", {
+          params: {
+            startDate: startStr,
+            endDate: endStr,
+            includeZeroSpend: includeZeroSpend ? "true" : "false",
+            _requestKey: requestKey
+          }
+        });
 
         const rows = accountsRes.data?.success ? (accountsRes.data.data || []) : [];
-        const nextHealth = accountsRes.data?.dataHealth || structureRes.data?.health || null;
+        const nextHealth = accountsRes.data?.dataHealth || null;
         const statePayload = {
           ...(accountsRes.data || {}),
           health: nextHealth,
-          appliedFilters: accountsRes.data?.appliedFilters || structureRes.data?.appliedFilters,
-          dateRange: accountsRes.data?.dateRange || structureRes.data?.dateRange
+          appliedFilters: accountsRes.data?.appliedFilters,
+          dateRange: accountsRes.data?.dateRange
         };
         setResponseDateRange(statePayload.dateRange || null);
         if (isDateRangeMismatch(statePayload, startStr, endStr)) {
-          const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
-          if (!safeLastGoodData) {
-            setData([]);
-            setStructureSummary(null);
-            setDataHealth(nextHealth);
-            setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
-            return;
-          }
-          setData(safeLastGoodData.data || []);
-          setStructureSummary(safeLastGoodData.structureSummary || null);
-          setDataHealth(safeLastGoodData.dataHealth || null);
+          setData([]);
+          setStructureSummary(null);
+          setDataHealth({ status: "DATE_RANGE_MISMATCH", message: DATE_RANGE_MISMATCH_MESSAGE });
           setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
           return;
         }
@@ -190,10 +179,10 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
             return;
           }
         }
-        setStructureSummary(structureRes.data || null);
+        setStructureSummary(accountsRes.data || null);
         setDataHealth(nextHealth);
         setData(rows);
-        setLastGoodData(makeLastGoodData(requestKey, rows, { structureSummary: structureRes.data || null, dataHealth: nextHealth }));
+        setLastGoodData(makeLastGoodData(requestKey, rows, { structureSummary: accountsRes.data || null, dataHealth: nextHealth }));
         setViewNotice(null);
         return;
       }
@@ -219,17 +208,9 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
       setResponseDateRange(hierarchyPayload.dateRange || hierarchyPayload.appliedFilters || null);
 
       if (isDateRangeMismatch(hierarchyPayload, startStr, endStr)) {
-        const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
-        if (!safeLastGoodData) {
-          setData([]);
-          setStructureSummary(hierarchyPayload);
-          setDataHealth(hierarchyPayload.dataHealth || hierarchyPayload.health || null);
-          setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
-          return;
-        }
-        setData(safeLastGoodData.data || []);
-        setStructureSummary(safeLastGoodData.structureSummary || null);
-        setDataHealth(safeLastGoodData.dataHealth || null);
+        setData([]);
+        setStructureSummary(hierarchyPayload);
+        setDataHealth({ status: "DATE_RANGE_MISMATCH", message: DATE_RANGE_MISMATCH_MESSAGE });
         setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
         return;
       }
@@ -251,27 +232,15 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
     } catch (e: any) {
       console.error("Failed to fetch ad hierarchy details:", e);
       toast.error("获取层级数据失败: " + (e.response?.data?.error || e.message));
-      const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
-      if (safeLastGoodData) {
-        setData(safeLastGoodData.data || []);
-        setStructureSummary(safeLastGoodData.structureSummary || null);
-        setDataHealth(safeLastGoodData.dataHealth || null);
-        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-      } else {
-        setData([]);
-        setStructureSummary(null);
-        setDataHealth({
-          status: "REQUEST_FAILED",
-          reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
-          message: "当前筛选周期请求失败，未使用其他日期周期的旧数据。",
-          dateRange: {
-            startDate: startStrKey,
-            endDate: endStrKey,
-            timezone: "America/Los_Angeles"
-          }
-        });
-        setViewNotice("当前筛选周期请求失败，未展示其他日期周期的旧数据。");
-      }
+      setData([]);
+      setStructureSummary(null);
+      setDataHealth({
+        status: "ERROR",
+        reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
+        message: "当前筛选周期请求失败，未使用旧数据。",
+        dateRange: { startDate: startStrKey, endDate: endStrKey, timezone: "America/Los_Angeles" }
+      });
+      setViewNotice("当前筛选周期请求失败，未展示旧数据。");
     } finally {
       setLoading(false);
     }

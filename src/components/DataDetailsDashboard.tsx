@@ -32,9 +32,7 @@ import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountD
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
 import {
   buildDataViewRequestKey,
-  getSafeLastGoodData,
-  isDateRangeMismatch,
-  makeLastGoodData
+  isDateRangeMismatch
 } from "@/lib/data-view-state";
 
 import { useNavigate } from "react-router-dom";
@@ -117,7 +115,6 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const [statusFilter, setStatusFilter] = useState<"spend" | "active" | "all" | "unmapped">("all");
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
-  const [lastGoodData, setLastGoodData] = useState<any>(null);
   const [autoRefreshPolling, setAutoRefreshPolling] = useState(false);
   const [showHistoricalAccounts, setShowHistoricalAccounts] = useState(false);
 
@@ -162,43 +159,27 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       });
 
       if (isDateRangeMismatch(response.data, startStr, endStr)) {
-        const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
-        if (safeLastGoodData) {
-          setData(safeLastGoodData.data);
-        } else {
-          setData(makeEmptyAccountsPerformanceData(
-            "DATE_RANGE_MISMATCH",
-            "接口返回周期与当前筛选周期不一致，未使用其他日期周期的旧账户数据。",
-            response.data?.dataHealth || null
-          ));
-        }
+        setData(makeEmptyAccountsPerformanceData(
+          "DATE_RANGE_MISMATCH",
+          "接口返回周期与当前筛选周期不一致，未使用旧账户数据。",
+          response.data?.dataHealth || null
+        ));
         return;
       }
 
       setData(response.data);
-      setLastGoodData(makeLastGoodData(currentRequestKey, response.data));
     } catch (error: any) {
       console.error("Load Accounts Performance error:", error);
-
-      const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
-      if (safeLastGoodData) {
-        setData(safeLastGoodData.data || safeLastGoodData);
-      } else {
-        setData(makeEmptyAccountsPerformanceData(
-          "REQUEST_FAILED",
-          "当前账户筛选周期请求失败，未使用其他日期周期的旧账户数据。",
-          {
-            status: "REQUEST_FAILED",
-            reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
-            message: "当前账户筛选周期请求失败，未使用其他日期周期的旧账户数据。",
-            dateRange: {
-              startDate: startStrKey,
-              endDate: endStrKey,
-              timezone: "America/Los_Angeles"
-            }
-          }
-        ));
-      }
+      setData(makeEmptyAccountsPerformanceData(
+        "ERROR",
+        "当前账户筛选周期请求失败，未使用旧账户数据。",
+        {
+          status: "ERROR",
+          reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
+          message: "当前账户筛选周期请求失败，未使用旧账户数据。",
+          dateRange: { startDate: startStrKey, endDate: endStrKey, timezone: "America/Los_Angeles" }
+        }
+      ));
 
       if (!silent) {
         toast.error("加载账户数据明细失败: " + getApiErrorMessage(error));

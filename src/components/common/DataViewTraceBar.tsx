@@ -7,6 +7,7 @@ export type DataViewTraceBarProps = {
   currentEndDate?: string;
   responseStartDate?: string | null;
   responseEndDate?: string | null;
+  latestAvailableDate?: string | null;
   timezone?: string | null;
   rowCount?: number | null;
   factRows?: number | null;
@@ -44,6 +45,16 @@ function boolLabel(value: unknown) {
   return value ? "包含" : "不包含";
 }
 
+function businessSourceLabel(source: unknown) {
+  const value = String(source || "");
+  if (/FactAudienceBreakdown/i.test(value)) return "Meta 受众成效";
+  if (/FactMetaPerformance/i.test(value)) return "Meta 广告成效";
+  if (/DataCenterMetaAccountDaily/i.test(value)) return "Meta 账户日账目";
+  if (/DataCenterStoreDaily|StoreLedger/i.test(value)) return "店铺订单日账目";
+  if (/FactProductOrder|Product/i.test(value)) return "商品订单成效";
+  return value;
+}
+
 export function DataViewTraceBar({
   debug = false,
   compactScopeLabel,
@@ -51,6 +62,7 @@ export function DataViewTraceBar({
   currentEndDate,
   responseStartDate,
   responseEndDate,
+  latestAvailableDate,
   timezone = "America/Los_Angeles",
   rowCount,
   factRows,
@@ -75,14 +87,21 @@ export function DataViewTraceBar({
   const resolvedIncludeZeroSpend = includeZeroSpend ?? trace.includeZeroSpend;
   const resolvedStoreId = storeId ?? trace.storeId;
   const resolvedAccountId = accountId ?? trace.accountId;
+  const technicalDebugEnabled = debug
+    && (import.meta as any).env?.MODE !== "production"
+    && typeof window !== "undefined"
+    && new URLSearchParams(window.location.search).get("debug") === "1";
 
-  if (!debug) {
-    if (!compactScopeLabel && !resolvedSource && !resolvedScope) return null;
+  if (!technicalDebugEnabled) {
+    if (!compactScopeLabel && !resolvedSource && !resolvedScope && !status) return null;
 
     return (
       <div className="text-[11px] text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-1 leading-5">
         {compactScopeLabel ? <span>{compactScopeLabel}</span> : null}
-        {resolvedSource ? <span>数据源：{resolvedSource}</span> : null}
+        {resolvedSource ? <span>数据源：{businessSourceLabel(resolvedSource)}</span> : null}
+        {currentStartDate && currentEndDate ? <span>当前筛选：{clean(currentStartDate)} ~ {clean(currentEndDate)}</span> : null}
+        {latestAvailableDate ? <span>数据实际覆盖至：{clean(latestAvailableDate)}</span> : null}
+        {status ? <span>覆盖状态：{status}</span> : null}
         {resolvedScope ? <span>口径：{getScopeLabel(resolvedScope)}</span> : null}
         {resolvedIncludeUnmapped !== null && resolvedIncludeUnmapped !== undefined ? (
           <span>{resolvedIncludeUnmapped && !resolvedMappedOnly ? "含未绑定账户" : "仅绑定账户"}</span>

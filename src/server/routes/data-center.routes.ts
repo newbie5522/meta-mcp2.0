@@ -15,6 +15,7 @@ import { runDataPipelineAudit } from "../services/data-pipeline-audit.service.js
 import { runDataCenterAudit } from "../services/data-center-audit.service.js";
 import { runDataCenterRebuild } from "../services/data-center-rebuild.service.js";
 import { getFreshnessMeta } from "../services/data-center-auto-refresh.service.js";
+import { getDataSourceCoverage, getCoverageMap } from "../services/data-coverage.service.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -100,6 +101,20 @@ function buildDateRange(startStr: string, endStr: string) {
     startDate: startStr,
     endDate: endStr,
     timezone: DATA_CENTER_TIMEZONE
+  };
+}
+
+function coverageMetric(coverage: any, value: number) {
+  return ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(String(coverage?.status || ""))
+    ? value
+    : null;
+}
+
+export function resolveCampaignStructureFields(struct: any) {
+  return {
+    status: struct?.status || "UNKNOWN",
+    objective: null,
+    budget: null
   };
 }
 
@@ -204,6 +219,21 @@ router.get("/detail", async (req, res) => {
     const { startStr, endStr } = getAppliedDateRange(req.query);
     const allowLegacyFallback = includeLegacyFallback === "true";
     const appliedFilters = buildAppliedFilters({ startStr, endStr, storeId, accountId });
+    const detailCoverage = await getCoverageMap({
+      metaCoverage: {
+        source: "META_ACCOUNT",
+        requestedStartDate: startStr,
+        requestedEndDate: endStr,
+        storeId: storeId as any,
+        accountId: accountId ? String(accountId) : null
+      },
+      storeCoverage: {
+        source: "STORE_ORDER",
+        requestedStartDate: startStr,
+        requestedEndDate: endStr,
+        storeId: storeId as any
+      }
+    });
 
     // 1. Fetch available filters
     let [stores, adAccounts, accountMappings] = await Promise.all([
@@ -351,6 +381,10 @@ router.get("/detail", async (req, res) => {
     const storesWithOrdersCount = new Set(rawOrders.map(order => order.storeId).filter(Boolean)).size;
 
     res.json({
+      coverage: detailCoverage.metaCoverage,
+      sourceCoverage: detailCoverage.metaCoverage,
+      metaCoverage: detailCoverage.metaCoverage,
+      storeCoverage: detailCoverage.storeCoverage,
       metaInsights: rawInsights,
       accounts: filteredDetailedAccounts,
       orders: rawOrders,
@@ -442,7 +476,7 @@ router.get("/detail", async (req, res) => {
 
   } catch (error: any) {
     console.error("[Data Center API] Detail error:", error);
-    res.status(500).json({ error: "Failed to load data details", details: error.message });
+    res.status(500).json({ success: false, status: "ERROR", error: "DETAIL_QUERY_FAILED", details: error.message });
   }
 });
 
@@ -463,18 +497,27 @@ router.get("/structure", async (req, res) => {
       select: { fb_account_id: true, fb_account_name: true }
     });
 
-    const targetAccount = targetAccountParam || accounts[0]?.fb_account_id;
+    const targetAccount = targetAccountParam ? String(targetAccountParam) : null;
+    let structureCoverage = await getDataSourceCoverage({
+      source: "META_CREATIVE",
+      requestedStartDate: startStr,
+      requestedEndDate: endStr,
+      accountId: targetAccount ? String(targetAccount) : null,
+      structureRowCount: 0
+    });
 
     if (!targetAccount) {
       return res.json({
-        accounts: [],
+        coverage: structureCoverage,
+        sourceCoverage: structureCoverage,
+        accounts,
         campaigns: [],
         adsets: [],
         ads: [],
         structureRowsCount: 0,
         factRowsCount: 0,
         dataHealth: {
-          status: "EMPTY_STRUCTURE",
+          status: targetAccountParam ? "EMPTY_STRUCTURE" : "ACCOUNT_SELECTION_REQUIRED",
           source: "Campaign + AdSet + Ad + FactMetaPerformance",
           factRows: 0,
           structureRows: 0,
@@ -503,8 +546,8 @@ router.get("/structure", async (req, res) => {
           scope: "current_account"
         }),
         health: {
-          status: "EMPTY_STRUCTURE",
-          missingReason: "当前账户没有广告结构数据，请先同步广告结构。"
+          status: targetAccountParam ? "EMPTY_STRUCTURE" : "ACCOUNT_SELECTION_REQUIRED",
+          missingReason: targetAccountParam ? "当前账户没有广告结构数据，请先同步广告结构。" : "请选择账户后查看广告结构。"
         },
         appliedFilters,
         dateRange: buildDateRange(startStr, endStr),
@@ -563,7 +606,7 @@ router.get("/structure", async (req, res) => {
     const campaignsList = rawCampaigns.map(c => ({
       id: c.id,
       name: c.name,
-      status: c.status || "ACTIVE",
+      status: c.status || "UNKNOWN",
       ...getAggregatedMetrics("campaign", c.id)
     }));
 
@@ -571,7 +614,7 @@ router.get("/structure", async (req, res) => {
       id: s.id,
       campaignId: s.campaignId,
       name: s.name,
-      status: "ACTIVE",
+      status: "UNKNOWN",
       ...getAggregatedMetrics("adset", s.id)
     }));
 
@@ -581,13 +624,20 @@ router.get("/structure", async (req, res) => {
       campaignId: a.campaignId,
       name: a.name,
       creativeId: a.creativeId,
-      status: "ACTIVE",
+      status: "UNKNOWN",
       ...getAggregatedMetrics("ad", a.id)
     }));
 
     const structureRowsCount = rawCampaigns.length + rawAdsets.length + rawAds.length;
     const factRowsCount = compPerformance.length;
     const hasStructure = structureRowsCount > 0;
+    structureCoverage = await getDataSourceCoverage({
+      source: "META_CREATIVE",
+      requestedStartDate: startStr,
+      requestedEndDate: endStr,
+      accountId: String(targetAccount),
+      structureRowCount: structureRowsCount
+    });
 
     let dataStatus = "OK";
     let missingReason = "";
@@ -606,6 +656,8 @@ router.get("/structure", async (req, res) => {
     });
 
     res.json({
+      coverage: structureCoverage,
+      sourceCoverage: structureCoverage,
       accounts,
       campaigns: campaignsList,
       adsets: adsetsList,
@@ -658,7 +710,7 @@ router.get("/structure", async (req, res) => {
 
   } catch (error: any) {
     console.error("[Data Center API] Structure error:", error);
-    res.status(500).json({ error: "Failed to load structure", details: error.message });
+    res.status(500).json({ success: false, status: "ERROR", error: "STRUCTURE_QUERY_FAILED", details: error.message });
   }
 });
 
@@ -689,6 +741,22 @@ router.get("/audience", async (req, res) => {
     const allowedDimensionTypes = ["country", "age", "gender", "publisher_platform"];
     const currentDimType = allowedDimensionTypes.includes(requestedDimType) ? requestedDimType : "country";
     const appliedFilters = buildAppliedFilters({ startStr, endStr, storeId, accountId, dimensionType: currentDimType });
+    const audienceCoverage = await getCoverageMap({
+      metaCoverage: {
+        source: "META_AUDIENCE",
+        requestedStartDate: startStr,
+        requestedEndDate: endStr,
+        storeId: storeId as any,
+        accountId: accountId ? String(accountId) : null,
+        dimension: currentDimType
+      },
+      storeCoverage: {
+        source: "STORE_ORDER",
+        requestedStartDate: startStr,
+        requestedEndDate: endStr,
+        storeId: storeId as any
+      }
+    });
     const audienceDataScope = buildDataScope({
       page: "audience",
       primarySource: "FactAudienceBreakdown",
@@ -713,22 +781,22 @@ router.get("/audience", async (req, res) => {
       true
     );
     const buildStoreSummary = () => ({
-      orderCount: Number(storeCountryAnalytics.summary.orderCount || 0),
-      revenue: Number((storeCountryAnalytics.summary.revenue || 0).toFixed(4)),
-      averageOrderValue: Number((storeCountryAnalytics.summary.averageOrderValue || 0).toFixed(4)),
-      countryCount: Number(storeCountryAnalytics.summary.countryCount || 0)
+      orderCount: coverageMetric(audienceCoverage.storeCoverage, Number(storeCountryAnalytics.summary.orderCount || 0)),
+      revenue: coverageMetric(audienceCoverage.storeCoverage, Number((storeCountryAnalytics.summary.revenue || 0).toFixed(4))),
+      averageOrderValue: coverageMetric(audienceCoverage.storeCoverage, Number((storeCountryAnalytics.summary.averageOrderValue || 0).toFixed(4))),
+      countryCount: coverageMetric(audienceCoverage.storeCoverage, Number(storeCountryAnalytics.summary.countryCount || 0))
     });
     const emptyMetaSummary = {
-      spend: 0,
-      impressions: 0,
-      clicks: 0,
-      purchases: 0,
-      purchaseValue: 0,
-      roas: 0,
-      ctr: 0,
-      cpc: 0,
-      cpm: 0,
-      cpa: 0
+      spend: coverageMetric(audienceCoverage.metaCoverage, 0),
+      impressions: coverageMetric(audienceCoverage.metaCoverage, 0),
+      clicks: coverageMetric(audienceCoverage.metaCoverage, 0),
+      purchases: coverageMetric(audienceCoverage.metaCoverage, 0),
+      purchaseValue: coverageMetric(audienceCoverage.metaCoverage, 0),
+      roas: coverageMetric(audienceCoverage.metaCoverage, 0),
+      ctr: coverageMetric(audienceCoverage.metaCoverage, 0),
+      cpc: coverageMetric(audienceCoverage.metaCoverage, 0),
+      cpm: coverageMetric(audienceCoverage.metaCoverage, 0),
+      cpa: coverageMetric(audienceCoverage.metaCoverage, 0)
     };
 
     // 1. Store filtering: resolve store mapped accounts
@@ -765,18 +833,22 @@ router.get("/audience", async (req, res) => {
     // Short-circuit if Store filter specified but no accounts map to it
     if (filterAccountIds !== null && filterAccountIds.length === 0) {
       return res.json({
+        coverage: audienceCoverage.metaCoverage,
+        sourceCoverage: audienceCoverage.metaCoverage,
+        metaCoverage: audienceCoverage.metaCoverage,
+        storeCoverage: audienceCoverage.storeCoverage,
         rows: [],
         summary: {
-          totalSpend: 0,
-          totalImpressions: 0,
-          totalClicks: 0,
-          totalPurchases: 0,
-          totalPurchaseValue: 0,
-          ctr: 0,
-          cpc: 0,
-          cpm: 0,
-          cpa: 0,
-          roas: 0,
+          totalSpend: emptyMetaSummary.spend,
+          totalImpressions: emptyMetaSummary.impressions,
+          totalClicks: emptyMetaSummary.clicks,
+          totalPurchases: emptyMetaSummary.purchases,
+          totalPurchaseValue: emptyMetaSummary.purchaseValue,
+          ctr: emptyMetaSummary.ctr,
+          cpc: emptyMetaSummary.cpc,
+          cpm: emptyMetaSummary.cpm,
+          cpa: emptyMetaSummary.cpa,
+          roas: emptyMetaSummary.roas,
           meta: emptyMetaSummary,
           store: buildStoreSummary()
         },
@@ -950,27 +1022,27 @@ router.get("/audience", async (req, res) => {
     const summaryRoas = summarySpend > 0 ? (summaryPurchaseValue / summarySpend) : 0;
 
     const summary = {
-      totalSpend: Number(summarySpend.toFixed(4)),
-      totalImpressions: summaryImpressions,
-      totalClicks: summaryClicks,
-      totalPurchases: summaryPurchases,
-      totalPurchaseValue: Number(summaryPurchaseValue.toFixed(4)),
-      ctr: Number(summaryCtr.toFixed(6)),
-      cpc: Number(summaryCpc.toFixed(4)),
-      cpm: Number(summaryCpm.toFixed(4)),
-      cpa: Number(summaryCpa.toFixed(4)),
-      roas: Number(summaryRoas.toFixed(4)),
+      totalSpend: coverageMetric(audienceCoverage.metaCoverage, Number(summarySpend.toFixed(4))),
+      totalImpressions: coverageMetric(audienceCoverage.metaCoverage, summaryImpressions),
+      totalClicks: coverageMetric(audienceCoverage.metaCoverage, summaryClicks),
+      totalPurchases: coverageMetric(audienceCoverage.metaCoverage, summaryPurchases),
+      totalPurchaseValue: coverageMetric(audienceCoverage.metaCoverage, Number(summaryPurchaseValue.toFixed(4))),
+      ctr: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCtr.toFixed(6))),
+      cpc: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCpc.toFixed(4))),
+      cpm: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCpm.toFixed(4))),
+      cpa: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCpa.toFixed(4))),
+      roas: coverageMetric(audienceCoverage.metaCoverage, Number(summaryRoas.toFixed(4))),
       meta: {
-        spend: Number(summarySpend.toFixed(4)),
-        impressions: summaryImpressions,
-        clicks: summaryClicks,
-        purchases: summaryPurchases,
-        purchaseValue: Number(summaryPurchaseValue.toFixed(4)),
-        roas: Number(summaryRoas.toFixed(4)),
-        ctr: Number(summaryCtr.toFixed(6)),
-        cpc: Number(summaryCpc.toFixed(4)),
-        cpm: Number(summaryCpm.toFixed(4)),
-        cpa: Number(summaryCpa.toFixed(4))
+        spend: coverageMetric(audienceCoverage.metaCoverage, Number(summarySpend.toFixed(4))),
+        impressions: coverageMetric(audienceCoverage.metaCoverage, summaryImpressions),
+        clicks: coverageMetric(audienceCoverage.metaCoverage, summaryClicks),
+        purchases: coverageMetric(audienceCoverage.metaCoverage, summaryPurchases),
+        purchaseValue: coverageMetric(audienceCoverage.metaCoverage, Number(summaryPurchaseValue.toFixed(4))),
+        roas: coverageMetric(audienceCoverage.metaCoverage, Number(summaryRoas.toFixed(4))),
+        ctr: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCtr.toFixed(6))),
+        cpc: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCpc.toFixed(4))),
+        cpm: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCpm.toFixed(4))),
+        cpa: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCpa.toFixed(4)))
       },
       store: buildStoreSummary()
     };
@@ -987,26 +1059,30 @@ router.get("/audience", async (req, res) => {
     if (paginatedRows.length === 0) {
       return res.json({
         success: true,
+        coverage: audienceCoverage.metaCoverage,
+        sourceCoverage: audienceCoverage.metaCoverage,
+        metaCoverage: audienceCoverage.metaCoverage,
+        storeCoverage: audienceCoverage.storeCoverage,
         data: [],
         rows: [],
         summary: {
-          totalSpend: 0,
-          totalImpressions: 0,
-          totalClicks: 0,
-          totalPurchases: 0,
-          totalPurchaseValue: 0,
-          ctr: 0,
-          cpc: 0,
-          cpm: 0,
-          cpa: 0,
-          roas: 0,
+          totalSpend: emptyMetaSummary.spend,
+          totalImpressions: emptyMetaSummary.impressions,
+          totalClicks: emptyMetaSummary.clicks,
+          totalPurchases: emptyMetaSummary.purchases,
+          totalPurchaseValue: emptyMetaSummary.purchaseValue,
+          ctr: emptyMetaSummary.ctr,
+          cpc: emptyMetaSummary.cpc,
+          cpm: emptyMetaSummary.cpm,
+          cpa: emptyMetaSummary.cpa,
+          roas: emptyMetaSummary.roas,
           meta: emptyMetaSummary,
           store: buildStoreSummary()
         },
         dataScope: audienceDataScope,
         dataHealth: {
-          status: "MISSING_META_BREAKDOWN",
-          reason: "META_AUDIENCE_BREAKDOWN_MISSING",
+          status: audienceCoverage.metaCoverage.status,
+          reason: audienceCoverage.metaCoverage.status,
           missing: ["当前日期范围没有 Meta 受众拆分数据。请在同步中心同步受众 breakdown。"],
           warnings: [],
           source: "FactAudienceBreakdown",
@@ -1038,6 +1114,10 @@ router.get("/audience", async (req, res) => {
 
     res.json({
       success: true,
+      coverage: audienceCoverage.metaCoverage,
+      sourceCoverage: audienceCoverage.metaCoverage,
+      metaCoverage: audienceCoverage.metaCoverage,
+      storeCoverage: audienceCoverage.storeCoverage,
       data: paginatedRows,
       rows: paginatedRows,
       summary,
@@ -1090,7 +1170,7 @@ router.get("/audience", async (req, res) => {
 
   } catch (error: any) {
     console.error("[Data Center API] Audience error:", error);
-    res.status(500).json({ error: "Failed to load audience breakdowns", details: error.message });
+    res.status(500).json({ success: false, status: "ERROR", error: "AUDIENCE_QUERY_FAILED", details: error.message });
   }
 });
 
@@ -1117,6 +1197,21 @@ router.get("/countries", async (req, res) => {
         : undefined;
 
     const incUnmapped = includeUnmappedSpend !== "false";
+    const countryCoverage = await getCoverageMap({
+      storeCoverage: {
+        source: "STORE_ORDER",
+        requestedStartDate: startStr,
+        requestedEndDate: endStr,
+        storeId: normalizedStoreId
+      },
+      metaCoverage: {
+        source: "META_AUDIENCE",
+        requestedStartDate: startStr,
+        requestedEndDate: endStr,
+        storeId: normalizedStoreId,
+        dimension: "country"
+      }
+    });
 
     const result = await getCountryAnalytics(
       startStr,
@@ -1126,11 +1221,43 @@ router.get("/countries", async (req, res) => {
       minO,
       incUnmapped
     );
-    const visibleCountryRows = Array.isArray(result.rows) ? result.rows : [];
-    const visibleCountrySummary = result.summary || {};
+    const visibleCountryRows = (Array.isArray(result.rows) ? result.rows : []).map((row: any) => ({
+      ...row,
+      metaSpend: coverageMetric(countryCoverage.metaCoverage, row.metaSpend),
+      metaImpressions: coverageMetric(countryCoverage.metaCoverage, row.metaImpressions),
+      metaClicks: coverageMetric(countryCoverage.metaCoverage, row.metaClicks),
+      metaPurchases: coverageMetric(countryCoverage.metaCoverage, row.metaPurchases),
+      metaPurchaseValue: coverageMetric(countryCoverage.metaCoverage, row.metaPurchaseValue),
+      metaRoas: coverageMetric(countryCoverage.metaCoverage, row.metaRoas),
+      cpc: coverageMetric(countryCoverage.metaCoverage, row.cpc),
+      cpm: coverageMetric(countryCoverage.metaCoverage, row.cpm)
+    }));
+    const rawCountrySummary: any = result.summary || {};
+    const visibleCountrySummary = {
+      ...rawCountrySummary,
+      countriesCount: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.countriesCount),
+      countryCount: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.countryCount),
+      orderCountriesCount: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.orderCountriesCount),
+      orderCount: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.orderCount),
+      revenue: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.revenue),
+      averageOrderValue: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.averageOrderValue),
+      totalOrderRevenue: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.totalOrderRevenue),
+      totalOrderCount: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.totalOrderCount),
+      orderProfit: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.orderProfit),
+      metaCountriesCount: coverageMetric(countryCoverage.metaCoverage, rawCountrySummary.metaCountriesCount),
+      totalMetaSpend: coverageMetric(countryCoverage.metaCoverage, rawCountrySummary.totalMetaSpend),
+      totalMetaPurchases: coverageMetric(countryCoverage.metaCoverage, rawCountrySummary.totalMetaPurchases),
+      totalMetaPurchaseValue: coverageMetric(countryCoverage.metaCoverage, rawCountrySummary.totalMetaPurchaseValue),
+      unmappedMetaSpend: coverageMetric(countryCoverage.metaCoverage, rawCountrySummary.unmappedMetaSpend),
+      unmappedMetaSpendRate: coverageMetric(countryCoverage.metaCoverage, rawCountrySummary.unmappedMetaSpendRate)
+    };
 
     res.json({
       ...result,
+      coverage: countryCoverage.storeCoverage,
+      sourceCoverage: countryCoverage.storeCoverage,
+      storeCoverage: countryCoverage.storeCoverage,
+      metaCoverage: countryCoverage.metaCoverage,
       rows: visibleCountryRows,
       summary: visibleCountrySummary,
       appliedFilters,
@@ -1148,6 +1275,7 @@ router.get("/countries", async (req, res) => {
       }),
       dataHealth: {
         ...(result.dataHealth || {}),
+        status: countryCoverage.storeCoverage.status,
         source: "FactAudienceBreakdown + Order",
         factRows: visibleCountryRows.length,
         structureRows: 0,
@@ -1172,7 +1300,9 @@ router.get("/countries", async (req, res) => {
   } catch (error: any) {
     console.error("[Data Center API] Countries error:", error);
     res.status(500).json({
-      error: "Failed to load country analytics",
+      success: false,
+      status: "ERROR",
+      error: "COUNTRIES_QUERY_FAILED",
       details: error.message
     });
   }
@@ -1191,6 +1321,22 @@ router.get("/products", async (req, res) => {
     const appliedFilters = buildAppliedFilters({ startStr, endStr, storeId: normalizedStoreId });
 
     const products = await getProductIntelligence(startStr, endStr, normalizedStoreId);
+    const productCoverage = await getCoverageMap({
+      productCoverage: {
+        source: "PRODUCT_ORDER",
+        requestedStartDate: startStr,
+        requestedEndDate: endStr,
+        storeId: normalizedStoreId,
+        scopeKey: normalizedStoreId === "all" ? "store:all" : `store:${normalizedStoreId}`
+      },
+      storeCoverage: {
+        source: "STORE_LEDGER",
+        requestedStartDate: startStr,
+        requestedEndDate: endStr,
+        storeId: normalizedStoreId,
+        scopeKey: normalizedStoreId === "all" ? "store:all" : `store:${normalizedStoreId}`
+      }
+    });
     const revenueComplete = products.every(product => product.revenue !== null);
     const totalProductLineRevenue = revenueComplete
       ? products.reduce((sum, product) => sum + Number(product.revenue), 0)
@@ -1199,17 +1345,23 @@ router.get("/products", async (req, res) => {
     const refundedOrders = products.reduce((sum, product) => sum + product.refundedOrders, 0);
     const refundRate = totalOrders > 0 ? refundedOrders / totalOrders : null;
     const summary = {
-      productsCount: products.length,
-      totalOrders,
-      refundedOrders,
-      refundRate,
-      totalProductLineRevenue,
+      productsCount: coverageMetric(productCoverage.productCoverage, products.length),
+      productOrderAssociations: coverageMetric(productCoverage.productCoverage, totalOrders),
+      totalOrders: coverageMetric(productCoverage.productCoverage, totalOrders),
+      totalOrdersLegacyAlias: true,
+      refundedOrders: coverageMetric(productCoverage.productCoverage, refundedOrders),
+      refundRate: coverageMetric(productCoverage.productCoverage, refundRate),
+      totalProductLineRevenue: coverageMetric(productCoverage.productCoverage, totalProductLineRevenue),
       revenueComplete,
       profitAvailable: false
     };
 
     return res.json({
       success: true,
+      coverage: productCoverage.productCoverage,
+      sourceCoverage: productCoverage.productCoverage,
+      productCoverage: productCoverage.productCoverage,
+      storeCoverage: productCoverage.storeCoverage,
       source: "Order",
       mode: "DATACENTER_PRODUCTS_FROM_ORDER",
       startDate: startStr,
@@ -1218,6 +1370,8 @@ router.get("/products", async (req, res) => {
       products,
       summary,
       count: products.length,
+      filteredTotalCount: products.length,
+      pageRowCount: products.length,
       dataScope: buildDataScope({
         page: "products",
         primarySource: "Order",
@@ -1231,7 +1385,7 @@ router.get("/products", async (req, res) => {
         scope: normalizedStoreId === "all" ? "all_stores" : `store:${normalizedStoreId}`
       }),
       dataHealth: {
-        status: products.length > 0 ? "READY" : "EMPTY",
+        status: productCoverage.productCoverage.status,
         factRows: products.length,
         structureRows: products.length,
         dateRange: buildDateRange(startStr, endStr),
@@ -1264,7 +1418,8 @@ router.get("/products", async (req, res) => {
     console.error("[Data Center API] Products error:", error);
     return res.status(500).json({
       success: false,
-      error: "Failed to load product intelligence",
+      status: "ERROR",
+      error: "PRODUCTS_QUERY_FAILED",
       details: error.message
     });
   }
@@ -1433,6 +1588,21 @@ router.get("/stores", async (req, res) => {
     if (storeId) where.storeId = storeId;
 
     const rows = await prisma.dataCenterStoreDaily.findMany({ where });
+    const storePageCoverage = await getCoverageMap({
+      storeCoverage: {
+        source: "STORE_LEDGER",
+        requestedStartDate: startStr,
+        requestedEndDate: endStr,
+        storeId: storeId || null,
+        scopeKey: storeId ? `store:${storeId}` : "store:all"
+      },
+      metaCoverage: {
+        source: "META_ACCOUNT",
+        requestedStartDate: startStr,
+        requestedEndDate: endStr,
+        storeId: storeId || null
+      }
+    });
 
     // 1. Get all stores and their account mappings to calculate spend and ROAS
     let storesInventory = await prisma.store.findMany({
@@ -1480,7 +1650,15 @@ router.get("/stores", async (req, res) => {
         .filter(r => uniqueMappedIds.includes(normalizeMetaAccountId(r.accountId)))
         .reduce((sum, r) => sum + r.spend, 0);
 
-      const roas = adSpend > 0 ? Number((revenue / adSpend).toFixed(4)) : 0;
+      const roasAvailable =
+        ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(storePageCoverage.storeCoverage.status) &&
+        ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(storePageCoverage.metaCoverage.status) &&
+        adSpend > 0;
+      const roas = roasAvailable ? Number((revenue / adSpend).toFixed(4)) : null;
+      const visibleOrderCount = coverageMetric(storePageCoverage.storeCoverage, orderCount);
+      const visibleRevenue = coverageMetric(storePageCoverage.storeCoverage, revenue);
+      const visibleAov = coverageMetric(storePageCoverage.storeCoverage, orderCount > 0 ? Number((revenue / orderCount).toFixed(2)) : 0);
+      const visibleAdSpend = coverageMetric(storePageCoverage.metaCoverage, Number(adSpend.toFixed(2)));
 
       return {
         id: store.id,
@@ -1490,18 +1668,18 @@ router.get("/stores", async (req, res) => {
         platform: store.platform,
         domain: store.domain,
         timezone: store.timezone,
-        orderCount,
-        ordersCount: orderCount,
-        revenue,
-        sales: revenue,
-        totalSales: revenue,
-        totalRefunded: 0,
-        avgOrderValue: orderCount > 0 ? Number((revenue / orderCount).toFixed(2)) : 0,
-        aov: orderCount > 0 ? Number((revenue / orderCount).toFixed(2)) : 0,
-        adSpend: Number(adSpend.toFixed(2)),
+        orderCount: visibleOrderCount,
+        ordersCount: visibleOrderCount,
+        revenue: visibleRevenue,
+        sales: visibleRevenue,
+        totalSales: visibleRevenue,
+        totalRefunded: coverageMetric(storePageCoverage.storeCoverage, 0),
+        avgOrderValue: visibleAov,
+        aov: visibleAov,
+        adSpend: visibleAdSpend,
         roas,
-        realRoas: adSpend > 0 ? roas : null,
-        hasOrders: orderCount > 0,
+        realRoas: roas,
+        hasOrders: visibleOrderCount === null ? null : visibleOrderCount > 0,
         currency: storeRows[0]?.currency || "USD",
         latestFetchedAt,
         source: "DataCenterStoreDaily",
@@ -1512,22 +1690,22 @@ router.get("/stores", async (req, res) => {
         accountsCount: uniqueMappedIds.length,
         hasMappedAccounts: uniqueMappedIds.length > 0,
         needsRefresh: storeRows.length === 0,
-        syncStatus: storeRows.length > 0 ? "READY" : "EMPTY_LEDGER",
+        syncStatus: storePageCoverage.storeCoverage.status,
         reconciliation: {
           status: "derived_from_datacenter_ledger",
           match: true,
-          orderRows: orderCount,
-          uniqueOrderCount: orderCount,
-          orderTotalSum: revenue,
-          lineRevenueSum: revenue,
+          orderRows: visibleOrderCount,
+          uniqueOrderCount: visibleOrderCount,
+          orderTotalSum: visibleRevenue,
+          lineRevenueSum: visibleRevenue,
           paymentStatusCounts: {},
           source: "DataCenterStoreDaily snapshot table"
         }
       };
     });
 
-    const totalOrders = storesList.reduce((sum, s) => sum + s.ordersCount, 0);
-    const totalRevenue = Number(storesList.reduce((sum, s) => sum + s.revenue, 0).toFixed(2));
+    const totalOrders = coverageMetric(storePageCoverage.storeCoverage, storesList.reduce((sum, s) => sum + Number(s.ordersCount || 0), 0));
+    const totalRevenue = coverageMetric(storePageCoverage.storeCoverage, Number(storesList.reduce((sum, s) => sum + Number(s.revenue || 0), 0).toFixed(2)));
 
     // Calculate unmapped accounts summary
     const allMappedFbAccountIds = new Set<string>();
@@ -1569,6 +1747,10 @@ router.get("/stores", async (req, res) => {
     const freshness = await getFreshnessMeta();
 
     return res.json({
+      coverage: storePageCoverage.storeCoverage,
+      sourceCoverage: storePageCoverage.storeCoverage,
+      storeCoverage: storePageCoverage.storeCoverage,
+      metaCoverage: storePageCoverage.metaCoverage,
       source: "DataCenterStoreDaily",
       mode: "DATACENTER_LEDGER",
       startDate: startStr,
@@ -1595,13 +1777,13 @@ router.get("/stores", async (req, res) => {
       revenue: totalRevenue,
       storesInventoryCount: storesList.length,
       unmappedAccountsSummary: {
-        count: unmappedCount,
-        spend: unmappedSpend,
+        count: coverageMetric(storePageCoverage.metaCoverage, unmappedCount),
+        spend: coverageMetric(storePageCoverage.metaCoverage, unmappedSpend),
         accounts: unmappedAccountsList,
         message: `当前有 ${unmappedCount} 个广告账户尚未绑定店铺且产生消耗，这些账户的花费 $${unmappedSpend} 不会计入任何店铺真实 ROAS。`
       },
       dataHealth: {
-        status: rows.length > 0 ? "OK" : "EMPTY",
+        status: storePageCoverage.storeCoverage.status,
         message: rows.length > 0 ? "所有数据来自 DataCenter Store Daily 账目表。" : "当前日期范围暂无店铺订单数据。",
         source: "DataCenterStoreDaily",
         factRows: rows.length,
@@ -1626,7 +1808,7 @@ router.get("/stores", async (req, res) => {
     });
   } catch (error: any) {
     console.error("[DataCenter] Stores API error:", error);
-    res.status(500).json({ error: "Failed to load stores ledger stats", details: error.message });
+    res.status(500).json({ success: false, status: "ERROR", error: "STORES_QUERY_FAILED", details: error.message });
   }
 });
 
@@ -1985,44 +2167,40 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
  */
 router.get("/max-date", async (req, res) => {
   try {
-    const maxInsight = await prisma.factMetaPerformance.findFirst({
-      orderBy: { date: "desc" },
-      select: { date: true }
+    const { startStr, endStr } = getAppliedDateRange(req.query);
+    const storeId = req.query.storeId as any;
+    const accountId = req.query.accountId ? String(req.query.accountId) : null;
+    const sources = await getCoverageMap({
+      metaAccount: { source: "META_ACCOUNT", requestedStartDate: startStr, requestedEndDate: endStr, storeId, accountId },
+      metaAudience: { source: "META_AUDIENCE", requestedStartDate: startStr, requestedEndDate: endStr, storeId, accountId },
+      metaCreative: { source: "META_CREATIVE", requestedStartDate: startStr, requestedEndDate: endStr, storeId, accountId },
+      storeOrder: { source: "STORE_ORDER", requestedStartDate: startStr, requestedEndDate: endStr, storeId },
+      storeLedger: { source: "STORE_LEDGER", requestedStartDate: startStr, requestedEndDate: endStr, storeId },
+      productOrder: { source: "PRODUCT_ORDER", requestedStartDate: startStr, requestedEndDate: endStr, storeId }
     });
-    const maxOrder = await prisma.order.findFirst({
-      orderBy: { store_local_date: "desc" },
-      where: { store_local_date: { not: null } },
-      select: { store_local_date: true }
-    });
-
-    let maxDateStr: string | null = null;
-    if (maxInsight?.date) {
-      maxDateStr = maxInsight.date;
-    }
-    if (maxOrder?.store_local_date && (!maxDateStr || maxOrder.store_local_date > maxDateStr)) {
-      maxDateStr = maxOrder.store_local_date;
-    }
-
-    if (!maxDateStr) {
-      return res.json({
-        maxDate: null,
-        status: "EMPTY",
-        message: "暂无同步数据"
-      });
-    }
+    const overallMaxDate = Object.values(sources)
+      .map((coverage: any) => coverage.latestAvailableDate)
+      .filter(Boolean)
+      .sort()
+      .at(-1) || null;
 
     res.json({
-      maxDate: maxDateStr,
+      maxDate: overallMaxDate,
+      overallMaxDate,
+      sources,
+      requestedStartDate: startStr,
+      requestedEndDate: endStr,
       dataSourceExplain: {
-        metaDateSource: "FactMetaPerformance.date",
-        orderDateSource: "Order.store_local_date"
+        metaDateSources: ["DataCenterMetaAccountDaily.date", "FactAudienceBreakdown.date", "FactMetaPerformance.date"],
+        storeDateSources: ["Order.store_local_date", "DataCenterStoreDaily.date"]
       }
     });
-  } catch (err) {
-    res.json({
-      maxDate: null,
-      status: "EMPTY",
-      message: "暂无同步数据"
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      status: "ERROR",
+      error: "SOURCE_FRESHNESS_QUERY_FAILED",
+      details: error.message
     });
   }
 });
@@ -2040,6 +2218,12 @@ router.get("/accounts-performance", async (req, res) => {
 
   try {
     const storeIdNum = storeIdParam !== "all" && storeIdParam !== "undefined" && storeIdParam !== "null" ? Number(storeIdParam) : null;
+    const accountCoverage = await getDataSourceCoverage({
+      source: "META_ACCOUNT",
+      requestedStartDate: startStr,
+      requestedEndDate: endStr,
+      storeId: storeIdNum
+    });
 
     const where: any = {
       date: {
@@ -2216,6 +2400,8 @@ router.get("/accounts-performance", async (req, res) => {
     const freshness = await getFreshnessMeta();
 
     return res.json({
+      coverage: accountCoverage,
+      sourceCoverage: accountCoverage,
       success: true,
       source: "DataCenterMetaAccountDaily",
       mode: "DATACENTER_LEDGER",
@@ -2241,6 +2427,9 @@ router.get("/accounts-performance", async (req, res) => {
         ? 0
         : Math.max(0, totalAdAccountsInventoryCount - results.length),
       accountsWithSpendCount: results.filter(a => a.spend > 0).length,
+      inventoryAccountCount: results.length,
+      performanceAccountCount: results.filter(a => a.spend > 0 || a.impressions > 0 || a.clicks > 0 || a.purchases > 0).length,
+      structureOnlyAccountCount: results.filter(a => a.spend === 0 && a.impressions === 0 && a.clicks === 0 && a.purchases === 0).length,
       accountDisplayScope: includeHistoricalAccounts ? "historical_all" : "active_only",
       totalSpend,
       metaReconciliation: {
@@ -2266,7 +2455,7 @@ router.get("/accounts-performance", async (req, res) => {
         isSyncActive: false
       },
       dataHealth: {
-        status: rows.length > 0 ? "READY" : "EMPTY_FACTS",
+        status: accountCoverage.status,
         reason: rows.length > 0 ? "OK" : "NO_ACCOUNT_LEDGER_ROWS",
         message: rows.length > 0 ? "账号表现账目已按当前日期范围返回。" : "当前日期范围内暂无账号表现账目。",
         level: "account",
@@ -2313,7 +2502,7 @@ router.get("/accounts-performance", async (req, res) => {
 
     return; // Fast return to skip legacy duplicate code below safely
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to load accounts performance", details: error.message });
+    res.status(500).json({ success: false, status: "ERROR", error: "ACCOUNTS_PERFORMANCE_QUERY_FAILED", details: error.message });
   }
 });
 
@@ -2327,6 +2516,12 @@ router.get("/ad-hierarchy/accounts", async (req, res) => {
     const { startStr, endStr } = getAppliedDateRange(req.query);
     const appliedFilters = buildAppliedFilters({ startStr, endStr, storeId });
     const showAll = includeZeroSpend === "true";
+    const hierarchyCoverage = await getDataSourceCoverage({
+      source: "META_ACCOUNT",
+      requestedStartDate: startStr,
+      requestedEndDate: endStr,
+      storeId: storeId as any
+    });
 
     // 1. Fetch performance rows from fact_meta_performance
     const performanceRows = await prisma.factMetaPerformance.findMany({
@@ -2493,9 +2688,11 @@ router.get("/ad-hierarchy/accounts", async (req, res) => {
 
     res.json({
       success: true,
+      coverage: hierarchyCoverage,
+      sourceCoverage: hierarchyCoverage,
       data: results,
       dataHealth: {
-        status: results.length === 0 ? "EMPTY" : "READY",
+        status: hierarchyCoverage.status,
         level: "account",
         reason,
         factRows: performanceRows.length,
@@ -2542,7 +2739,7 @@ router.get("/ad-hierarchy/accounts", async (req, res) => {
       }
     });
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to list hierarchy accounts", details: error.message });
+    res.status(500).json({ success: false, status: "ERROR", error: "HIERARCHY_ACCOUNTS_QUERY_FAILED", details: error.message });
   }
 });
 
@@ -2561,6 +2758,12 @@ router.get("/ad-hierarchy/campaigns", async (req, res) => {
     const showAll = includeZeroSpend === "true";
     const normAccountId = normalizeMetaAccountId(String(accountId));
     const numericAccountId = normAccountId.replace(/^act_/, "");
+    const hierarchyCoverage = await getDataSourceCoverage({
+      source: "META_CREATIVE",
+      requestedStartDate: startStr,
+      requestedEndDate: endStr,
+      accountId: normAccountId
+    });
 
     // 1. Fetch performance rows
     const performanceRows = await prisma.factMetaPerformance.findMany({
@@ -2625,9 +2828,9 @@ router.get("/ad-hierarchy/campaigns", async (req, res) => {
         name = `${id} (结构未同步)`;
       }
 
-      const status = struct?.status || "ACTIVE";
-      const objective = struct?.region || "N/A"; // Region/Objective
-      const budget = 0; // standard fallback budget
+      // Campaign objective and budget are not persisted by the current schema.
+      // Keep them unavailable instead of repurposing region or inventing zero.
+      const { status, objective, budget } = resolveCampaignStructureFields(struct);
 
       const ctr = agg.impressions > 0 ? (agg.clicks / agg.impressions) * 100 : 0;
       const cpc = agg.clicks > 0 ? agg.spend / agg.clicks : 0;
@@ -2679,9 +2882,11 @@ router.get("/ad-hierarchy/campaigns", async (req, res) => {
 
     res.json({
       success: true,
+      coverage: hierarchyCoverage,
+      sourceCoverage: hierarchyCoverage,
       data: results,
       dataHealth: {
-        status: results.length === 0 ? "EMPTY" : "READY",
+        status: hierarchyCoverage.status,
         level: "campaign",
         reason,
         factRows: performanceRows.length,
@@ -2715,7 +2920,7 @@ router.get("/ad-hierarchy/campaigns", async (req, res) => {
       }
     });
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to load hierarchy campaigns", details: error.message });
+    res.status(500).json({ success: false, status: "ERROR", error: "HIERARCHY_CAMPAIGNS_QUERY_FAILED", details: error.message });
   }
 });
 
@@ -2734,6 +2939,13 @@ router.get("/ad-hierarchy/adsets", async (req, res) => {
     const showAll = includeZeroSpend === "true";
     const normAccountId = normalizeMetaAccountId(String(accountId));
     const numericAccountId = normAccountId.replace(/^act_/, "");
+    const hierarchyCoverage = await getDataSourceCoverage({
+      source: "META_CREATIVE",
+      requestedStartDate: startStr,
+      requestedEndDate: endStr,
+      accountId: normAccountId,
+      campaignId: String(campaignId)
+    });
 
     // 1. Fetch performance rows
     const performanceRows = await prisma.factMetaPerformance.findMany({
@@ -2857,9 +3069,11 @@ router.get("/ad-hierarchy/adsets", async (req, res) => {
 
     res.json({
       success: true,
+      coverage: hierarchyCoverage,
+      sourceCoverage: hierarchyCoverage,
       data: results,
       dataHealth: {
-        status: results.length === 0 ? "EMPTY" : "READY",
+        status: hierarchyCoverage.status,
         level: "adset",
         reason,
         factRows: performanceRows.length,
@@ -2894,7 +3108,7 @@ router.get("/ad-hierarchy/adsets", async (req, res) => {
       }
     });
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to load hierarchy adsets", details: error.message });
+    res.status(500).json({ success: false, status: "ERROR", error: "HIERARCHY_ADSETS_QUERY_FAILED", details: error.message });
   }
 });
 
@@ -2913,6 +3127,13 @@ router.get("/ad-hierarchy/ads", async (req, res) => {
     const showAll = includeZeroSpend === "true";
     const normAccountId = normalizeMetaAccountId(String(accountId));
     const numericAccountId = normAccountId.replace(/^act_/, "");
+    const hierarchyCoverage = await getDataSourceCoverage({
+      source: "META_CREATIVE",
+      requestedStartDate: startStr,
+      requestedEndDate: endStr,
+      accountId: normAccountId,
+      adsetId: String(adsetId)
+    });
 
     // 1. Fetch performance rows
     const performanceRows = await prisma.factMetaPerformance.findMany({
@@ -3045,9 +3266,11 @@ router.get("/ad-hierarchy/ads", async (req, res) => {
 
     res.json({
       success: true,
+      coverage: hierarchyCoverage,
+      sourceCoverage: hierarchyCoverage,
       data: results,
       dataHealth: {
-        status: results.length === 0 ? "EMPTY" : "READY",
+        status: hierarchyCoverage.status,
         level: "ad",
         reason,
         factRows: performanceRows.length,
@@ -3082,7 +3305,7 @@ router.get("/ad-hierarchy/ads", async (req, res) => {
       }
     });
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to load hierarchy ads", details: error.message });
+    res.status(500).json({ success: false, status: "ERROR", error: "HIERARCHY_ADS_QUERY_FAILED", details: error.message });
   }
 });
 
@@ -3168,11 +3391,14 @@ router.get("/creative-insights", async (req, res) => {
       campaignId,
       adsetId,
       creativeType,
+      opsBucket,
+      search,
       minSpend,
       includeZeroSpend,
       page,
       pageSize,
-      sortBy
+      sortBy,
+      export: exportRows
     } = req.query;
     const { startStr, endStr } = getAppliedDateRange(req.query);
     const appliedFilters = buildAppliedFilters({
@@ -3190,18 +3416,27 @@ router.get("/creative-insights", async (req, res) => {
       campaignId: campaignId as string,
       adsetId: adsetId as string,
       creativeType: creativeType as string,
+      opsBucket: opsBucket as string,
+      search: search as string,
       minSpend: minSpend as string,
       includeZeroSpend: includeZeroSpend as string,
       page: page as string,
       pageSize: pageSize as string,
-      sortBy: sortBy as string
+      sortBy: sortBy as string,
+      export: exportRows as string
     });
 
     const rows = Array.isArray(result.data) ? result.data : [];
-    const totalSpend = rows.reduce((sum: number, row: any) => sum + Number(row.spend || 0), 0);
-    const matchingCreatives = Number(result.total || rows.length || 0);
-    const hasCreativeStructure = Boolean(result.diagnostics?.hasAdCreativeLinks || result.diagnostics?.hasCreativeStaticInfo);
-    const hasPerformanceRows = matchingCreatives > 0 && totalSpend > 0;
+    const creativeCoverage = await getDataSourceCoverage({
+      source: "META_CREATIVE",
+      requestedStartDate: startStr,
+      requestedEndDate: endStr,
+      storeId: isSpecificFilter(storeId || storeFilter) ? Number(storeId || storeFilter) : undefined,
+      accountId: isSpecificFilter(accountId) ? String(accountId) : undefined
+    });
+    const responseSummary = Object.fromEntries(
+      Object.entries(result.summary || {}).map(([key, value]) => [key, coverageMetric(creativeCoverage, value)])
+    );
     const creativeQueryDebug = buildQueryDebug({
       source: "FactMetaPerformance level=ad + AdCreative + Ad",
       storeId: storeId || storeFilter || "all",
@@ -3212,38 +3447,30 @@ router.get("/creative-insights", async (req, res) => {
       factRows: Number(result.diagnostics?.performanceRows || rows.length || 0),
       structureRows: Number(result.diagnostics?.structureRows || 0)
     });
-    const creativeHealth = hasPerformanceRows
-      ? {
-          status: "OK",
-          message: "素材成效数据来自广告级事实数据，并关联素材与广告结构。",
-          factRows: Number(result.diagnostics?.performanceRows || rows.length || 0),
-          structureRows: Number(result.diagnostics?.structureRows || 0),
-          source: "FactMetaPerformance level=ad + AdCreative + Ad",
-          dateRange: buildDateRange(startStr, endStr),
-          queryDebug: creativeQueryDebug
-        }
-      : hasCreativeStructure
-        ? {
-            status: "STRUCTURE_WITHOUT_FACTS",
-            message: "素材结构已同步，成效未同步。请同步广告级成效数据后再判断素材疲劳。",
-            factRows: Number(result.diagnostics?.performanceRows || 0),
-            structureRows: Number(result.diagnostics?.structureRows || 0),
-            source: "FactMetaPerformance level=ad + AdCreative + Ad",
-            dateRange: buildDateRange(startStr, endStr),
-            queryDebug: creativeQueryDebug
-          }
-        : {
-            status: "EMPTY",
-            message: "当前日期范围暂无素材表现数据。",
-            factRows: Number(result.diagnostics?.performanceRows || 0),
-            structureRows: Number(result.diagnostics?.structureRows || 0),
-            source: "FactMetaPerformance level=ad + AdCreative + Ad",
-            dateRange: buildDateRange(startStr, endStr),
-            queryDebug: creativeQueryDebug
-          };
+    const creativeHealth = {
+      status: creativeCoverage.status,
+      message: creativeCoverage.status === "NOT_SYNCED"
+        ? `当前周期素材成效尚未同步，数据最新至 ${creativeCoverage.latestAvailableDate || "未知"}`
+        : creativeCoverage.status === "PARTIAL_COVERAGE"
+          ? `请求截止 ${endStr}，当前事实只覆盖至 ${creativeCoverage.latestAvailableDate || "未知"}`
+          : creativeCoverage.status === "TRUE_EMPTY"
+            ? "当前周期已完整同步，素材成效为空。"
+            : creativeCoverage.status === "ERROR"
+              ? "素材成效查询失败。"
+              : "素材成效覆盖状态已更新。",
+      factRows: Number(result.diagnostics?.performanceRows || rows.length || 0),
+      structureRows: Number(result.diagnostics?.structureRows || 0),
+      source: "Meta 素材成效",
+      coverage: creativeCoverage,
+      dateRange: buildDateRange(startStr, endStr),
+      queryDebug: creativeQueryDebug
+    };
 
     res.json({
       ...result,
+      summary: responseSummary,
+      coverage: creativeCoverage,
+      sourceCoverage: creativeCoverage,
       appliedFilters,
       dateRange: buildDateRange(startStr, endStr),
       dataScope: result.dataScope || buildDataScope({
@@ -3266,7 +3493,7 @@ router.get("/creative-insights", async (req, res) => {
       }
     });
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to load creative insights", details: error.message });
+    res.status(500).json({ success: false, status: "ERROR", error: "CREATIVE_INSIGHTS_QUERY_FAILED", details: error.message });
   }
 });
 

@@ -16,6 +16,7 @@ import { syncMetaAudienceBreakdown } from "../services/meta-audience-breakdown-s
 import { v4 as uuidv4 } from "uuid";
 import { SyncTaskType, SyncTriggerRequest, SyncTriggerResponse } from "../types/sync-tasks.js";
 import { isManualSyncRequired } from "../services/sync-manual-guard.js";
+import { executeSyncViewTask } from "../services/sync-view-task-executor.service.js";
 
 const router = Router();
 const STALE_RUNNING_TASK_MINUTES = 30;
@@ -566,126 +567,60 @@ router.post("/sync/trigger", async (req, res) => {
     if (taskType === SyncTaskType.SYNC_VIEW_AUDIENCE) {
       const daysVal = days ? parseInt(String(days), 10) : 7;
       const range = boundedDateRange(startDate, endDate, daysVal, 3650);
-      const targets = await resolveSafeMetaTargets({ accountId, accountIds, limit });
-      const taskIds: string[] = [];
-      let lastTaskId: string | null = null;
-
-      for (const account of targets) {
-        const taskId = await SyncCenter.syncMetaAudience(
-          chainId,
-          "frontend_view_sync",
-          lastTaskId,
-          range.days,
-          account.fb_account_id,
-          range.startDate,
-          range.endDate,
-          viewRunOptions
-        );
-        taskIds.push(taskId);
-        lastTaskId = taskId;
-      }
-
-      const summary = await summarizeSyncLogs(taskIds);
-      const limitReceipt = buildLimitReceipt(limit, targets.length);
-      const metadataStatus = String(summary.metadataStatus || "").toUpperCase();
-      const derivedStatus = deriveSyncStatus(summary);
-      const status =
-        derivedStatus === "FAILED" || derivedStatus === "PARTIAL_SUCCESS"
-          ? derivedStatus
-          : metadataStatus === "NO_NEW_DATA"
-          ? "NO_NEW_DATA"
-          : metadataStatus === "PARTIAL"
-            ? "PARTIAL_SUCCESS"
-            : derivedStatus;
-      if (status === "FAILED") {
-        return returnFailedSyncResponse(res, { summary, chainId, taskType, taskIds });
-      }
-      return res.json({
-        success: true,
-        status,
-        message: summary.metadataMessage || "受众视图同步完成。",
-        chainId,
-        taskType,
-        taskIds,
-        recordsFetched: summary.recordsFetched,
-        recordsSaved: summary.recordsSaved,
-        recordsUpdated: summary.recordsUpdated,
-        targetAccountsCount: summary.targetAccountsCount || targets.length,
-        failedAccounts: status === "NO_NEW_DATA" ? [] : summary.failedAccounts,
-        reason: summary.metadataReason || null,
-        dimensionsRequested: summary.dimensionsRequested || ["country", "age", "gender", "publisher_platform"],
-        dimensionsSynced: summary.dimensionsSynced || [],
-        ...limitReceipt,
-        ...buildProgress({
-          currentStep: targets.length,
-          totalSteps: Math.max(1, targets.length),
-          stepLabel: "受众视图同步完成",
-          processedAccounts: targets.length,
-          totalAccounts: targets.length,
-          processedDimensions: Array.isArray(summary.dimensionsSynced) ? summary.dimensionsSynced.length : null,
-          totalDimensions: Array.isArray(summary.dimensionsRequested) ? summary.dimensionsRequested.length : 4
-        }),
+      const result = await executeSyncViewTask({
+        taskType: "sync_view_audience",
         startDate: range.startDate,
-        endDate: range.endDate
+        endDate: range.endDate,
+        days: range.days,
+        accountId,
+        accountIds,
+        storeId,
+        limit,
+        chainId,
+        triggeredBy: "frontend_view_sync"
+      });
+      if (result.status === "FAILED") return res.status(500).json(result);
+      return res.json({
+        ...result,
+        ...buildLimitReceipt(limit, result.targetAccountsCount),
+        ...buildProgress({
+          currentStep: result.targetAccountsCount,
+          totalSteps: Math.max(1, result.targetAccountsCount),
+          stepLabel: "受众视图同步完成",
+          processedAccounts: result.targetAccountsCount,
+          totalAccounts: result.targetAccountsCount,
+          processedDimensions: result.dimensionsSynced?.length || 0,
+          totalDimensions: result.dimensionsRequested?.length || 4
+        })
       } as SyncTriggerResponse);
     }
 
     if (taskType === SyncTaskType.SYNC_VIEW_CREATIVES) {
       const daysVal = days ? parseInt(String(days), 10) : 30;
       const range = boundedDateRange(startDate, endDate, daysVal, 3650);
-      const taskIds: string[] = [];
-      const structureTaskId = await SyncCenter.syncMetaStructure(
-        chainId,
-        "frontend_view_sync",
-        null,
-        { accountId, accountIds, limit },
-        viewRunOptions
-      );
-      taskIds.push(structureTaskId);
-      const targets = await resolveSafeMetaTargets({ accountId, accountIds, limit });
-      let lastTaskId: string | null = structureTaskId;
-      for (const account of targets) {
-        const taskId = await SyncCenter.syncMetaInsights(
-          chainId,
-          "frontend_view_sync",
-          lastTaskId,
-          range.days,
-          account.fb_account_id,
-          range.startDate,
-          range.endDate,
-          viewRunOptions
-        );
-        taskIds.push(taskId);
-        lastTaskId = taskId;
-      }
-      const summary = await summarizeSyncLogs(taskIds);
-      const limitReceipt = buildLimitReceipt(limit, targets.length);
-      const status = deriveSyncStatus(summary);
-      if (status === "FAILED") {
-        return returnFailedSyncResponse(res, { summary, chainId, taskType, taskIds });
-      }
-      return res.json({
-        success: true,
-        status,
-        message: "素材视图同步完成：已执行素材结构和 ad-level 成效事实链路。",
-        chainId,
-        taskType,
-        taskIds,
-        recordsFetched: summary.recordsFetched,
-        recordsSaved: summary.recordsSaved,
-        recordsUpdated: summary.recordsUpdated,
-        targetAccountsCount: summary.targetAccountsCount || targets.length,
-        failedAccounts: summary.failedAccounts,
-        ...limitReceipt,
-        ...buildProgress({
-          currentStep: taskIds.length,
-          totalSteps: Math.max(1, taskIds.length),
-          stepLabel: "素材视图同步完成",
-          processedAccounts: targets.length,
-          totalAccounts: targets.length
-        }),
+      const result = await executeSyncViewTask({
+        taskType: "sync_view_creatives",
         startDate: range.startDate,
-        endDate: range.endDate
+        endDate: range.endDate,
+        days: range.days,
+        accountId,
+        accountIds,
+        storeId,
+        limit,
+        chainId,
+        triggeredBy: "frontend_view_sync"
+      });
+      if (result.status === "FAILED") return res.status(500).json(result);
+      return res.json({
+        ...result,
+        ...buildLimitReceipt(limit, result.targetAccountsCount),
+        ...buildProgress({
+          currentStep: result.taskIds.length,
+          totalSteps: Math.max(1, result.taskIds.length),
+          stepLabel: "素材视图同步完成",
+          processedAccounts: result.targetAccountsCount,
+          totalAccounts: result.targetAccountsCount
+        })
       } as SyncTriggerResponse);
     }
 

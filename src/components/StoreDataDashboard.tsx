@@ -24,13 +24,12 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { MetaAccountDisplay } from "./common/MetaAccountDisplay";
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
+import { DataCoverageBanner } from "./common/DataCoverageBanner";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 import {
   buildDataViewRequestKey,
-  getSafeLastGoodData,
-  isDateRangeMismatch,
-  makeLastGoodData
+  isDateRangeMismatch
 } from "@/lib/data-view-state";
 
 // Types matching API structure
@@ -44,16 +43,16 @@ interface StoreMetric {
   status: string;
   accountsCount: number;
   mappedAccountCount: number;
-  ordersCount: number;
-  totalSales: number;
-  totalRefunded: number;
-  avgOrderValue: number;
-  aov: number;
-  adSpend: number;
-  roas: number;
+  ordersCount: number | null;
+  totalSales: number | null;
+  totalRefunded: number | null;
+  avgOrderValue: number | null;
+  aov: number | null;
+  adSpend: number | null;
+  roas: number | null;
   realRoas: number | null;
   hasMappedAccounts: boolean;
-  hasOrders: boolean;
+  hasOrders: boolean | null;
   countryCount: number | null;
   productCount: number;
   lastSyncTime: string | null;
@@ -62,8 +61,8 @@ interface StoreMetric {
 }
 
 interface UnmappedAccountsSummary {
-  count: number;
-  spend: number;
+  count: number | null;
+  spend: number | null;
   message: string;
   accounts?: Array<{
     accountId: string;
@@ -150,13 +149,14 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
   const [unmappedSummary, setUnmappedSummary] = useState<UnmappedAccountsSummary>({ count: 0, spend: 0, message: "" });
   const [dataHealth, setDataHealth] = useState<DataHealth>({ status: "EMPTY", message: "尚未获取到健康体检报告" });
   const [appliedDateRange, setAppliedDateRange] = useState<{ startDate: string; endDate: string } | null>(null);
+  const [storeCoverage, setStoreCoverage] = useState<any | null>(null);
+  const [metaCoverage, setMetaCoverage] = useState<any | null>(null);
   
   const [loading, setLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [sortField, setSortField] = useState<SortField>("totalSales");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [unmappedExpanded, setUnmappedExpanded] = useState<boolean>(false);
-  const [lastGoodData, setLastGoodData] = useState<any | null>(null);
   const [viewNotice, setViewNotice] = useState<string | null>(null);
   const [syncing, setSyncing] = useState<boolean>(false);
   const [viewSyncStatus, setViewSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
@@ -199,22 +199,17 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
       });
       
       if (isDateRangeMismatch(response.data, formattedStartDate, formattedEndDate)) {
-        const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
-        if (safeLastGoodData) {
-          setStores(safeLastGoodData.stores || []);
-          setUnmappedSummary(safeLastGoodData.unmappedAccountsSummary || { count: 0, spend: 0, message: "" });
-          setDataHealth(safeLastGoodData.dataHealth || { status: "EMPTY", message: "" });
-          setAppliedDateRange(safeLastGoodData.appliedDateRange || null);
-        } else {
-          setStores([]);
-          setUnmappedSummary({ count: 0, spend: 0, message: "" });
-          setDataHealth(response.data?.dataHealth || { status: "DATE_RANGE_MISMATCH", message: "Response date range mismatch" });
-        }
+        setStores([]);
+        setUnmappedSummary({ count: 0, spend: 0, message: "" });
+        setDataHealth(response.data?.dataHealth || { status: "DATE_RANGE_MISMATCH", message: "Response date range mismatch" });
+        setAppliedDateRange(null);
         setViewNotice("接口返回周期与当前筛选周期不一致，未使用跨周期旧数据。");
         return;
       }
 
       const { stores: fetchedStores, unmappedAccountsSummary, dataHealth: fetchedHealth } = response.data;
+      setStoreCoverage(response.data.storeCoverage || response.data.coverage || null);
+      setMetaCoverage(response.data.metaCoverage || null);
       setStores(fetchedStores || []);
       setUnmappedSummary(unmappedAccountsSummary || { count: 0, spend: 0, message: "" });
       setDataHealth(fetchedHealth || { status: "EMPTY", message: "" });
@@ -222,16 +217,6 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
         startDate: formattedStartDate,
         endDate: formattedEndDate
       });
-      setLastGoodData(makeLastGoodData(currentRequestKey, fetchedStores || [], {
-        stores: fetchedStores || [],
-        unmappedAccountsSummary: unmappedAccountsSummary || { count: 0, spend: 0, message: "" },
-        dataHealth: fetchedHealth || { status: "EMPTY", message: "" },
-        appliedDateRange: response.data.appliedFilters || response.data.dateRange || {
-          startDate: formattedStartDate,
-          endDate: formattedEndDate
-        }
-      }));
-
       // Keep reconciliation in-sync if one is selected
       if (selectedStoreForRecon) {
         const updatedSelected = (fetchedStores || []).find((s: StoreMetric) => s.id === selectedStoreForRecon.id);
@@ -241,27 +226,13 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
       }
     } catch (error: any) {
       console.error("Failed to load stores analytics:", error);
-      const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
-      if (safeLastGoodData) {
-        setStores(safeLastGoodData.stores || []);
-        setUnmappedSummary(safeLastGoodData.unmappedAccountsSummary || { count: 0, spend: 0, message: "" });
-        setDataHealth(safeLastGoodData.dataHealth || { status: "EMPTY", message: "" });
-        setAppliedDateRange(safeLastGoodData.appliedDateRange || null);
-        setViewNotice("当前店铺筛选周期请求失败，已保留同一请求下的上次成功数据。");
-      } else {
-        setStores([]);
-        setUnmappedSummary({ count: 0, spend: 0, message: "" });
-        setDataHealth({
-          status: "REQUEST_FAILED",
-          message: "当前店铺筛选周期请求失败，未使用其他日期周期的旧店铺数据。",
-          warnings: ["FETCH_FAILED_FOR_CURRENT_REQUEST"]
-        });
-        setAppliedDateRange({
-          startDate: formattedStartDate,
-          endDate: formattedEndDate
-        });
-        setViewNotice("当前店铺筛选周期请求失败，未展示其他日期周期的旧数据。");
-      }
+      setStores([]);
+      setUnmappedSummary({ count: 0, spend: 0, message: "" });
+      setDataHealth({ status: "ERROR", message: "当前店铺筛选周期请求失败，未使用旧店铺数据。", warnings: ["FETCH_FAILED_FOR_CURRENT_REQUEST"] });
+      setStoreCoverage({ status: "ERROR" });
+      setMetaCoverage({ status: "ERROR" });
+      setAppliedDateRange({ startDate: formattedStartDate, endDate: formattedEndDate });
+      setViewNotice("当前店铺筛选周期请求失败，未展示旧数据。");
       toast.error("加载店铺数据失败: " + getApiErrorMessage(error));
     } finally {
       if (!silent) setLoading(false);
@@ -352,24 +323,26 @@ setAiReport(reportText || "未返回分析报告");
     let totalRefunds = 0;
 
     stores.forEach((s) => {
-      totalOrders += s.ordersCount || 0;
-      totalSales += s.totalSales || 0;
-      totalSpend += s.adSpend || 0;
-      totalRefunds += s.totalRefunded || 0;
+      totalOrders += Number(s.ordersCount || 0);
+      totalSales += Number(s.totalSales || 0);
+      totalSpend += Number(s.adSpend || 0);
+      totalRefunds += Number(s.totalRefunded || 0);
     });
 
     const averageAOV = totalOrders > 0 ? totalSales / totalOrders : 0;
     const realGlobalROAS = totalSpend > 0 ? totalSales / totalSpend : 0;
 
+    const storeMetricsAvailable = ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(String(storeCoverage?.status).toUpperCase());
+    const metaMetricsAvailable = ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(String(metaCoverage?.status).toUpperCase());
     return {
       totalStores,
-      totalOrders,
-      totalSales,
-      averageAOV,
-      totalSpend,
-      realGlobalROAS
+      totalOrders: storeMetricsAvailable ? totalOrders : null,
+      totalSales: storeMetricsAvailable ? totalSales : null,
+      averageAOV: storeMetricsAvailable ? averageAOV : null,
+      totalSpend: metaMetricsAvailable ? totalSpend : null,
+      realGlobalROAS: storeMetricsAvailable && metaMetricsAvailable && totalSpend > 0 ? realGlobalROAS : null
     };
-  }, [stores]);
+  }, [stores, storeCoverage, metaCoverage]);
 
   // 8. Sorting & Filtering
   const handleSort = (field: SortField) => {
@@ -511,17 +484,23 @@ setAiReport(reportText || "未返回分析报告");
 
       <SyncStatusPanel status={viewSyncStatus} />
 
+      <div className="grid gap-2 md:grid-cols-2">
+        <DataCoverageBanner coverage={storeCoverage} />
+        <DataCoverageBanner coverage={metaCoverage} />
+      </div>
+
       <DataViewTraceBar
         compactScopeLabel="店铺订单口径，按 store_local_date 统计"
         currentStartDate={formattedStartDate}
         currentEndDate={formattedEndDate}
         responseStartDate={appliedDateRange?.startDate}
         responseEndDate={appliedDateRange?.endDate}
+        latestAvailableDate={storeCoverage?.latestAvailableDate}
         timezone={(appliedDateRange as any)?.timezone || "America/Los_Angeles"}
         rowCount={stores.length}
         factRows={aggregatedStats.totalOrders}
         structureRows={stores.length}
-        status={dataHealth.status}
+        status={storeCoverage?.status || dataHealth.status}
         level="store"
         queryDebug={(dataHealth as any)?.queryDebug}
         source="店铺订单 + 店铺配置"
@@ -552,7 +531,7 @@ setAiReport(reportText || "未返回分析报告");
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">店铺订单数</span>
             <div className="flex items-center justify-between mt-2">
               <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">
-                {aggregatedStats.totalOrders.toLocaleString()} <span className="text-xs font-normal text-slate-400">单</span>
+                {aggregatedStats.totalOrders === null ? "N/A" : <>{aggregatedStats.totalOrders.toLocaleString()} <span className="text-xs font-normal text-slate-400">单</span></>}
               </h3>
               <ShoppingBag className="w-4 h-4 text-emerald-500" />
             </div>
@@ -564,7 +543,7 @@ setAiReport(reportText || "未返回分析报告");
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">店铺销售额</span>
             <div className="flex items-center justify-between mt-2">
               <h3 className="text-lg font-extrabold text-emerald-600 tracking-tight">
-                ${aggregatedStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                {aggregatedStats.totalSales === null ? "N/A" : `$${aggregatedStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`}
               </h3>
               <Coins className="w-4 h-4 text-emerald-600" />
             </div>
@@ -576,7 +555,7 @@ setAiReport(reportText || "未返回分析报告");
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">平均订单金额</span>
             <div className="flex items-center justify-between mt-2">
               <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">
-                ${aggregatedStats.averageAOV.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {aggregatedStats.averageAOV === null ? "N/A" : `$${aggregatedStats.averageAOV.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
               </h3>
               <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-1.5 py-0.5 rounded">AOV</span>
             </div>
@@ -588,7 +567,7 @@ setAiReport(reportText || "未返回分析报告");
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">映射广告总花费</span>
             <div className="flex items-center justify-between mt-2">
               <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">
-                ${aggregatedStats.totalSpend.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                {aggregatedStats.totalSpend === null ? "N/A" : `$${aggregatedStats.totalSpend.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`}
               </h3>
               <SpendIcon className="w-4 h-4 text-indigo-500" />
             </div>
@@ -600,7 +579,7 @@ setAiReport(reportText || "未返回分析报告");
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">店铺 ROAS</span>
             <div className="flex items-center justify-between mt-2">
               <h3 className="text-md font-extrabold text-indigo-600 tracking-tight">
-                {aggregatedStats.totalSpend > 0 ? `${aggregatedStats.realGlobalROAS.toFixed(2)}x` : "—"}
+                {aggregatedStats.realGlobalROAS === null ? "N/A" : `${aggregatedStats.realGlobalROAS.toFixed(2)}x`}
               </h3>
               <TrendingUp className="w-4 h-4 text-indigo-500" />
             </div>
@@ -629,13 +608,13 @@ setAiReport(reportText || "未返回分析报告");
         </div>
       )}
 
-      {unmappedSummary.count > 0 && unmappedSummary.spend > 0 && !loading && (
+      {Number(unmappedSummary.count || 0) > 0 && Number(unmappedSummary.spend || 0) > 0 && !loading && (
         <div className="p-3 bg-rose-50 border border-rose-150 rounded-xl text-slate-800 text-xs shadow-sm mb-4">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
               <span className="font-medium text-rose-900">
-                未绑定消耗：{unmappedSummary.count} 个账户，${unmappedSummary.spend.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                未绑定消耗：{unmappedSummary.count} 个账户，${Number(unmappedSummary.spend).toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </span>
             </div>
             <button 
@@ -810,7 +789,7 @@ setAiReport(reportText || "未返回分析报告");
 
                           {/* 订单数 */}
                           <TableCell className="text-right text-slate-800 font-mono font-bold">
-                            {store.hasOrders ? (
+                            {store.ordersCount === null ? "N/A" : store.hasOrders ? (
                               store.ordersCount.toLocaleString()
                             ) : (
                               <span className="text-[11px] text-slate-400 font-normal">无订单</span>
@@ -819,7 +798,7 @@ setAiReport(reportText || "未返回分析报告");
 
                           {/* 销售额 */}
                           <TableCell className="text-right text-slate-950 font-mono font-extrabold text-[13px]">
-                            {store.hasOrders ? (
+                            {store.totalSales === null ? "N/A" : store.hasOrders ? (
                               `$${store.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                             ) : (
                               <span className="text-[11px] text-slate-400 font-normal italic">—</span>
@@ -828,7 +807,7 @@ setAiReport(reportText || "未返回分析报告");
 
                           {/* AOV */}
                           <TableCell className="text-right text-slate-600 font-mono font-medium">
-                            {store.hasOrders ? (
+                            {store.avgOrderValue === null ? "N/A" : store.hasOrders ? (
                               `$${store.avgOrderValue.toFixed(2)}`
                             ) : (
                               <span className="text-slate-400 font-normal">—</span>
@@ -837,7 +816,7 @@ setAiReport(reportText || "未返回分析报告");
 
                           {/* 账户开销 */}
                           <TableCell className="text-right text-slate-700 font-mono font-bold">
-                            {store.adSpend > 0 ? (
+                            {store.adSpend === null ? "N/A" : store.adSpend > 0 ? (
                               `$${store.adSpend.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
                             ) : (
                               <span className="text-[11px] text-slate-400 font-normal">—</span>
@@ -846,7 +825,9 @@ setAiReport(reportText || "未返回分析报告");
 
                           {/* ROAS 分别渲染无绑定、无订单、异常和真实ROAS */}
                           <TableCell className="text-right py-3 px-5">
-                            {(!store.hasMappedAccounts) ? (
+                            {(store.realRoas === null && (store.adSpend === null || store.totalSales === null)) ? (
+                              <span className="text-slate-400 text-[11px]">N/A</span>
+                            ) : (!store.hasMappedAccounts) ? (
                               <span className="inline-block px-1.5 py-0.5 rounded text-[9.5px] bg-slate-50 text-slate-500 border border-slate-100">
                                 未绑定
                               </span>
@@ -1163,7 +1144,7 @@ setAiReport(reportText || "未返回分析报告");
 
                 <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
                   <div className="p-3.5 bg-slate-50/50 border-b border-slate-200 text-slate-600 text-xs leading-relaxed font-medium">
-                    本对账诊断器会比对三大订单口径的数据（API 直接抓取流、本地数据库 Order 表流水、账目快照 DataCenterStoreDaily）。以下为发现的不一致列表，可以帮助排查时区边界、支付状态不合规或未同步归档的异常订单。
+                    本对账诊断器会比对三大订单口径的数据（店铺 API 直接抓取流、本地订单流水、店铺订单日账目）。以下为发现的不一致列表，可以帮助排查时区边界、支付状态不合规或未同步归档的异常订单。
                   </div>
 
                   <div className="max-h-[300px] overflow-y-auto text-xs">

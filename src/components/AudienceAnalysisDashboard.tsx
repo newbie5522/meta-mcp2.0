@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { metaAccountOptionLabel } from "./common/MetaAccountDisplay";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
+import { DataCoverageBanner } from "./common/DataCoverageBanner";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 import {
   buildDataViewRequestKey,
@@ -46,6 +47,8 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   const [data, setData] = useState<any[]>([]);
   const [summary, setSummary] = useState<any | null>(null);
   const [dataHealth, setDataHealth] = useState<any | null>(null);
+  const [metaCoverage, setMetaCoverage] = useState<any | null>(null);
+  const [storeCoverage, setStoreCoverage] = useState<any | null>(null);
   const [lastGoodData, setLastGoodData] = useState<any | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncPanelStatus>({ status: "idle" });
@@ -124,19 +127,13 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       if (res.data) {
         const rows = res.data.rows || [];
         const requestKey = currentRequestKey;
+        setMetaCoverage(res.data.metaCoverage || res.data.coverage?.meta || null);
+        setStoreCoverage(res.data.storeCoverage || res.data.coverage?.store || null);
         setResponseDateRange(res.data.dateRange || res.data.appliedFilters || null);
         if (isDateRangeMismatch(res.data, startStr, endStr)) {
-          const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
-          if (!safeLastGoodData) {
-            setData([]);
-            setSummary(null);
-            setDataHealth(res.data.dataHealth || null);
-            setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
-            return;
-          }
-          setData(safeLastGoodData.rows || []);
-          setSummary(safeLastGoodData.summary || null);
-          setDataHealth(safeLastGoodData.dataHealth || null);
+          setData([]);
+          setSummary(null);
+          setDataHealth({ status: "DATE_RANGE_MISMATCH", message: DATE_RANGE_MISMATCH_MESSAGE });
           setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
           return;
         }
@@ -146,6 +143,8 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
             setData(safeLastGoodData.rows || []);
             setSummary(safeLastGoodData.summary || null);
             setDataHealth(safeLastGoodData.dataHealth || null);
+            setMetaCoverage(safeLastGoodData.metaCoverage || null);
+            setStoreCoverage(safeLastGoodData.storeCoverage || null);
             setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
             return;
           }
@@ -156,31 +155,23 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         setLastGoodData(makeLastGoodData(requestKey, rows, {
           rows,
           summary: res.data.summary || null,
-          dataHealth: res.data.dataHealth || null
+          dataHealth: res.data.dataHealth || null,
+          metaCoverage: res.data.metaCoverage || null,
+          storeCoverage: res.data.storeCoverage || null
         }));
         setViewNotice(null);
       } else {
-        const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
-        if (safeLastGoodData) {
-          setData(safeLastGoodData.rows || []);
-          setSummary(safeLastGoodData.summary || null);
-          setDataHealth(safeLastGoodData.dataHealth || null);
-          setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-        } else {
-          setData([]);
-          setSummary(null);
-          setDataHealth({
-            status: "EMPTY_RESPONSE",
-            reason: "NO_PAYLOAD_FOR_CURRENT_REQUEST",
-            message: "当前受众筛选周期没有返回有效数据，未使用其他日期周期的旧数据。",
-            dateRange: {
-              startDate: startStrKey,
-              endDate: endStrKey,
-              timezone: "America/Los_Angeles"
-            }
-          });
-          setViewNotice("当前受众筛选周期没有返回有效数据。");
-        }
+        setData([]);
+        setSummary(null);
+        setMetaCoverage(null);
+        setStoreCoverage(null);
+        setDataHealth({
+          status: "EMPTY_RESPONSE",
+          reason: "NO_PAYLOAD_FOR_CURRENT_REQUEST",
+          message: "当前受众筛选周期没有返回有效数据，未使用旧数据。",
+          dateRange: { startDate: startStrKey, endDate: endStrKey, timezone: "America/Los_Angeles" }
+        });
+        setViewNotice("当前受众筛选周期没有返回有效数据。");
       }
 
       // If active tab is country, load order countries list from database
@@ -227,27 +218,17 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
     } catch (err: any) {
       console.error("Failed to fetch audience insights", err);
-      const safeLastGoodData = getSafeLastGoodData(lastGoodData, currentRequestKey);
-      if (safeLastGoodData) {
-        setData(safeLastGoodData.rows || []);
-        setSummary(safeLastGoodData.summary || null);
-        setDataHealth(safeLastGoodData.dataHealth || null);
-        setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-      } else {
-        setData([]);
-        setSummary(null);
-        setDataHealth({
-          status: "REQUEST_FAILED",
-          reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
-          message: "当前受众筛选周期请求失败，未使用其他日期周期的旧数据。",
-          dateRange: {
-            startDate: startStrKey,
-            endDate: endStrKey,
-            timezone: "America/Los_Angeles"
-          }
-        });
-        setViewNotice("当前受众筛选周期请求失败，未展示其他日期周期的旧数据。");
-      }
+      setData([]);
+      setSummary(null);
+      setMetaCoverage({ status: "ERROR" });
+      setStoreCoverage({ status: "ERROR" });
+      setDataHealth({
+        status: "ERROR",
+        reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
+        message: "当前受众筛选周期请求失败，未使用旧数据。",
+        dateRange: { startDate: startStrKey, endDate: endStrKey, timezone: "America/Los_Angeles" }
+      });
+      setViewNotice("当前受众筛选周期请求失败，未展示旧数据。");
       toast.error("加载受众成效分析发生错误");
     } finally {
       setLoading(false);
@@ -433,18 +414,18 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       Number(row.revenue || row.totalRevenue || row.orderRevenue || 0) > 0
   ), [orderCountryRows]);
   const metaSummary = summary?.meta || {
-    spend: summary?.totalSpend ?? 0,
-    impressions: summary?.totalImpressions ?? 0,
-    clicks: summary?.totalClicks ?? 0,
-    purchases: summary?.totalPurchases ?? 0,
-    purchaseValue: summary?.totalPurchaseValue ?? 0,
-    ctr: summary?.ctr ?? 0,
-    cpc: summary?.cpc ?? 0,
-    cpm: summary?.cpm ?? 0,
-    cpa: summary?.cpa ?? 0,
-    roas: summary?.roas ?? 0
+    spend: summary?.totalSpend ?? null,
+    impressions: summary?.totalImpressions ?? null,
+    clicks: summary?.totalClicks ?? null,
+    purchases: summary?.totalPurchases ?? null,
+    purchaseValue: summary?.totalPurchaseValue ?? null,
+    ctr: summary?.ctr ?? null,
+    cpc: summary?.cpc ?? null,
+    cpm: summary?.cpm ?? null,
+    cpa: summary?.cpa ?? null,
+    roas: summary?.roas ?? null
   };
-  const storeSummary = summary?.store || {
+  const storeSummary = summary?.store ?? {
     orderCount: visibleOrderCountryRows.reduce((sum, row) => sum + Number(row.orderCount || row.orders || 0), 0),
     revenue: visibleOrderCountryRows.reduce((sum, row) => sum + Number(row.revenue || row.totalRevenue || row.orderRevenue || 0), 0),
     averageOrderValue: 0,
@@ -459,15 +440,15 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     0
   );
   const normalizedStoreSummary = {
-    orderCount: Number(storeSummary.orderCount ?? storeOrderCountFromRows ?? 0),
-    revenue: Number(storeSummary.revenue ?? storeRevenueFromRows ?? 0),
-    averageOrderValue: Number(storeSummary.averageOrderValue || 0),
-    countryCount: Number(storeSummary.countryCount ?? visibleOrderCountryRows.length)
+    orderCount: storeSummary.orderCount === null ? null : Number(storeSummary.orderCount ?? storeOrderCountFromRows),
+    revenue: storeSummary.revenue === null ? null : Number(storeSummary.revenue ?? storeRevenueFromRows),
+    averageOrderValue: storeSummary.averageOrderValue === null ? null : Number(storeSummary.averageOrderValue ?? 0),
+    countryCount: storeSummary.countryCount === null ? null : Number(storeSummary.countryCount ?? visibleOrderCountryRows.length)
   };
   useEffect(() => {
     if (
       activeTab === "country" &&
-      normalizedStoreSummary.orderCount !== storeOrderCountFromRows &&
+      normalizedStoreSummary.orderCount !== null && normalizedStoreSummary.orderCount !== storeOrderCountFromRows &&
       visibleOrderCountryRows.length > 0
     ) {
       console.warn("[Audience] Store order summary mismatch", {
@@ -487,16 +468,18 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     startStrKey,
     endStrKey
   ]);
-  const totalSpend = metaSummary.spend ?? 0;
-  const totalImpressions = metaSummary.impressions ?? 0;
-  const totalClicks = metaSummary.clicks ?? 0;
-  const totalPurchases = metaSummary.purchases ?? 0;
-  const totalPurchaseValue = metaSummary.purchaseValue ?? 0;
-  const ctrVal = (metaSummary.ctr ?? 0) * 100;
-  const cpcVal = metaSummary.cpc ?? 0;
-  const cpmVal = metaSummary.cpm ?? 0;
-  const cpaVal = metaSummary.cpa ?? 0;
-  const roasVal = metaSummary.roas ?? 0;
+  const totalSpend = metaSummary.spend === null ? null : Number(metaSummary.spend);
+  const totalImpressions = metaSummary.impressions === null ? null : Number(metaSummary.impressions);
+  const totalClicks = metaSummary.clicks === null ? null : Number(metaSummary.clicks);
+  const totalPurchases = metaSummary.purchases === null ? null : Number(metaSummary.purchases);
+  const totalPurchaseValue = metaSummary.purchaseValue === null ? null : Number(metaSummary.purchaseValue);
+  const ctrVal = metaSummary.ctr === null ? null : Number(metaSummary.ctr) * 100;
+  const cpcVal = metaSummary.cpc === null ? null : Number(metaSummary.cpc);
+  const cpmVal = metaSummary.cpm === null ? null : Number(metaSummary.cpm);
+  const cpaVal = metaSummary.cpa === null ? null : Number(metaSummary.cpa);
+  const roasVal = metaSummary.roas === null ? null : Number(metaSummary.roas);
+  const moneyOrNA = (value: number | null, digits = 2) => value === null ? "N/A" : `$${value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+  const numberOrNA = (value: number | null) => value === null ? "N/A" : value.toLocaleString();
 
   const formatOrderBusinessDate = (value: string | null | undefined) => {
     if (!value) return "-";
@@ -763,19 +746,25 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
       <SyncStatusPanel status={syncStatus} />
 
+      <div className="grid gap-2 md:grid-cols-2">
+        <DataCoverageBanner coverage={metaCoverage} />
+        <DataCoverageBanner coverage={storeCoverage} />
+      </div>
+
       <DataViewTraceBar
         compactScopeLabel={activeTab === "country" ? "Meta受众国家口径" : "Meta受众 breakdown 口径"}
         currentStartDate={format(startDate, "yyyy-MM-dd")}
         currentEndDate={format(endDate, "yyyy-MM-dd")}
         responseStartDate={responseDateRange?.startDate}
         responseEndDate={responseDateRange?.endDate}
+        latestAvailableDate={metaCoverage?.latestAvailableDate}
         timezone={responseDateRange?.timezone || "America/Los_Angeles"}
         rowCount={data.length}
         factRows={dataHealth?.factRows}
-        status={dataHealth?.status || "UNKNOWN"}
+        status={metaCoverage?.status || dataHealth?.status || "UNKNOWN"}
         level={activeTab}
         queryDebug={dataHealth?.queryDebug}
-        source="FactAudienceBreakdown"
+        source="Meta 受众成效"
         scope={selectedAccount !== "all" ? "current_account" : selectedStore !== "all" ? "current_store" : "all_accounts"}
         includeZeroSpend={includeZeroSpend}
       />
@@ -786,84 +775,84 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         <Card className="border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
           <CardContent className="p-4">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Meta消耗</p>
-            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">${totalSpend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">{moneyOrNA(totalSpend)}</h3>
           </CardContent>
         </Card>
 
         <Card className="border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
           <CardContent className="p-4">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">总展示 (Impressions)</p>
-            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">{totalImpressions.toLocaleString()}</h3>
+            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">{numberOrNA(totalImpressions)}</h3>
           </CardContent>
         </Card>
 
         <Card className="border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
           <CardContent className="p-4">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">总点击 (Clicks)</p>
-            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">{totalClicks.toLocaleString()}</h3>
+            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">{numberOrNA(totalClicks)}</h3>
           </CardContent>
         </Card>
 
         <Card className="border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
           <CardContent className="p-4">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Meta购买数</p>
-            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">{totalPurchases} 单</h3>
+            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">{totalPurchases === null ? "N/A" : `${totalPurchases} 单`}</h3>
           </CardContent>
         </Card>
 
         <Card className="border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
           <CardContent className="p-4">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Meta转化价值</p>
-            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">${totalPurchaseValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">{moneyOrNA(totalPurchaseValue)}</h3>
           </CardContent>
         </Card>
 
         <Card className="border-emerald-200/80 bg-emerald-50/10 shadow-xs hover:border-emerald-300 transition-all">
           <CardContent className="p-4">
             <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">店铺订单数</p>
-            <h3 className="text-lg font-black text-emerald-700 font-mono mt-1">{Number(normalizedStoreSummary.orderCount || 0).toLocaleString()} 单</h3>
+            <h3 className="text-lg font-black text-emerald-700 font-mono mt-1">{normalizedStoreSummary.orderCount === null ? "N/A" : `${normalizedStoreSummary.orderCount.toLocaleString()} 单`}</h3>
           </CardContent>
         </Card>
 
         <Card className="border-emerald-200/80 bg-emerald-50/10 shadow-xs hover:border-emerald-300 transition-all">
           <CardContent className="p-4">
             <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">店铺收入</p>
-            <h3 className="text-lg font-black text-emerald-700 font-mono mt-1">${Number(normalizedStoreSummary.revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            <h3 className="text-lg font-black text-emerald-700 font-mono mt-1">{moneyOrNA(normalizedStoreSummary.revenue)}</h3>
           </CardContent>
         </Card>
 
         <Card className="border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
           <CardContent className="p-4">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">平均点击率 (CTR)</p>
-            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">{ctrVal.toFixed(3)}%</h3>
+            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">{ctrVal === null ? "N/A" : `${ctrVal.toFixed(3)}%`}</h3>
           </CardContent>
         </Card>
 
         <Card className="border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
           <CardContent className="p-4">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">单次点击成本 (CPC)</p>
-            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">${cpcVal.toFixed(2)}</h3>
+            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">{moneyOrNA(cpcVal)}</h3>
           </CardContent>
         </Card>
 
         <Card className="border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
           <CardContent className="p-4">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">千次展示成本 (CPM)</p>
-            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">${cpmVal.toFixed(2)}</h3>
+            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">{moneyOrNA(cpmVal)}</h3>
           </CardContent>
         </Card>
 
         <Card className="border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
           <CardContent className="p-4">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">平均Meta购买成本 (CPA)</p>
-            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">${cpaVal.toFixed(2)}</h3>
+            <h3 className="text-lg font-black text-slate-800 font-mono mt-1">{moneyOrNA(cpaVal)}</h3>
           </CardContent>
         </Card>
 
         <Card className="border-indigo-200 bg-indigo-50/10 shadow-xs hover:border-indigo-300 transition-all">
           <CardContent className="p-4">
             <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Meta ROAS</p>
-            <h3 className="text-lg font-black text-indigo-600 font-mono mt-1">{roasVal.toFixed(3)}</h3>
+            <h3 className="text-lg font-black text-indigo-600 font-mono mt-1">{roasVal === null ? "N/A" : roasVal.toFixed(3)}</h3>
           </CardContent>
         </Card>
 
