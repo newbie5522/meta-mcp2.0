@@ -300,16 +300,23 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       const panelResult = mapSyncResultToPanel(result);
       setSyncStatus(panelResult);
 
-      toast.success(formatSyncReceipt({
+      const receiptMessage = formatSyncReceipt({
         ...result,
         recordsFetched: panelResult.recordsFetched ?? undefined,
         recordsSaved: panelResult.recordsSaved ?? undefined,
         recordsUpdated: panelResult.recordsUpdated ?? undefined,
         targetAccountsCount: panelResult.targetAccountsCount ?? undefined
-      }), {
-        id: toastId,
-        duration: 7000
       });
+      const resultStatus = String(result.status || "").toUpperCase();
+      if (resultStatus === "SUCCESS") {
+        toast.success(receiptMessage, { id: toastId, duration: 7000 });
+      } else if (resultStatus === "PARTIAL_SUCCESS") {
+        toast.warning(receiptMessage, { id: toastId, duration: 7000 });
+      } else if (resultStatus === "FAILED" || resultStatus === "ERROR") {
+        toast.error(receiptMessage, { id: toastId, duration: 7000 });
+      } else {
+        toast.info(receiptMessage, { id: toastId, duration: 7000 });
+      }
 
       await loadData();
     } catch (error: any) {

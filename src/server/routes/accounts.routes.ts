@@ -29,6 +29,48 @@ function daysRange(days: number): { since: string; until: string } {
   };
 }
 
+function buildUnavailableActionInsight(input: {
+  spend: number;
+  impressions: number;
+  clicks: number;
+  revenue: number;
+  orders: number;
+}) {
+  const ctr = input.impressions > 0 ? Number(((input.clicks / input.impressions) * 100).toFixed(2)) : 0;
+  const cpc = input.clicks > 0 ? Number((input.spend / input.clicks).toFixed(2)) : 0;
+  const cpm = input.impressions > 0 ? Number(((input.spend / input.impressions) * 1000).toFixed(2)) : 0;
+  const cpa = input.orders > 0 ? Number((input.spend / input.orders).toFixed(2)) : null;
+
+  return {
+    spend: input.spend,
+    impressions: input.impressions,
+    reach: null,
+    reachAvailable: false,
+    clicks: input.clicks,
+    inline_link_clicks: null,
+    inlineLinkClicksAvailable: false,
+    inline_link_click_ctr: null,
+    cost_per_inline_link_click: null,
+    ctr,
+    cpc,
+    cpm,
+    cpa,
+    frequency: null,
+    frequencyAvailable: false,
+    addToCart: null,
+    addToCartAvailable: false,
+    initiateCheckout: null,
+    initiateCheckoutAvailable: false,
+    budgetAvailable: false,
+    actions: [
+      { action_type: "purchase", value: String(input.orders) }
+    ],
+    action_values: [
+      { action_type: "purchase", value: String(input.revenue) }
+    ]
+  };
+}
+
 // Endpoint dedicated to testing Meta Token validity and retrieving diagnostics
 router.get("/test-token", async (req, res) => {
   let token: string | null = null;
@@ -583,7 +625,7 @@ router.get("/:accountId/details", async (req, res) => {
               id: s.scopeId,
               name: `[结构未同步] Campaign ${s.scopeId}`,
               accountId: "all",
-              status: "ACTIVE"
+              status: "UNKNOWN"
             });
             existingCampaignIds.add(s.scopeId);
           }
@@ -611,36 +653,14 @@ router.get("/:accountId/details", async (req, res) => {
         const revenue = campSummaries.reduce((sum, s) => sum + s.revenue, 0);
         const orders = campSummaries.reduce((sum, s) => sum + s.orders, 0);
 
-        const actions = [
-          { action_type: "purchase", value: String(orders) },
-          { action_type: "add_to_cart", value: String(Math.round(orders * 2.8)) },
-          { action_type: "initiate_checkout", value: String(Math.round(orders * 1.6)) }
-        ];
-
-        const actionValues = [
-          { action_type: "purchase", value: String(revenue) }
-        ];
-
         return {
           id: camp.id,
           name: camp.name,
-          status: camp.status || "ACTIVE",
-          daily_budget: "15000",
+          status: camp.status || "UNKNOWN",
+          daily_budget: null,
+          budgetAvailable: false,
           insights: {
-            data: [{
-              spend,
-              impressions,
-              reach: Math.round(impressions * 0.85),
-              clicks,
-              inline_link_clicks: Math.round(clicks * 0.7),
-              inline_link_click_ctr: spend > 0 ? Number(((clicks * 0.7) / impressions * 100).toFixed(2)) : 0,
-              cost_per_inline_link_click: clicks > 0 ? Number((spend / (clicks * 0.7)).toFixed(2)) : 0,
-              ctr: spend > 0 ? Number((clicks / impressions * 100).toFixed(2)) : 0,
-              cpc: clicks > 0 ? Number((spend / clicks).toFixed(2)) : 0,
-              frequency: 1.25,
-              actions,
-              action_values: actionValues
-            }]
+            data: [buildUnavailableActionInsight({ spend, impressions, clicks, revenue, orders })]
           }
         };
       });
@@ -695,7 +715,7 @@ router.get("/:accountId/details", async (req, res) => {
               id: s.scopeId,
               campaignId: "unknown",
               name: `[结构未同步] AdSet ${s.scopeId}`,
-              status: "ACTIVE"
+              status: "UNKNOWN"
             });
             existingAdSetIds.add(s.scopeId);
           }
@@ -726,29 +746,11 @@ router.get("/:accountId/details", async (req, res) => {
           id: set.id,
           campaign_id: set.campaignId,
           name: set.name,
-          status: "ACTIVE",
-          daily_budget: "5000",
+          status: "UNKNOWN",
+          daily_budget: null,
+          budgetAvailable: false,
           insights: {
-            data: [{
-              spend,
-              impressions,
-              reach: Math.round(impressions * 0.85),
-              clicks,
-              inline_link_clicks: Math.round(clicks * 0.7),
-              inline_link_click_ctr: spend > 0 ? Number(((clicks * 0.7) / impressions * 100).toFixed(2)) : 0,
-              cost_per_inline_link_click: clicks > 0 ? Number((spend / (clicks * 0.7)).toFixed(2)) : 0,
-              ctr: spend > 0 ? Number((clicks / impressions * 100).toFixed(2)) : 0,
-              cpc: clicks > 0 ? Number((spend / clicks).toFixed(2)) : 0,
-              frequency: 1.15,
-              actions: [
-                { action_type: "purchase", value: String(orders) },
-                { action_type: "add_to_cart", value: String(Math.round(orders * 2.8)) },
-                { action_type: "initiate_checkout", value: String(Math.round(orders * 1.6)) }
-              ],
-              action_values: [
-                { action_type: "purchase", value: String(revenue) }
-              ]
-            }]
+            data: [buildUnavailableActionInsight({ spend, impressions, clicks, revenue, orders })]
           }
         };
       });
@@ -811,7 +813,7 @@ router.get("/:accountId/details", async (req, res) => {
               adsetId: "unknown",
               name: `[结构未同步] Ad ${s.scopeId}`,
               creativeId: "unknown",
-              status: "ACTIVE"
+              status: "UNKNOWN"
             });
             existingAdIds.add(s.scopeId);
           }
@@ -844,28 +846,9 @@ router.get("/:accountId/details", async (req, res) => {
           adset_id: ad.adsetId,
           name: ad.name,
           creative_id: ad.creativeId,
-          status: "ACTIVE",
+          status: "UNKNOWN",
           insights: {
-            data: [{
-              spend,
-              impressions,
-              reach: Math.round(impressions * 0.85),
-              clicks,
-              inline_link_clicks: Math.round(clicks * 0.7),
-              inline_link_click_ctr: spend > 0 ? Number(((clicks * 0.7) / impressions * 100).toFixed(2)) : 0,
-              cost_per_inline_link_click: clicks > 0 ? Number((spend / (clicks * 0.7)).toFixed(2)) : 0,
-              ctr: spend > 0 ? Number((clicks / impressions * 100).toFixed(2)) : 0,
-              cpc: clicks > 0 ? Number((spend / clicks).toFixed(2)) : 0,
-              frequency: 1.10,
-              actions: [
-                { action_type: "purchase", value: String(orders) },
-                { action_type: "add_to_cart", value: String(Math.round(orders * 2.8)) },
-                { action_type: "initiate_checkout", value: String(Math.round(orders * 1.6)) }
-              ],
-              action_values: [
-                { action_type: "purchase", value: String(revenue) }
-              ]
-            }]
+            data: [buildUnavailableActionInsight({ spend, impressions, clicks, revenue, orders })]
           }
         };
       });
@@ -966,9 +949,9 @@ router.get("/:accountId/hierarchy", async (req, res) => {
 
     return res.json({
       success: true,
-      campaigns: campaigns.map(c => ({ id: c.id, name: c.name, status: c.status || "ACTIVE" })),
-      adSets: adSets.map(s => ({ id: s.id, campaignId: s.campaignId, name: s.name, status: "ACTIVE" })),
-      ads: ads.map(a => ({ id: a.id, adsetId: a.adsetId, campaignId: a.campaignId, name: a.name, status: "ACTIVE" })),
+      campaigns: campaigns.map(c => ({ id: c.id, name: c.name, status: c.status || "UNKNOWN" })),
+      adSets: adSets.map(s => ({ id: s.id, campaignId: s.campaignId, name: s.name, status: "UNKNOWN" })),
+      ads: ads.map(a => ({ id: a.id, adsetId: a.adsetId, campaignId: a.campaignId, name: a.name, status: "UNKNOWN" })),
       isFallbackCached: false
     });
   } catch (error: any) {

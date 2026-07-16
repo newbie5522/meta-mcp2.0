@@ -30,6 +30,16 @@ const endpoints = [
   { name: "source-freshness", path: "/api/data-center/max-date", freshness: true }
 ];
 
+const scopeVariants = [
+  { name: "all-stores", extra: {} },
+  { name: "store-1", extra: { storeId: "1" } },
+  { name: "unmapped-store", extra: { storeId: "999999999" } },
+  { name: "account", extra: { accountId: "act_audit_placeholder" } },
+  { name: "campaign", extra: { accountId: "act_audit_placeholder", campaignId: "audit_campaign" } },
+  { name: "adset", extra: { accountId: "act_audit_placeholder", campaignId: "audit_campaign", adsetId: "audit_adset" } },
+  { name: "ad", extra: { accountId: "act_audit_placeholder", campaignId: "audit_campaign", adsetId: "audit_adset", adId: "audit_ad" } }
+];
+
 function rowsOf(payload) {
   for (const candidate of [payload?.performanceRows, payload?.data, payload?.rows, payload?.items, payload?.accounts, payload?.products, payload?.stores]) {
     if (Array.isArray(candidate)) return candidate;
@@ -51,6 +61,10 @@ function coverageOf(payload) {
 
 function metricSum(rows, key) {
   return rows.reduce((sum, row) => sum + Number(row?.[key] || 0), 0);
+}
+
+function hasBusinessZero(value) {
+  return typeof value === "number" && value === 0;
 }
 
 function numericZeroPaths(value, prefix = "summary") {
@@ -80,13 +94,43 @@ function validate(payload, response, endpoint, startDate, endDate) {
   if (coverage?.status === "NOT_SYNCED" && numericZeroPaths(payload?.summary).length) {
     failures.push(`NOT_SYNCED_SUMMARY_ZERO:${numericZeroPaths(payload.summary).join(",")}`);
   }
+  if (coverage?.status === "NOT_SYNCED") {
+    const zeroRows = rowsOf(payload).filter(row =>
+      ["spend", "impressions", "clicks", "purchases", "purchaseValue", "roas"].some(key => hasBusinessZero(row?.[key]))
+    );
+    if (zeroRows.length) failures.push("NOT_SYNCED_ROW_BUSINESS_ZERO");
+  }
   if (endpoint.splitCoverage && (!payload?.storeCoverage || !payload?.metaCoverage)) {
     failures.push("STORE_META_COVERAGE_NOT_SEPARATED");
+  }
+  for (const row of rowsOf(payload)) {
+    if ((row?.level === "adset" || row?.level === "ad") && row?.status === "ACTIVE") failures.push("FABRICATED_ACTIVE_STATUS");
+    if (row?.hasPerformanceFacts === false) {
+      for (const key of ["spend", "impressions", "clicks", "purchases", "purchaseValue", "ctr", "cpc", "cpm", "cpa", "roas"]) {
+        if (row?.[key] !== null) failures.push(`STRUCTURE_ONLY_METRIC_NOT_NULL:${key}`);
+      }
+    }
+    for (const key of ["reach", "frequency", "addToCart", "initiateCheckout", "budget"]) {
+      const availableKey = `${key}Available`;
+      if (row?.[availableKey] === false && row?.[key] !== null && row?.[key] !== undefined) {
+        failures.push(`UNAVAILABLE_METRIC_NOT_NULL:${key}`);
+      }
+    }
   }
   if (endpoint.name === "creative-insights") {
     const rows = rowsOf(payload);
     if (rows.length === 0 && Number(payload?.bucketSummary?.watching || 0) > 0) failures.push("EMPTY_CREATIVE_HAS_WATCHING_BUCKET");
     if (payload?.summary?.spend !== null && Math.abs(Number(payload?.summary?.spend || 0) - metricSum(rows, "spend")) > 0.01) failures.push("CREATIVE_SUMMARY_ROW_SPEND_MISMATCH");
+    if (payload?.filteredTotalCount !== undefined && payload?.pageRowCount !== undefined && Number(payload.pageRowCount) > Number(payload.filteredTotalCount)) failures.push("CREATIVE_PAGE_COUNT_GT_FILTERED_TOTAL");
+    if (endpoint.extra?.export === "true" && Number(payload?.pageRowCount || 0) !== rows.length) failures.push("CREATIVE_EXPORT_PAGE_ROW_COUNT_MISMATCH");
+  }
+  if (endpoint.name === "stores-reconciliation") {
+    if (payload?.ledgerRefresh?.readOnly !== true || payload?.ledgerRefresh?.success !== true) failures.push("RECONCILIATION_GET_NOT_MARKED_READ_ONLY");
+    if (!payload?.reconciliation?.readOnly) failures.push("RECONCILIATION_SUMMARY_NOT_READ_ONLY");
+    if (typeof payload?.reconciliation?.match !== "boolean") failures.push("RECONCILIATION_MATCH_NOT_COMPUTED");
+  }
+  if (coverage?.currentDayInProgress && !coverage?.asOfTime) {
+    failures.push("CURRENT_DAY_MISSING_AS_OF_TIME");
   }
   if (endpoint.freshness) {
     const required = ["metaAccount", "metaAudience", "metaCreative", "storeOrder", "storeLedger", "productOrder"];
@@ -143,6 +187,26 @@ async function main() {
       } catch (error) {
         results.push({ endpoint: endpoint.name, range: rangeName, status: "ERR", requestedStartDate: startDate, requestedEndDate: endDate, coverageStatus: "REQUEST_FAILED", earliestAvailableDate: null, latestAvailableDate: null, performanceCount: null, structureOnlyCount: null, failures: [error?.message || String(error)] });
       }
+    }
+    for (const variant of scopeVariants) {
+      try {
+        results.push(await requestEndpoint({
+          name: `creative-insights/${variant.name}`,
+          path: "/api/data-center/creative-insights",
+          extra: { includeZeroSpend: "true", ...variant.extra }
+        }, rangeName, startDate, endDate));
+      } catch (error) {
+        results.push({ endpoint: `creative-insights/${variant.name}`, range: rangeName, status: "ERR", requestedStartDate: startDate, requestedEndDate: endDate, coverageStatus: "REQUEST_FAILED", earliestAvailableDate: null, latestAvailableDate: null, performanceCount: null, structureOnlyCount: null, failures: [error?.message || String(error)] });
+      }
+    }
+    try {
+      results.push(await requestEndpoint({
+        name: "stores-reconciliation",
+        path: "/api/data-center/stores/1/reconciliation",
+        extra: {}
+      }, rangeName, startDate, endDate));
+    } catch (error) {
+      results.push({ endpoint: "stores-reconciliation", range: rangeName, status: "ERR", requestedStartDate: startDate, requestedEndDate: endDate, coverageStatus: "REQUEST_FAILED", earliestAvailableDate: null, latestAvailableDate: null, performanceCount: null, structureOnlyCount: null, failures: [error?.message || String(error)] });
     }
   }
   printTable(results);

@@ -344,7 +344,7 @@ router.get("/detail", async (req, res) => {
         storeName: acc.store?.name || "未绑定店铺",
         currency: acc.currency || "USD",
         timezone: acc.timezone || "America/Los_Angeles",
-        status: acc.status || "ACTIVE",
+        status: acc.status || "UNKNOWN",
         recentActivity90d: acc.recentActivity90d,
         spend,
         impressions,
@@ -1673,7 +1673,7 @@ router.get("/stores", async (req, res) => {
         revenue: visibleRevenue,
         sales: visibleRevenue,
         totalSales: visibleRevenue,
-        totalRefunded: coverageMetric(storePageCoverage.storeCoverage, 0),
+        totalRefunded: null,
         avgOrderValue: visibleAov,
         aov: visibleAov,
         adSpend: visibleAdSpend,
@@ -1693,7 +1693,7 @@ router.get("/stores", async (req, res) => {
         syncStatus: storePageCoverage.storeCoverage.status,
         reconciliation: {
           status: "derived_from_datacenter_ledger",
-          match: true,
+          match: null,
           orderRows: visibleOrderCount,
           uniqueOrderCount: visibleOrderCount,
           orderTotalSum: visibleRevenue,
@@ -2105,6 +2105,12 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
         amountMismatch.push(buildDiffItem(oId, "AMOUNT_FIELD_MISMATCH"));
       }
     }
+    const reconciliationMatch =
+      ledgerOrderCount === orderFactUniqueCount &&
+      Math.abs(ledgerGrossSales - orderFactTotalSum) <= 0.01 &&
+      orderFactNotInLedger.length === 0 &&
+      ledgerNotInOrderFact.length === 0 &&
+      amountMismatch.length === 0;
 
     res.json({
       startDate: startStr,
@@ -2121,6 +2127,11 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
         orderCount: ledgerOrderCount,
         grossSales: ledgerGrossSales,
         orderIds: ledgerOrderIds
+      },
+      reconciliation: {
+        readOnly: true,
+        match: reconciliationMatch,
+        comparedFields: ["orderCount", "grossSales", "orderIds", "amountMismatch"]
       },
       orderFact: {
         uniqueOrderCount: orderFactUniqueCount,
@@ -2762,7 +2773,8 @@ router.get("/ad-hierarchy/campaigns", async (req, res) => {
       source: "META_CREATIVE",
       requestedStartDate: startStr,
       requestedEndDate: endStr,
-      accountId: normAccountId
+      accountId: normAccountId,
+      factLevel: "campaign"
     });
 
     // 1. Fetch performance rows
@@ -2812,6 +2824,7 @@ router.get("/ad-hierarchy/campaigns", async (req, res) => {
 
     let results: any[] = [];
     for (const id of allCampIds) {
+      const hasPerformanceFacts = perfMap.has(id);
       const agg = perfMap.get(id) || {
         spend: 0,
         impressions: 0,
@@ -2844,17 +2857,18 @@ router.get("/ad-hierarchy/campaigns", async (req, res) => {
         status,
         objective,
         budget,
-        spend: agg.spend,
-        impressions: agg.impressions,
-        clicks: agg.clicks,
-        purchases: agg.purchases,
-        purchaseValue: agg.purchase_value,
-        purchase_value: agg.purchase_value,
-        ctr,
-        cpc,
-        cpm,
-        cpa,
-        roas,
+        hasPerformanceFacts,
+        spend: hasPerformanceFacts ? agg.spend : null,
+        impressions: hasPerformanceFacts ? agg.impressions : null,
+        clicks: hasPerformanceFacts ? agg.clicks : null,
+        purchases: hasPerformanceFacts ? agg.purchases : null,
+        purchaseValue: hasPerformanceFacts ? agg.purchase_value : null,
+        purchase_value: hasPerformanceFacts ? agg.purchase_value : null,
+        ctr: hasPerformanceFacts ? ctr : null,
+        cpc: hasPerformanceFacts ? cpc : null,
+        cpm: hasPerformanceFacts ? cpm : null,
+        cpa: hasPerformanceFacts ? cpa : null,
+        roas: hasPerformanceFacts ? roas : null,
         unsynced
       });
     }
@@ -2944,6 +2958,7 @@ router.get("/ad-hierarchy/adsets", async (req, res) => {
       requestedStartDate: startStr,
       requestedEndDate: endStr,
       accountId: normAccountId,
+      factLevel: "adset",
       campaignId: String(campaignId)
     });
 
@@ -3000,6 +3015,7 @@ router.get("/ad-hierarchy/adsets", async (req, res) => {
 
     let results: any[] = [];
     for (const id of allAdsetIds) {
+      const hasPerformanceFacts = perfMap.has(id);
       const agg = perfMap.get(id) || {
         spend: 0,
         impressions: 0,
@@ -3016,7 +3032,7 @@ router.get("/ad-hierarchy/adsets", async (req, res) => {
         name = `${id} (结构未同步)`;
       }
 
-      const status = "ACTIVE"; 
+      const status = "UNKNOWN";
 
       const ctr = agg.impressions > 0 ? (agg.clicks / agg.impressions) * 100 : 0;
       const cpc = agg.clicks > 0 ? agg.spend / agg.clicks : 0;
@@ -3029,17 +3045,18 @@ router.get("/ad-hierarchy/adsets", async (req, res) => {
         name,
         status,
         campaignName,
-        spend: agg.spend,
-        impressions: agg.impressions,
-        clicks: agg.clicks,
-        purchases: agg.purchases,
-        purchaseValue: agg.purchase_value,
-        purchase_value: agg.purchase_value,
-        ctr,
-        cpc,
-        cpm,
-        cpa,
-        roas,
+        hasPerformanceFacts,
+        spend: hasPerformanceFacts ? agg.spend : null,
+        impressions: hasPerformanceFacts ? agg.impressions : null,
+        clicks: hasPerformanceFacts ? agg.clicks : null,
+        purchases: hasPerformanceFacts ? agg.purchases : null,
+        purchaseValue: hasPerformanceFacts ? agg.purchase_value : null,
+        purchase_value: hasPerformanceFacts ? agg.purchase_value : null,
+        ctr: hasPerformanceFacts ? ctr : null,
+        cpc: hasPerformanceFacts ? cpc : null,
+        cpm: hasPerformanceFacts ? cpm : null,
+        cpa: hasPerformanceFacts ? cpa : null,
+        roas: hasPerformanceFacts ? roas : null,
         unsynced
       });
     }
@@ -3132,6 +3149,7 @@ router.get("/ad-hierarchy/ads", async (req, res) => {
       requestedStartDate: startStr,
       requestedEndDate: endStr,
       accountId: normAccountId,
+      factLevel: "ad",
       adsetId: String(adsetId)
     });
 
@@ -3193,6 +3211,7 @@ router.get("/ad-hierarchy/ads", async (req, res) => {
 
     let results: any[] = [];
     for (const id of allAdIds) {
+      const hasPerformanceFacts = perfMap.has(id);
       const agg = perfMap.get(id) || {
         spend: 0,
         impressions: 0,
@@ -3210,7 +3229,7 @@ router.get("/ad-hierarchy/ads", async (req, res) => {
         name = `${id} (结构未同步)`;
       }
 
-      const status = "ACTIVE"; 
+      const status = "UNKNOWN";
       const creativeId = struct?.creativeId || agg.creative_id || "N/A";
 
       const ctr = agg.impressions > 0 ? (agg.clicks / agg.impressions) * 100 : 0;
@@ -3226,17 +3245,18 @@ router.get("/ad-hierarchy/ads", async (req, res) => {
         adsetName,
         campaignName,
         creativeId,
-        spend: agg.spend,
-        impressions: agg.impressions,
-        clicks: agg.clicks,
-        purchases: agg.purchases,
-        purchaseValue: agg.purchase_value,
-        purchase_value: agg.purchase_value,
-        ctr,
-        cpc,
-        cpm,
-        cpa,
-        roas,
+        hasPerformanceFacts,
+        spend: hasPerformanceFacts ? agg.spend : null,
+        impressions: hasPerformanceFacts ? agg.impressions : null,
+        clicks: hasPerformanceFacts ? agg.clicks : null,
+        purchases: hasPerformanceFacts ? agg.purchases : null,
+        purchaseValue: hasPerformanceFacts ? agg.purchase_value : null,
+        purchase_value: hasPerformanceFacts ? agg.purchase_value : null,
+        ctr: hasPerformanceFacts ? ctr : null,
+        cpc: hasPerformanceFacts ? cpc : null,
+        cpm: hasPerformanceFacts ? cpm : null,
+        cpa: hasPerformanceFacts ? cpa : null,
+        roas: hasPerformanceFacts ? roas : null,
         unsynced
       });
     }

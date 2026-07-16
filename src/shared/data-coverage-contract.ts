@@ -100,7 +100,8 @@ export function resolveDataCoverageStatus(input: ResolveDataCoverageInput): Data
   const structureRowCount = Math.max(0, Number(input.structureRowCount || 0));
   const syncEvidence = input.syncEvidence || null;
   const syncRunning = Boolean(input.syncRunning);
-  const currentDayInProgress = input.requestedEndDate >= (input.businessToday || defaultBusinessToday());
+  const businessToday = input.businessToday || defaultBusinessToday();
+  const currentDayInProgress = input.requestedStartDate <= businessToday && input.requestedEndDate >= businessToday;
   const asOfTime = input.asOfTime || null;
 
   const base = {

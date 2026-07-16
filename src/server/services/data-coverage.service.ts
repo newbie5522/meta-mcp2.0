@@ -7,6 +7,9 @@ import {
 } from "../../shared/data-coverage-contract.js";
 import { normalizeMetaAccountId } from "../utils.js";
 
+const STALE_RUNNING_MS = 30 * 60 * 1000;
+const IMPOSSIBLE_ACCOUNT_ID = "__NO_MAPPED_META_ACCOUNT__";
+
 const SOURCE_TASK_TYPES: Record<DataCoverageSource, string[]> = {
   META_ACCOUNT: ["refresh_meta_datacenter_ledger", "sync_view_account_data"],
   META_AUDIENCE: ["sync_meta_audience", "sync_view_audience"],
@@ -25,6 +28,7 @@ export interface DataCoverageQuery {
   accountId?: string | null;
   accountIds?: string[];
   dimension?: string | null;
+  factLevel?: "account" | "campaign" | "adset" | "ad" | null;
   campaignId?: string | null;
   adsetId?: string | null;
   adId?: string | null;
@@ -63,6 +67,18 @@ function dateOnly(value: unknown): string | null {
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
   const date = new Date(value as any);
   return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+function formatBusinessAsOf(value: unknown): string | null {
+  if (!value) return null;
+  const date = new Date(value as any);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "America/Los_Angeles",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(date);
 }
 
 function matchesScope(log: any, metadata: Record<string, any>, query: DataCoverageQuery, scopeKey: string) {
@@ -119,7 +135,10 @@ async function resolveSyncReceipt(query: DataCoverageQuery, scopeKey: string) {
     if (!exactRange) continue;
 
     if (log.status === "running") {
-      running = true;
+      const startedAt = log.startedAt instanceof Date ? log.startedAt : new Date(log.startedAt);
+      if (!Number.isNaN(startedAt.getTime()) && Date.now() - startedAt.getTime() <= STALE_RUNNING_MS) {
+        running = true;
+      }
       continue;
     }
     if (evidence) continue;
@@ -140,7 +159,7 @@ async function resolveSyncReceipt(query: DataCoverageQuery, scopeKey: string) {
     };
     evidenceCoverageComplete = metadata.coverageComplete === true;
     evidenceTruncated = metadata.truncated === true;
-    asOfTime = log.finishedAt?.toISOString?.() || dateOnly(log.finishedAt);
+    asOfTime = formatBusinessAsOf(log.finishedAt);
   }
 
   return { running, evidence, evidenceCoverageComplete, evidenceTruncated, asOfTime };
@@ -167,6 +186,8 @@ async function queryFactRange(query: DataCoverageQuery) {
     ? null
     : Number(query.storeId);
   const accountIds = await resolveAccountIds(query);
+  const requestedStoreHasNoMappedAccounts = storeId !== null && !query.accountId && !query.accountIds?.length && accountIds.length === 0;
+  const scopedAccountIds = requestedStoreHasNoMappedAccounts ? [IMPOSSIBLE_ACCOUNT_ID] : accountIds;
   let delegate: any;
   let where: any;
   let dateField = "date";
@@ -177,14 +198,14 @@ async function queryFactRange(query: DataCoverageQuery) {
       delegate = prisma.dataCenterMetaAccountDaily;
       where = {
         ...(storeId !== null ? { storeId } : {}),
-        ...(accountIds.length ? { accountId: { in: accountIds } } : {})
+        ...(scopedAccountIds.length ? { accountId: { in: scopedAccountIds } } : {})
       };
       syncedAtField = "apiFetchedAt";
       break;
     case "META_AUDIENCE":
       delegate = prisma.factAudienceBreakdown;
       where = {
-        ...(accountIds.length ? { account_id: { in: accountIds } } : {}),
+        ...(scopedAccountIds.length ? { account_id: { in: scopedAccountIds } } : {}),
         ...(query.dimension ? { dimension_type: query.dimension } : {})
       };
       syncedAtField = "synced_at";
@@ -192,8 +213,8 @@ async function queryFactRange(query: DataCoverageQuery) {
     case "META_CREATIVE":
       delegate = prisma.factMetaPerformance;
       where = {
-        level: "ad",
-        ...(accountIds.length ? { account_id: { in: accountIds } } : {}),
+        level: query.factLevel || (query.adId ? "ad" : query.adsetId ? "adset" : query.campaignId ? "campaign" : "ad"),
+        ...(scopedAccountIds.length ? { account_id: { in: scopedAccountIds } } : {}),
         ...(query.campaignId ? { campaign_id: query.campaignId } : {}),
         ...(query.adsetId ? { adset_id: query.adsetId } : {}),
         ...(query.adId ? { ad_id: query.adId } : {})
@@ -227,7 +248,7 @@ async function queryFactRange(query: DataCoverageQuery) {
     rangeRowCount,
     earliestAvailableDate: dateOnly(earliest?.[dateField]),
     latestAvailableDate: dateOnly(latest?.[dateField]),
-    asOfTime: newest?.[syncedAtField || ""]?.toISOString?.() || null
+    asOfTime: formatBusinessAsOf(newest?.[syncedAtField || ""])
   };
 }
 

@@ -218,7 +218,15 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
 
     const startStr = format(startDate, "yyyy-MM-dd");
     const endStr = format(endDate, "yyyy-MM-dd");
-    const cacheKey = `${level}_${startStr}_${endStr}`;
+    const cacheKey = [
+      accountId,
+      level,
+      startStr,
+      endStr,
+      [...selectedCampaignIds].sort().join(","),
+      [...selectedAdSetIds].sort().join(","),
+      [...selectedAdIds].sort().join(",")
+    ].join("|");
     const now = Date.now();
     const CACHE_TTL = 3 * 60 * 1000; // 3 minutes frontend cache
 
@@ -231,12 +239,16 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
     }
 
     setLoading(true);
+    setData([]);
     try {
       const response = await axios.get(`/api/accounts/${accountId}/details`, {
         params: {
           startDate: startStr,
           endDate: endStr,
           level,
+          campaignId: selectedCampaignIds.join(",") || undefined,
+          adsetId: selectedAdSetIds.join(",") || undefined,
+          adId: selectedAdIds.join(",") || undefined,
         },
       });
       const newData = response.data.data || [];
@@ -244,6 +256,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
       dataCache.current[cacheKey] = { data: newData, timestamp: now };
     } catch (error: any) {
       console.error("fetchData error:", error.response?.data || error);
+      setData([]);
       toast.error(
         typeof error.response?.data?.error === "string"
           ? error.response.data.error
@@ -264,8 +277,9 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   }, []);
 
   useEffect(() => {
+    setData([]);
     fetchData();
-  }, [accountId, startDate, endDate, level]);
+  }, [accountId, startDate, endDate, level, selectedCampaignIds.join(","), selectedAdSetIds.join(","), selectedAdIds.join(",")]);
 
   useEffect(() => {
     if (!accountId) return;
@@ -297,13 +311,13 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
 
   // Helper to extract nested metrics
   const getInsightValue = (item: any, key: string) => {
-    if (!item.insights?.data?.[0]) return 0;
+    if (!item.insights?.data?.[0]) return null;
     const insight = item.insights.data[0];
 
     if (key === "spend") return parseFloat(insight.spend || 0);
     if (key === "impressions") return parseInt(insight.impressions || 0, 10);
-    if (key === "reach") return parseInt(insight.reach || 0, 10);
-    if (key === "frequency") return parseFloat(insight.frequency || 0);
+    if (key === "reach") return insight.reachAvailable === false || insight.reach == null ? null : parseInt(insight.reach || 0, 10);
+    if (key === "frequency") return insight.frequencyAvailable === false || insight.frequency == null ? null : parseFloat(insight.frequency || 0);
 
     if (key === "cpm") return parseFloat(insight.cpm || 0);
     if (key === "clicks") return parseInt(insight.clicks || 0, 10);
@@ -311,13 +325,14 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
     if (key === "cpc") return parseFloat(insight.cpc || 0);
 
     if (key === "link_clicks")
-      return parseInt(insight.inline_link_clicks || 0, 10);
+      return insight.inlineLinkClicksAvailable === false || insight.inline_link_clicks == null ? null : parseInt(insight.inline_link_clicks || 0, 10);
     if (key === "link_ctr")
-      return parseFloat(insight.inline_link_click_ctr || 0);
+      return insight.inlineLinkClicksAvailable === false || insight.inline_link_click_ctr == null ? null : parseFloat(insight.inline_link_click_ctr || 0);
     if (key === "link_cpc")
-      return parseFloat(insight.cost_per_inline_link_click || 0);
+      return insight.inlineLinkClicksAvailable === false || insight.cost_per_inline_link_click == null ? null : parseFloat(insight.cost_per_inline_link_click || 0);
 
     if (key === "add_to_cart") {
+      if (insight.addToCartAvailable === false) return null;
       const atc = insight.actions?.find(
         (a: any) =>
           a.action_type === "add_to_cart" ||
@@ -367,9 +382,10 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   };
 
   const getBudgetValue = (item: any) => {
+    if (item.budgetAvailable === false) return null;
     if (item.daily_budget) return parseFloat(item.daily_budget) / 100;
     if (item.lifetime_budget) return parseFloat(item.lifetime_budget) / 100;
-    return 0;
+    return null;
   };
 
   const filteredData = React.useMemo(() => {
@@ -459,35 +475,20 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   const displayedItems = sortedData.filter((i) => isSelected(i.id));
   const itemsToSum = displayedItems.length > 0 ? displayedItems : sortedData;
 
-  const totalSpend = itemsToSum.reduce(
-    (sum, item) => sum + getInsightValue(item, "spend"),
+  const sumMetric = (key: string) => itemsToSum.reduce(
+    (sum, item) => sum + Number(getInsightValue(item, key) ?? 0),
     0,
   );
-  const totalImpressions = itemsToSum.reduce(
-    (sum, item) => sum + getInsightValue(item, "impressions"),
-    0,
-  );
-  const totalReach = itemsToSum.reduce(
-    (sum, item) => sum + getInsightValue(item, "reach"),
-    0,
-  );
+  const hasMetric = (key: string) => itemsToSum.some((item) => getInsightValue(item, key) !== null);
 
-  const linkClicks = itemsToSum.reduce(
-    (sum, item) => sum + getInsightValue(item, "link_clicks"),
-    0,
-  );
-  const allClicks = itemsToSum.reduce(
-    (sum, item) => sum + getInsightValue(item, "clicks"),
-    0,
-  );
-  const totalPurchases = itemsToSum.reduce(
-    (sum, item) => sum + getInsightValue(item, "results"),
-    0,
-  );
-  const totalAddToCart = itemsToSum.reduce(
-    (sum, item) => sum + getInsightValue(item, "add_to_cart"),
-    0,
-  );
+  const totalSpend = sumMetric("spend");
+  const totalImpressions = sumMetric("impressions");
+  const totalReach = hasMetric("reach") ? sumMetric("reach") : null;
+
+  const linkClicks = hasMetric("link_clicks") ? sumMetric("link_clicks") : null;
+  const allClicks = sumMetric("clicks");
+  const totalPurchases = sumMetric("results");
+  const totalAddToCart = hasMetric("add_to_cart") ? sumMetric("add_to_cart") : null;
 
   const totalPurchaseValue = itemsToSum.reduce((sum, item) => {
     const valAction = item.insights?.data?.[0]?.action_values?.find(
@@ -500,14 +501,21 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   const avgCpm =
     totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0;
   const avgLinkCtr =
-    totalImpressions > 0 ? (linkClicks / totalImpressions) * 100 : 0;
-  const avgLinkCpc = linkClicks > 0 ? totalSpend / linkClicks : 0;
+    linkClicks !== null && totalImpressions > 0 ? (linkClicks / totalImpressions) * 100 : null;
+  const avgLinkCpc = linkClicks !== null && linkClicks > 0 ? totalSpend / linkClicks : null;
   const avgAllCtr =
     totalImpressions > 0 ? (allClicks / totalImpressions) * 100 : 0;
   const avgAllCpc = allClicks > 0 ? totalSpend / allClicks : 0;
   const avgCpr = totalPurchases > 0 ? totalSpend / totalPurchases : 0;
-  const avgFrequency = totalReach > 0 ? totalImpressions / totalReach : 0;
+  const avgFrequency = totalReach !== null && totalReach > 0 ? totalImpressions / totalReach : null;
   const roi = totalSpend > 0 ? totalPurchaseValue / totalSpend : 0;
+
+  const displayNumber = (value: number | null | undefined) =>
+    value === null || value === undefined ? "N/A" : value.toLocaleString();
+  const displayFixed = (value: number | null | undefined, digits = 2) =>
+    value === null || value === undefined ? "N/A" : value.toFixed(digits);
+  const displayCurrency = (value: number | null | undefined) =>
+    value === null || value === undefined ? "N/A" : `$${value.toFixed(2)}`;
 
   // Derived Options for Filters
   const campaignOptions = hierarchy.campaigns;
@@ -1079,60 +1087,51 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                           </span>
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap font-bold border-r border-[#e5e7eb] text-gray-800 px-4">
-                          {(getInsightValue(item, "results") || 0).toLocaleString()}
+                          {displayNumber(getInsightValue(item, "results"))}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          ${getInsightValue(item, "cpr").toFixed(2)}
+                          {displayCurrency(getInsightValue(item, "cpr"))}
                         </td>
 
                         <td className="p-2 align-middle whitespace-nowrap font-medium border-r border-[#e5e7eb] px-4 text-gray-700">
-                          ${getBudgetValue(item).toFixed(2)}
+                          {displayCurrency(getBudgetValue(item))}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap font-medium border-r border-[#e5e7eb] px-4 text-gray-900 text-right">
-                          ${getInsightValue(item, "spend").toFixed(2)}
+                          {displayCurrency(getInsightValue(item, "spend"))}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          {(getInsightValue(
-                            item,
-                            "impressions",
-                          ) || 0).toLocaleString()}
+                          {displayNumber(getInsightValue(item, "impressions"))}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          {(getInsightValue(item, "reach") || 0).toLocaleString()}
+                          {displayNumber(getInsightValue(item, "reach"))}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          {getInsightValue(item, "frequency").toFixed(2)}
+                          {displayFixed(getInsightValue(item, "frequency"))}
                         </td>
 
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          ${getInsightValue(item, "cpm").toFixed(2)}
+                          {displayCurrency(getInsightValue(item, "cpm"))}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          {(getInsightValue(
-                            item,
-                            "link_clicks",
-                          ) || 0).toLocaleString()}
+                          {displayNumber(getInsightValue(item, "link_clicks"))}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          {getInsightValue(item, "link_ctr").toFixed(2)}%
+                          {getInsightValue(item, "link_ctr") === null ? "N/A" : `${displayFixed(getInsightValue(item, "link_ctr"))}%`}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          ${getInsightValue(item, "link_cpc").toFixed(2)}
+                          {displayCurrency(getInsightValue(item, "link_cpc"))}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          {(getInsightValue(item, "clicks") || 0).toLocaleString()}
+                          {displayNumber(getInsightValue(item, "clicks"))}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          {getInsightValue(item, "ctr").toFixed(2)}%
+                          {getInsightValue(item, "ctr") === null ? "N/A" : `${displayFixed(getInsightValue(item, "ctr"))}%`}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          ${getInsightValue(item, "cpc").toFixed(2)}
+                          {displayCurrency(getInsightValue(item, "cpc"))}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 px-4">
-                          {(getInsightValue(
-                            item,
-                            "add_to_cart",
-                          ) || 0).toLocaleString()}
+                          {displayNumber(getInsightValue(item, "add_to_cart"))}
                         </td>
                       </tr>
                     ))
@@ -1168,7 +1167,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap border-r border-[#ced0d4] text-[#1c2b33] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {(totalPurchases || 0).toLocaleString()}
+                          {displayNumber(totalPurchases)}
                         </div>
                         <div className="text-[11px] text-gray-500">
                           Meta 账户
@@ -1193,19 +1192,19 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {(totalImpressions || 0).toLocaleString()}
+                          {displayNumber(totalImpressions)}
                         </div>
                         <div className="text-[11px] text-gray-500">共计</div>
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {(totalReach || 0).toLocaleString()}
+                          {displayNumber(totalReach)}
                         </div>
                         <div className="text-[11px] text-gray-500">共计</div>
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {avgFrequency.toFixed(2)}
+                          {displayFixed(avgFrequency)}
                         </div>
                         <div className="text-[11px] text-gray-500">
                           每个用户的平均频率
@@ -1221,7 +1220,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {(linkClicks || 0).toLocaleString()}
+                          {displayNumber(linkClicks)}
                         </div>
                         <div className="text-[11px] text-gray-500">共计</div>
                       </td>
@@ -1239,7 +1238,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {(allClicks || 0).toLocaleString()}
+                          {displayNumber(allClicks)}
                         </div>
                         <div className="text-[11px] text-gray-500">共计</div>
                       </td>
@@ -1257,7 +1256,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {(totalAddToCart || 0).toLocaleString()}
+                          {displayNumber(totalAddToCart)}
                         </div>
                         <div className="text-[11px] text-gray-500">共计</div>
                       </td>

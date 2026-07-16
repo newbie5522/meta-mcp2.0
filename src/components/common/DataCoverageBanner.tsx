@@ -1,10 +1,14 @@
 import React from "react";
 
 export function DataCoverageBanner({ coverage }: { coverage?: any }) {
-  if (!coverage?.status || coverage.status === "READY") return null;
+  if (!coverage?.status) return null;
+  const showCurrentDayNotice = Boolean(coverage.currentDayInProgress && coverage.asOfTime);
+  if (coverage.status === "READY" && !showCurrentDayNotice) return null;
+
   const latest = coverage.latestAvailableDate || "未知";
   const requestedEnd = coverage.requestedEndDate || "当前截止日";
   const copy: Record<string, string> = {
+    READY: "当前周期数据已覆盖。",
     PARTIAL_COVERAGE: `请求截止 ${requestedEnd}，当前事实只覆盖至 ${latest}`,
     NOT_SYNCED: `当前周期尚未同步，数据最新至 ${latest}`,
     TRUE_EMPTY: "当前周期已完整同步，确认没有业务数据。",
@@ -12,10 +16,11 @@ export function DataCoverageBanner({ coverage }: { coverage?: any }) {
     ERROR: "当前周期数据查询失败，未展示旧数据。"
   };
   const warning = coverage.status === "ERROR" || coverage.status === "PARTIAL_COVERAGE";
+
   return (
     <div className={`rounded-lg border px-3 py-2 text-xs font-medium ${warning ? "border-amber-200 bg-amber-50 text-amber-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}>
       {copy[coverage.status] || `数据覆盖状态：${coverage.status}`}
-      {coverage.currentDayInProgress && coverage.asOfTime ? `（今日数据截至 ${coverage.asOfTime}）` : ""}
+      {showCurrentDayNotice ? `（今日数据进行中，统计截至 ${coverage.asOfTime}）` : ""}
     </div>
   );
 }

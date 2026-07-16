@@ -227,8 +227,19 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
         days: Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000) + 1),
         limit: 200
       });
-      setSyncStatus(mapSyncResultToPanel(result));
-      toast.success(result.message || "商品视图同步完成。", { id: toastId });
+      const panel = mapSyncResultToPanel(result);
+      setSyncStatus(panel);
+      const resultStatus = String(result.status || "").toUpperCase();
+      const message = panel.message || result.message || "商品视图同步状态已更新。";
+      if (resultStatus === "SUCCESS") {
+        toast.success(message, { id: toastId });
+      } else if (resultStatus === "PARTIAL_SUCCESS") {
+        toast.warning(message, { id: toastId });
+      } else if (resultStatus === "FAILED" || resultStatus === "ERROR") {
+        toast.error(message, { id: toastId });
+      } else {
+        toast.info(message, { id: toastId });
+      }
       await fetchProducts();
     } catch (syncError: any) {
       const panel = mapSyncErrorToPanel(syncError);
