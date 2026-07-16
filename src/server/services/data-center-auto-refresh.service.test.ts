@@ -83,4 +83,68 @@ describe("data center refresh scheduling", () => {
     const failed = await ensureDataCenterViewFreshness({ force: true, requestedStartDate: "2026-07-01", requestedEndDate: "2026-07-03" });
     expect(failed.status).toBe("FAILED");
   });
+
+  it("uses store-scoped locks for view refresh runs", async () => {
+    prismaMock.dataCenterRefreshRun.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "running-store-1" });
+
+    const result = await ensureDataCenterViewFreshness({
+      requestedStartDate: "2026-07-01",
+      requestedEndDate: "2026-07-03",
+      storeId: 1
+    });
+
+    expect(result).toMatchObject({
+      skipped: true,
+      status: "RUNNING",
+      reason: "AUTO_VIEW_REFRESH_ALREADY_RUNNING",
+      scope: "store:1"
+    });
+    expect(prismaMock.dataCenterRefreshRun.findFirst).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: expect.objectContaining({ scope: "store:1", startDate: "2026-07-01", endDate: "2026-07-03" })
+    }));
+    expect(prismaMock.dataCenterRefreshRun.findFirst).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: expect.objectContaining({ scope: "store:1", status: "running" })
+    }));
+    expect(executeView).not.toHaveBeenCalled();
+  });
+
+  it("checks blocking_if_missing by store and requested date range", async () => {
+    prismaMock.dataCenterStoreDaily.count.mockResolvedValue(1);
+
+    const result = await ensureDataCenterFreshness({
+      mode: "blocking_if_missing",
+      storeId: 1,
+      requestedStartDate: "2026-07-01",
+      requestedEndDate: "2026-07-03"
+    });
+
+    expect(prismaMock.dataCenterStoreDaily.count).toHaveBeenCalledWith({
+      where: {
+        storeId: 1,
+        date: { gte: "2026-07-01", lte: "2026-07-03" }
+      }
+    });
+    expect(result).toMatchObject({ status: "SKIPPED", reason: "BACKGROUND_TRIGGERED" });
+  });
+
+  it("marks light refresh PARTIAL when Meta ledger reports failed accounts", async () => {
+    refreshMeta.mockResolvedValue({
+      recordsFetched: 1,
+      recordsSaved: 1,
+      recordsUpdated: 0,
+      failedAccounts: [{ accountId: "act_1", message: "slice failed" }]
+    });
+
+    const result = await ensureDataCenterFreshness({
+      force: true,
+      mode: "blocking",
+      requestedStartDate: "2026-07-01",
+      requestedEndDate: "2026-07-03"
+    });
+
+    expect(result.status).toBe("PARTIAL");
+    expect(result.meta?.failedAccounts).toEqual([{ accountId: "act_1", message: "slice failed" }]);
+  });
 });

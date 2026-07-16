@@ -132,4 +132,76 @@ describe("Creative insight fact and structure separation", () => {
     expect(withLink).toMatchObject({ productLink: "https://example.test/product", productLinkAvailable: true });
     expect(result.export).toMatchObject({ requested: true, truncated: false });
   });
+
+  it("does not expose reach for one creative aggregated from multiple ads", async () => {
+    prismaMock.ad.findMany.mockResolvedValue([
+      { id: "ad-1", adsetId: "set-1", campaignId: "camp-1", accountId: "act_1", name: "Ad 1", creativeId: "creative-1", adSet: null },
+      { id: "ad-2", adsetId: "set-2", campaignId: "camp-2", accountId: "act_1", name: "Ad 2", creativeId: "creative-1", adSet: null }
+    ]);
+    prismaMock.adCreative.findMany.mockResolvedValue([
+      { creativeId: "creative-1", fbAccountId: "act_1", name: "Creative 1", mediaType: "IMAGE", landingUrl: null, storeId: 1 }
+    ]);
+    prismaMock.factMetaPerformance.findMany.mockResolvedValue([
+      {
+        date: "2026-07-01", level: "ad", account_id: "act_1", campaign_id: "camp-1", adset_id: "set-1",
+        ad_id: "ad-1", entity_id: "ad-1", creative_id: "creative-1", spend: 10, impressions: 100,
+        clicks: 10, purchases: 1, purchase_value: 20, raw_payload: JSON.stringify({ reach: 80 }), synced_at: new Date("2026-07-02T00:00:00Z")
+      },
+      {
+        date: "2026-07-01", level: "ad", account_id: "act_1", campaign_id: "camp-2", adset_id: "set-2",
+        ad_id: "ad-2", entity_id: "ad-2", creative_id: "creative-1", spend: 5, impressions: 50,
+        clicks: 5, purchases: 0, purchase_value: 0, raw_payload: JSON.stringify({ reach: 40 }), synced_at: new Date("2026-07-02T00:00:00Z")
+      }
+    ]);
+
+    const result = await getAggregatedCreativeInsights({
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      includeZeroSpend: true
+    });
+
+    expect(result.performanceRows).toHaveLength(1);
+    expect(result.performanceRows[0]).toMatchObject({
+      adCount: 2,
+      reach: null,
+      reachAvailable: false
+    });
+  });
+
+  it("keeps bucket summary and filter options based on all matched rows before bucket filtering", async () => {
+    prismaMock.factMetaPerformance.findMany.mockResolvedValue([
+      {
+        date: "2026-07-01", level: "ad", account_id: "act_1", campaign_id: "camp-1", adset_id: "set-1",
+        ad_id: "ad-1", entity_id: "ad-1", creative_id: "creative-1", spend: 40, impressions: 1000,
+        clicks: 20, purchases: 2, purchase_value: 100, raw_payload: null, synced_at: new Date("2026-07-02T00:00:00Z")
+      },
+      {
+        date: "2026-07-01", level: "ad", account_id: "act_1", campaign_id: "camp-2", adset_id: "set-2",
+        ad_id: "ad-2", entity_id: "ad-2", creative_id: "creative-2", spend: 35, impressions: 1000,
+        clicks: 5, purchases: 0, purchase_value: 0, raw_payload: null, synced_at: new Date("2026-07-02T00:00:00Z")
+      }
+    ]);
+
+    const result = await getAggregatedCreativeInsights({
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      includeZeroSpend: true,
+      opsBucket: "scale_candidate"
+    });
+
+    expect(result.performanceRows).toHaveLength(1);
+    expect(result.performanceRows[0].opsBucket).toBe("scale_candidate");
+    expect(result.summary.performanceCount).toBe(1);
+    expect(result.bucketSummary).toMatchObject({
+      scale_candidate: 1,
+      inefficient_stop: 1
+    });
+    expect(result.filterOptions.accountOptions).toEqual([
+      { accountId: "act_1", accountName: "Account 1" }
+    ]);
+    expect(result.filterOptions.campaignOptions).toEqual(expect.arrayContaining([
+      { campaignId: "camp-1" },
+      { campaignId: "camp-2" }
+    ]));
+  });
 });

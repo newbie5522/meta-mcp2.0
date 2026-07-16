@@ -21,6 +21,10 @@ const AUTO_VIEW_REFRESH_INTERVAL_MS = Math.max(
   Number(process.env.DATA_CENTER_VIEW_REFRESH_INTERVAL_MS || 60 * 60 * 1000)
 );
 
+function buildAutoViewScope(storeId?: number | null) {
+  return `store:${storeId ?? "all"}`;
+}
+
 export async function ensureDataCenterViewFreshness(params?: {
   requestedStartDate?: string;
   requestedEndDate?: string;
@@ -29,23 +33,34 @@ export async function ensureDataCenterViewFreshness(params?: {
 }) {
   const endDate = params?.requestedEndDate || getBusinessNow().format("YYYY-MM-DD");
   const startDate = params?.requestedStartDate || getBusinessNow().subtract(AUTO_REFRESH_LOOKBACK_DAYS - 1, "day").format("YYYY-MM-DD");
+  const scope = buildAutoViewScope(params?.storeId ?? null);
   const recent = !params?.force && await prisma.dataCenterRefreshRun.findFirst({
     where: {
       type: "auto_view_refresh",
+      scope,
+      startDate,
+      endDate,
       status: { in: ["SUCCESS", "PARTIAL_SUCCESS", "NO_NEW_DATA"] },
       finishedAt: { gte: new Date(Date.now() - AUTO_VIEW_REFRESH_INTERVAL_MS) }
     },
     orderBy: { startedAt: "desc" }
   });
-  if (recent) return { skipped: true, status: "NO_NEW_DATA", reason: "AUTO_VIEW_REFRESH_INTERVAL_NOT_DUE", startDate, endDate };
+  if (recent) return { skipped: true, status: "NO_NEW_DATA", reason: "AUTO_VIEW_REFRESH_INTERVAL_NOT_DUE", startDate, endDate, scope };
 
   const running = await prisma.dataCenterRefreshRun.findFirst({
-    where: { type: "auto_view_refresh", status: "running", startedAt: { gte: dayjs().subtract(30, "minute").toDate() } }
+    where: {
+      type: "auto_view_refresh",
+      scope,
+      startDate,
+      endDate,
+      status: "running",
+      startedAt: { gte: dayjs().subtract(30, "minute").toDate() }
+    }
   });
-  if (running) return { skipped: true, status: "NO_NEW_DATA", reason: "AUTO_VIEW_REFRESH_ALREADY_RUNNING", startDate, endDate };
+  if (running) return { skipped: true, status: "RUNNING", reason: "AUTO_VIEW_REFRESH_ALREADY_RUNNING", startDate, endDate, scope };
 
   const run = await prisma.dataCenterRefreshRun.create({
-    data: { type: "auto_view_refresh", scope: "datacenter_views", startDate, endDate, status: "running", startedAt: new Date() }
+    data: { type: "auto_view_refresh", scope, startDate, endDate, status: "running", startedAt: new Date() }
   });
   const days = Math.max(1, dayjs(endDate).diff(dayjs(startDate), "day") + 1);
   const receipts: any[] = [];
@@ -86,7 +101,7 @@ export async function ensureDataCenterViewFreshness(params?: {
       finishedAt
     }
   });
-  return { skipped: false, status, reason: "COMPLETED", startDate, endDate, receipts, ...totals, finishedAt: finishedAt.toISOString() };
+  return { skipped: false, status, reason: "COMPLETED", startDate, endDate, scope, receipts, ...totals, finishedAt: finishedAt.toISOString() };
 }
 
 export async function ensureDataCenterFreshness(params?: {
@@ -191,6 +206,7 @@ export async function ensureDataCenterFreshness(params?: {
   if (mode === "blocking_if_missing") {
     const ledgerCount = await prisma.dataCenterStoreDaily.count({
       where: {
+        ...(params?.storeId ? { storeId: params.storeId } : {}),
         date: {
           gte: finalStartDate,
           lte: finalEndDate
@@ -292,6 +308,9 @@ async function runActualRefresh(params: {
       recordsSaved += metaRes.recordsSaved || 0;
       recordsUpdated += metaRes.recordsUpdated || 0;
       metaFailedAccounts = metaRes.failedAccounts || [];
+      if (metaFailedAccounts.length > 0) {
+        overallStatus = "PARTIAL";
+      }
     } catch (metaErr: any) {
       console.error("[DataCenterAutoRefresh] refreshMetaDataCenterLedger failed:", metaErr);
       overallStatus = "PARTIAL";

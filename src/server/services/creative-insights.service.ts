@@ -366,7 +366,8 @@ export async function getAggregatedCreativeInsights(params: {
       purchase_value: fixed(item.purchaseValue, 2), revenue: fixed(item.purchaseValue, 2), ctr: fixed(ctr), cpc: fixed(cpc),
       cpm: fixed(cpm), cpa: fixed(cpa), meta_roas: fixed(roas), roas: fixed(roas),
       frequency: null, frequencyAvailable: false as const,
-      reach: singleDay && item.reachSeen ? item.reach : null, reachAvailable: singleDay && item.reachSeen,
+      reach: singleDay && item.reachSeen && adIds.length === 1 ? item.reach : null,
+      reachAvailable: singleDay && item.reachSeen && adIds.length === 1,
       addToCart: item.addToCartSeen ? item.addToCart : null, addToCartAvailable: item.addToCartSeen,
       productLink: landingUrl, productLinkAvailable: landingUrl !== null,
       hookRate: null, hookRateAvailable: false as const,
@@ -410,14 +411,16 @@ export async function getAggregatedCreativeInsights(params: {
   });
 
   const structureOnlyRows = structuralRows.filter((row: any) => !keysWithFacts.has(row.key));
-  performanceRows = performanceRows.filter((row) => {
+  const baseFilteredRows = performanceRows.filter((row) => {
     if (!includeZero && row.spend <= 0) return false;
     if (row.spend < minSpend) return false;
     if (filterType && row.type !== filterType) return false;
-    if (filterBucket && row.opsBucket !== filterBucket) return false;
     if (search && !`${row.creativeName} ${row.creativeId} ${row.adName} ${row.accountName}`.toLowerCase().includes(search)) return false;
     return true;
   });
+  performanceRows = filterBucket
+    ? baseFilteredRows.filter((row) => row.opsBucket === filterBucket)
+    : baseFilteredRows;
 
   const [sortKey, sortDirection] = String(params.sortBy || "spend DESC").trim().split(/\s+/);
   const ascending = String(sortDirection || "DESC").toUpperCase() === "ASC";
@@ -430,10 +433,18 @@ export async function getAggregatedCreativeInsights(params: {
   });
 
   const summary = summarize(performanceRows);
-  const bucketSummary = performanceRows.reduce<Record<string, number>>((result, row) => {
+  const bucketSummary = baseFilteredRows.reduce<Record<string, number>>((result, row) => {
     if (row.opsBucket) result[row.opsBucket] = (result[row.opsBucket] || 0) + 1;
     return result;
   }, {});
+  const filterOptions = {
+    accountOptions: Array.from(new Map(baseFilteredRows.map((row: any) => [row.accountId, {
+      accountId: row.accountId,
+      accountName: row.accountName || row.fb_account_name || row.accountId
+    }])).values()).filter((item: any) => item.accountId),
+    campaignOptions: Array.from(new Set(baseFilteredRows.flatMap((row: any) => row.campaignIds || []))).map((campaignId) => ({ campaignId })),
+    creativeTypeOptions: Array.from(new Set(baseFilteredRows.map((row: any) => row.type).filter(Boolean))).map((type) => ({ type }))
+  };
   const truncated = exportRequested && performanceRows.length > exportLimit;
   const visibleRows = exportRequested
     ? performanceRows.slice(0, exportLimit)
@@ -453,7 +464,15 @@ export async function getAggregatedCreativeInsights(params: {
     pageSize,
     filteredTotalCount: performanceRows.length,
     pageRowCount: visibleRows.length,
-    export: { requested: exportRequested, truncated, limit: exportLimit },
+    filterOptions,
+    export: {
+      requested: exportRequested,
+      truncated,
+      limit: exportLimit,
+      totalMatched: performanceRows.length,
+      exportedRowCount: visibleRows.length,
+      message: truncated ? `Export truncated at ${exportLimit} rows out of ${performanceRows.length}.` : null
+    },
     dataScope: {
       page: "creative-insights", primarySource: "Meta 素材成效", dateField: "FactMetaPerformance.date",
       timezone: "America/Los_Angeles", accountId: params.accountId || "all", storeId: params.storeId || "all",
@@ -485,7 +504,8 @@ function emptyResponse(input: {
     structureSummary: { totalStructureCount: 0, structureOnlyCount: 0 }, bucketSummary: {},
     pagination: { page: input.page, pageSize: input.pageSize, total: 0, totalPages: 0 },
     total: 0, page: input.page, pageSize: input.pageSize, filteredTotalCount: 0, pageRowCount: 0,
-    export: { requested: input.exportRequested, truncated: false, limit: 5000 },
+    filterOptions: { accountOptions: [], campaignOptions: [], creativeTypeOptions: [] },
+    export: { requested: input.exportRequested, truncated: false, limit: 5000, totalMatched: 0, exportedRowCount: 0, message: null },
     dataScope: { page: "creative-insights", primarySource: "Meta 素材成效", dateField: "FactMetaPerformance.date", timezone: "America/Los_Angeles", includeZeroSpend: input.includeZero },
     diagnostics: {
       hasAdLevelInsights: input.totalAdPerfCount > 0, hasAdCreativeLinks: input.ads.some(ad => Boolean(ad.creativeId)),

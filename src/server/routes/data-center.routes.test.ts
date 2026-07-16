@@ -17,4 +17,12 @@ describe("Data Center hierarchy response contract", () => {
       budget: null
     });
   });
+
+  it("keeps unavailable campaign budget and objective explicit for canonical hierarchy consumers", () => {
+    const fields = resolveCampaignStructureFields(null);
+
+    expect(fields.objective).toBeNull();
+    expect(fields.budget).toBeNull();
+    expect(fields.status).toBe("UNKNOWN");
+  });
 });

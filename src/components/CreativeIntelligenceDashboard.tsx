@@ -164,7 +164,11 @@ export function resolveCreativePageState(payload: any): CreativePageState {
     structureSummary: payload?.structureSummary || null,
     bucketSummary: payload?.bucketSummary || {},
     coverage,
-    pagination: payload?.pagination || null
+    pagination: payload?.pagination ? {
+      ...payload.pagination,
+      pageRowCount: payload?.pageRowCount,
+      filteredTotalCount: payload?.filteredTotalCount
+    } : null
   };
 }
 
@@ -197,6 +201,8 @@ export function CreativeIntelligenceDashboard({
   const [bucketSummary, setBucketSummary] = useState<Record<string, number>>({});
   const [coverage, setCoverage] = useState<any>(null);
   const [pagination, setPagination] = useState<any>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const creatives = performanceRows;
   const [selectedAccountFilter, setSelectedAccountFilter] = useState("all");
   const [selectedCampaignFilter, setSelectedCampaignFilter] = useState("all");
@@ -208,6 +214,11 @@ export function CreativeIntelligenceDashboard({
   const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string; timezone?: string } | null>(null);
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [creativeDataHealth, setCreativeDataHealth] = useState<any>(null);
+
+  function resolveSelectedStoreId(list: any[] = storesList) {
+    if (localStoreFilter === "all") return "all";
+    return list.find(store => store.name === localStoreFilter || String(store.id) === localStoreFilter)?.id || null;
+  }
 
   const handleSyncCreatives = async () => {
     setSyncing(true);
@@ -226,9 +237,12 @@ export function CreativeIntelligenceDashboard({
     try {
       const startStr = startDate ? format(startDate, "yyyy-MM-dd") : format(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), "yyyy-MM-dd");
       const endStr = endDate ? format(endDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
-      const selectedStoreId = localStoreFilter === "all"
-        ? "all"
-        : (storesList.find(store => store.name === localStoreFilter || String(store.id) === localStoreFilter)?.id || "all");
+      const selectedStoreId = resolveSelectedStoreId();
+      if (localStoreFilter !== "all" && selectedStoreId === null) {
+        toast.warning("店铺筛选尚未解析，未启动素材同步。", { id: syncToast });
+        setSyncStatus({ status: "warning", message: "STORE_FILTER_UNRESOLVED" });
+        return;
+      }
 
       const payload: SyncTaskPayload = {
         taskType: "sync_view_creatives",
@@ -240,7 +254,7 @@ export function CreativeIntelligenceDashboard({
       if (selectedAccountFilter !== "all") {
         payload.accountId = selectedAccountFilter;
       }
-      if (selectedStoreId !== "all") {
+      if (selectedStoreId !== "all" && selectedStoreId !== null) {
         payload.storeId = selectedStoreId;
       }
 
@@ -417,9 +431,29 @@ export function CreativeIntelligenceDashboard({
       setLoading(true);
       const startStr = startDate ? format(startDate, "yyyy-MM-dd") : format(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), "yyyy-MM-dd");
       const endStr = endDate ? format(endDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
+      let activeStoresList = storesList;
+      if (localStoreFilter !== "all" && storesList.length === 0) {
+        const storesResponse = await axios.get("/api/stores").catch(() => ({ data: [] }));
+        const storesPayload = storesResponse.data?.stores || storesResponse.data?.data || storesResponse.data || [];
+        activeStoresList = Array.isArray(storesPayload) ? storesPayload : [];
+        setStoresList(activeStoresList);
+      }
       const selectedStoreId = localStoreFilter === "all"
         ? "all"
-        : (storesList.find(store => store.name === localStoreFilter || String(store.id) === localStoreFilter)?.id || "all");
+        : (activeStoresList.find(store => store.name === localStoreFilter || String(store.id) === localStoreFilter)?.id || null);
+      if (localStoreFilter !== "all" && selectedStoreId === null) {
+        setPerformanceRows([]);
+        setStructureOnlyRows([]);
+        setSummary(null);
+        setStructureSummary(null);
+        setBucketSummary({});
+        setCoverage(null);
+        setPagination(null);
+        setDiagnostics(null);
+        setCreativeDataHealth({ status: "STORE_FILTER_UNRESOLVED", message: "店铺筛选尚未解析，未查询全部店铺素材数据。" });
+        setViewNotice("店铺筛选尚未解析，未查询全部店铺素材数据。");
+        return;
+      }
 
       const [resGrouped, resStores] = await Promise.all([
         axios.get("/api/data-center/creative-insights", {
@@ -433,8 +467,8 @@ export function CreativeIntelligenceDashboard({
             creativeType: selectedType,
             opsBucket: activeOpsBucket,
             search: searchTerm,
-            page: 1,
-            pageSize: 500,
+            page,
+            pageSize,
             includeZeroSpend: true
           }
         }),
@@ -536,8 +570,12 @@ export function CreativeIntelligenceDashboard({
   }, [currentRequestKey]);
 
   useEffect(() => {
-    fetchCreatives();
+    setPage(1);
   }, [startStrKey, endStrKey, localStoreFilter, selectedAccountFilter, selectedCampaignFilter, selectedType, activeOpsBucket, searchTerm]);
+
+  useEffect(() => {
+    fetchCreatives();
+  }, [startStrKey, endStrKey, localStoreFilter, selectedAccountFilter, selectedCampaignFilter, selectedType, activeOpsBucket, searchTerm, page, pageSize]);
 
   // Load cached or trigger canonical rule-based performance analysis report
   const handleTriggerAiAnalysis = async (creativeId: string) => {
@@ -891,9 +929,11 @@ CPM：${creative.cpm}
 
   const handleExport = async () => {
     try {
-      const selectedStoreId = localStoreFilter === "all"
-        ? "all"
-        : (storesList.find(store => store.name === localStoreFilter || String(store.id) === localStoreFilter)?.id || "all");
+      const selectedStoreId = resolveSelectedStoreId();
+      if (localStoreFilter !== "all" && selectedStoreId === null) {
+        toast.warning("店铺筛选尚未解析，未导出全部店铺素材数据。");
+        return;
+      }
       const response = await axios.get("/api/data-center/creative-insights", {
         params: {
           startDate: startStrKey,
@@ -1171,6 +1211,31 @@ CPM：${creative.cpm}
         source="Meta 素材成效"
         scope={selectedAccountFilter !== "all" ? "current_account" : "all_accounts"}
       />
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+        <span>
+          当前页 {pagination?.pageRowCount ?? creatives.length} 条 / 符合条件 {pagination?.total ?? pagination?.filteredTotalCount ?? creatives.length} 条
+        </span>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="h-8 text-xs" disabled={loading || page <= 1} onClick={() => setPage(prev => Math.max(1, prev - 1))}>
+            上一页
+          </Button>
+          <span className="font-mono">{page} / {Math.max(1, pagination?.totalPages || 1)}</span>
+          <Button variant="outline" size="sm" className="h-8 text-xs" disabled={loading || page >= Math.max(1, pagination?.totalPages || 1)} onClick={() => setPage(prev => prev + 1)}>
+            下一页
+          </Button>
+          <select
+            className="h-8 rounded border border-slate-200 bg-white px-2 text-xs"
+            value={pageSize}
+            onChange={(event) => {
+              setPageSize(Number(event.target.value));
+              setPage(1);
+            }}
+          >
+            {[25, 50, 100, 250].map(size => <option key={size} value={size}>{size}/页</option>)}
+          </select>
+        </div>
+      </div>
 
       <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
         {creativeBuckets.map(bucket => {

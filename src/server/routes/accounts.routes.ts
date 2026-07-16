@@ -3,6 +3,11 @@ import prisma from "../../db/index.js";
 import axios from "axios";
 import { getMetaToken, normalizeMetaAccountId } from "../utils.js";
 import dayjs from "dayjs";
+import {
+  getCanonicalAdHierarchy,
+  mapCanonicalHierarchyToAccountDetails,
+  type CanonicalAdHierarchyLevel
+} from "../services/ad-hierarchy.service.js";
 
 const router = Router();
 
@@ -69,6 +74,13 @@ function buildUnavailableActionInsight(input: {
       { action_type: "purchase", value: String(input.revenue) }
     ]
   };
+}
+
+export function normalizeDetailsLevel(level: unknown): CanonicalAdHierarchyLevel | null {
+  if (level === "campaigns" || level === "campaign") return "campaign";
+  if (level === "adsets" || level === "adset") return "adset";
+  if (level === "ads" || level === "ad") return "ad";
+  return null;
 }
 
 // Endpoint dedicated to testing Meta Token validity and retrieving diagnostics
@@ -581,6 +593,26 @@ router.get("/:accountId/details", async (req, res) => {
     const normAccountId = normalizeMetaAccountId(accountId);
     const dateStart = startDate ? String(startDate) : dayjs().subtract(30, 'day').format('YYYY-MM-DD');
     const dateEnd = endDate ? String(endDate) : dayjs().format('YYYY-MM-DD');
+    const canonicalLevel = normalizeDetailsLevel(level);
+
+    if (canonicalLevel && !isAll) {
+      const canonicalHierarchy = await getCanonicalAdHierarchy({
+        level: canonicalLevel,
+        accountId: normAccountId,
+        startDate: dateStart,
+        endDate: dateEnd,
+        includeZeroSpend: true
+      });
+
+      return res.json({
+        data: mapCanonicalHierarchyToAccountDetails(canonicalLevel, canonicalHierarchy.data),
+        isFallbackCached: false,
+        coverage: canonicalHierarchy.coverage,
+        sourceCoverage: canonicalHierarchy.sourceCoverage,
+        dataHealth: canonicalHierarchy.dataHealth,
+        dateRange: canonicalHierarchy.dateRange
+      });
+    }
 
     // 1. Get the entities depending on the level requested
     if (level === "campaigns" || level === "campaign") {

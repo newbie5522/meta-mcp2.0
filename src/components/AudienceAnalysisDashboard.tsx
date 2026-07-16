@@ -31,6 +31,19 @@ import {
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
 
+export function buildAudienceClearedState() {
+  return {
+    data: [],
+    summary: null,
+    orderCountryRows: [],
+    metaCoverage: null,
+    storeCoverage: null,
+    dataHealth: null,
+    countriesHealth: null,
+    viewNotice: null
+  };
+}
+
 export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const [stores, setStores] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -104,12 +117,59 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     fetchFilters();
   }, [startDate, endDate]);
 
+  const fetchStoreCountries = async (startStr: string, endStr: string) => {
+    if (activeTab !== "country") {
+      setOrderCountryRows([]);
+      setCountriesHealth(null);
+      return;
+    }
+    setCountriesLoading(true);
+    try {
+      const countriesRes = await axios.get("/api/data-center/countries", {
+        params: {
+          startDate: startStr,
+          endDate: endStr,
+          storeId: selectedStore,
+          minSpend: minSpend || undefined,
+          includeUnmappedSpend: "true"
+        }
+      });
+      setOrderCountryRows(countriesRes.data?.rows || []);
+      setCountriesHealth(countriesRes.data?.dataHealth || null);
+      setStoreCoverage(countriesRes.data?.storeCoverage || countriesRes.data?.coverage || null);
+    } catch (countriesErr) {
+      console.error("Failed to fetch order country statistics", countriesErr);
+      setOrderCountryRows([]);
+      const errData = (countriesErr as any)?.response?.data;
+      setCountriesHealth({
+        status: "COUNTRIES_REQUEST_FAILED",
+        reason: "ORDER_COUNTRY_AUXILIARY_REQUEST_FAILED",
+        message: errData?.message || errData?.details || errData?.error || (countriesErr as any)?.message || "店铺订单国家辅助请求失败。",
+        dateRange: { startDate: startStr, endDate: endStr, timezone: "America/Los_Angeles" }
+      });
+      setStoreCoverage({ status: "ERROR" });
+    } finally {
+      setCountriesLoading(false);
+    }
+  };
+
   // Load audience insights from server matching the exact requirements
   const fetchAudienceInsights = async () => {
     setLoading(true);
+    let storeCountriesPromise: Promise<void> | null = null;
     try {
       const startStr = format(startDate, "yyyy-MM-dd");
       const endStr = format(endDate, "yyyy-MM-dd");
+      const cleared = buildAudienceClearedState();
+      setData(cleared.data);
+      setSummary(cleared.summary);
+      setOrderCountryRows(cleared.orderCountryRows);
+      setMetaCoverage(cleared.metaCoverage);
+      setStoreCoverage(cleared.storeCoverage);
+      setDataHealth(cleared.dataHealth);
+      setCountriesHealth(cleared.countriesHealth);
+      setViewNotice(cleared.viewNotice);
+      storeCountriesPromise = fetchStoreCountries(startStr, endStr);
       
       const res = await axios.get("/api/data-center/audience", {
         params: {
@@ -135,6 +195,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
           setSummary(null);
           setDataHealth({ status: "DATE_RANGE_MISMATCH", message: DATE_RANGE_MISMATCH_MESSAGE });
           setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
+          await storeCountriesPromise;
           return;
         }
         if (shouldPreserveLastGoodData(res.data, rows, lastGoodData, requestKey)) {
@@ -146,6 +207,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
             setMetaCoverage(safeLastGoodData.metaCoverage || null);
             setStoreCoverage(safeLastGoodData.storeCoverage || null);
             setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
+            await storeCountriesPromise;
             return;
           }
         }
@@ -174,54 +236,13 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         setViewNotice("当前受众筛选周期没有返回有效数据。");
       }
 
-      // If active tab is country, load order countries list from database
-      if (activeTab === "country") {
-        setCountriesLoading(true);
-        try {
-          const countriesRes = await axios.get("/api/data-center/countries", {
-            params: {
-              startDate: startStr,
-              endDate: endStr,
-              storeId: selectedStore,
-              minSpend: minSpend || undefined,
-              includeUnmappedSpend: "true"
-            }
-          });
-          if (countriesRes.data) {
-            setOrderCountryRows(countriesRes.data.rows || []);
-            setCountriesHealth(countriesRes.data.dataHealth || null);
-          } else {
-            setOrderCountryRows([]);
-            setCountriesHealth(null);
-          }
-        } catch (countriesErr) {
-          console.error("Failed to fetch order country statistics", countriesErr);
-          setOrderCountryRows([]);
-          const errData = (countriesErr as any)?.response?.data;
-          setCountriesHealth({
-            status: "COUNTRIES_REQUEST_FAILED",
-            reason: "ORDER_COUNTRY_AUXILIARY_REQUEST_FAILED",
-            message: errData?.message || errData?.details || errData?.error || (countriesErr as any)?.message || "店铺订单国家辅助请求失败。",
-            dateRange: {
-              startDate: startStr,
-              endDate: endStr,
-              timezone: "America/Los_Angeles"
-            }
-          });
-        } finally {
-          setCountriesLoading(false);
-        }
-      } else {
-        setOrderCountryRows([]);
-        setCountriesHealth(null);
-      }
+      await storeCountriesPromise;
 
     } catch (err: any) {
       console.error("Failed to fetch audience insights", err);
       setData([]);
       setSummary(null);
       setMetaCoverage({ status: "ERROR" });
-      setStoreCoverage({ status: "ERROR" });
       setDataHealth({
         status: "ERROR",
         reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
@@ -229,6 +250,9 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         dateRange: { startDate: startStrKey, endDate: endStrKey, timezone: "America/Los_Angeles" }
       });
       setViewNotice("当前受众筛选周期请求失败，未展示旧数据。");
+      if (storeCountriesPromise) {
+        await storeCountriesPromise.catch(() => undefined);
+      }
       toast.error("加载受众成效分析发生错误");
     } finally {
       setLoading(false);

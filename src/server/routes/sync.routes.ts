@@ -38,6 +38,9 @@ async function summarizeSyncLogs(taskIds: string[]) {
       recordsSaved: 0,
       recordsUpdated: 0,
       failedAccounts: [],
+      failedSlices: [],
+      truncated: false,
+      coverageComplete: true,
       targetAccountsCount: null,
       hasFailedTask: false
     };
@@ -51,8 +54,11 @@ async function summarizeSyncLogs(taskIds: string[]) {
   let recordsSaved = 0;
   let recordsUpdated = 0;
   const failedAccounts: any[] = [];
+  const failedSlices: any[] = [];
   let targetAccountsCount: number | null = null;
   let hasFailedTask = false;
+  let truncated = false;
+  let coverageComplete = true;
   let metadataStatus: string | null = null;
   let metadataReason: string | null = null;
   let metadataMessage: string | null = null;
@@ -67,6 +73,11 @@ async function summarizeSyncLogs(taskIds: string[]) {
     if (Array.isArray(metadata.failedAccounts)) {
       failedAccounts.push(...metadata.failedAccounts);
     }
+    if (Array.isArray(metadata.failedSlices)) {
+      failedSlices.push(...metadata.failedSlices);
+    }
+    truncated = truncated || metadata.truncated === true;
+    coverageComplete = coverageComplete && metadata.coverageComplete !== false;
     const nextTargetCount = Number(
       metadata.targetAccountsCount ?? metadata.accountsSynced ?? metadata.accountsChecked ?? NaN
     );
@@ -81,6 +92,9 @@ async function summarizeSyncLogs(taskIds: string[]) {
     if (log.status === "failed") {
       hasFailedTask = true;
     }
+    if (["PARTIAL_SUCCESS", "FAILED"].includes(String(metadata.status || "").toUpperCase())) {
+      hasFailedTask = true;
+    }
   }
 
   return {
@@ -88,6 +102,9 @@ async function summarizeSyncLogs(taskIds: string[]) {
     recordsSaved,
     recordsUpdated,
     failedAccounts,
+    failedSlices,
+    truncated,
+    coverageComplete,
     targetAccountsCount,
     hasFailedTask,
     metadataStatus,
@@ -144,7 +161,11 @@ function buildProgress(input: {
 export function deriveSyncStatus(summary: any) {
   const hasFailure =
     summary.hasFailedTask ||
-    (Array.isArray(summary.failedAccounts) && summary.failedAccounts.length > 0);
+    (Array.isArray(summary.failedAccounts) && summary.failedAccounts.length > 0) ||
+    (Array.isArray(summary.failedSlices) && summary.failedSlices.length > 0) ||
+    summary.truncated === true ||
+    summary.coverageComplete === false ||
+    ["PARTIAL_SUCCESS", "FAILED"].includes(String(summary.metadataStatus || "").toUpperCase());
   const hasRecords =
     Number(summary.recordsFetched || 0) > 0 ||
     Number(summary.recordsSaved || 0) > 0 ||
@@ -173,6 +194,9 @@ function returnFailedSyncResponse(res: any, input: {
     recordsSaved: Number(input.summary.recordsSaved || 0),
     recordsUpdated: Number(input.summary.recordsUpdated || 0),
     failedAccounts: Array.isArray(input.summary.failedAccounts) ? input.summary.failedAccounts : [],
+    failedSlices: Array.isArray(input.summary.failedSlices) ? input.summary.failedSlices : [],
+    truncated: input.summary.truncated === true,
+    coverageComplete: input.summary.coverageComplete !== false,
     chainId: input.chainId,
     taskType: input.taskType,
     taskIds: input.taskIds
@@ -551,6 +575,9 @@ router.post("/sync/trigger", async (req, res) => {
         recordsUpdated: summary.recordsUpdated,
         targetAccountsCount: summary.targetAccountsCount || targets.length,
         failedAccounts: summary.failedAccounts,
+        failedSlices: summary.failedSlices,
+        truncated: summary.truncated,
+        coverageComplete: summary.coverageComplete,
         ...limitReceipt,
         ...buildProgress({
           currentStep: taskIds.length,
@@ -674,6 +701,9 @@ router.post("/sync/trigger", async (req, res) => {
         recordsUpdated: summary.recordsUpdated + Number(ledgerResult.recordsUpdated || 0),
         targetAccountsCount: summary.targetAccountsCount || targets.length,
         failedAccounts: summary.failedAccounts || ledgerResult.failedAccounts || [],
+        failedSlices: summary.failedSlices,
+        truncated: summary.truncated,
+        coverageComplete: summary.coverageComplete,
         ledger: ledgerResult,
         ...limitReceipt,
         ...buildProgress({
@@ -743,6 +773,9 @@ router.post("/sync/trigger", async (req, res) => {
         recordsSaved: summary.recordsSaved + ledgerRecordsSaved,
         recordsUpdated: summary.recordsUpdated,
         failedAccounts: summary.failedAccounts,
+        failedSlices: summary.failedSlices,
+        truncated: summary.truncated,
+        coverageComplete: summary.coverageComplete,
         ledgers,
         ...buildProgress({
           currentStep: taskIds.length + ledgers.length,
@@ -808,6 +841,9 @@ router.post("/sync/trigger", async (req, res) => {
         recordsSaved: summary.recordsSaved,
         recordsUpdated: summary.recordsUpdated,
         failedAccounts: summary.failedAccounts,
+        failedSlices: summary.failedSlices,
+        truncated: summary.truncated,
+        coverageComplete: summary.coverageComplete,
         ...limitReceipt,
         ...buildProgress({
           currentStep: targets.length,
@@ -873,6 +909,9 @@ router.post("/sync/trigger", async (req, res) => {
         recordsSaved: summary.recordsSaved,
         recordsUpdated: summary.recordsUpdated,
         failedAccounts: summary.failedAccounts,
+        failedSlices: summary.failedSlices,
+        truncated: summary.truncated,
+        coverageComplete: summary.coverageComplete,
         ...buildProgress({
           currentStep: targets.length,
           totalSteps: Math.max(1, targets.length),
@@ -923,6 +962,9 @@ router.post("/sync/trigger", async (req, res) => {
         recordsSaved,
         recordsUpdated: summary.recordsUpdated,
         failedAccounts: summary.failedAccounts,
+        failedSlices: summary.failedSlices,
+        truncated: summary.truncated,
+        coverageComplete: summary.coverageComplete,
         ...limitReceipt,
         ...buildProgress({
           currentStep: 1,
@@ -1006,6 +1048,9 @@ router.post("/sync/trigger", async (req, res) => {
         recordsUpdated: summary.recordsUpdated,
         targetAccountsCount: summary.targetAccountsCount || targets.length,
         failedAccounts: summary.failedAccounts,
+        failedSlices: summary.failedSlices,
+        truncated: summary.truncated,
+        coverageComplete: summary.coverageComplete,
         ...limitReceipt,
         ...buildProgress({
           currentStep: 2 + targets.length,
@@ -1036,6 +1081,9 @@ router.post("/sync/trigger", async (req, res) => {
         recordsUpdated: summary.recordsUpdated,
         targetAccountsCount: summary.targetAccountsCount,
         failedAccounts: summary.failedAccounts,
+        failedSlices: summary.failedSlices,
+        truncated: summary.truncated,
+        coverageComplete: summary.coverageComplete,
         ...buildProgress({
           currentStep: 2,
           totalSteps: 2,

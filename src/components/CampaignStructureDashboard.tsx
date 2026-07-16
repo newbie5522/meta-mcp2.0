@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountDisplay";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
+import { DataCoverageBanner } from "./common/DataCoverageBanner";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 import {
   buildDataViewRequestKey,
@@ -54,6 +55,22 @@ function getHierarchyEmptyMessage(dataHealth: any, includeZeroSpend: boolean) {
   return "未检索到符合条件的层级节点。请检查日期范围、账户筛选或同步状态。";
 }
 
+export function hasPerformanceFacts(row: any) {
+  return row?.hasPerformanceFacts !== false && row?.spend !== null && row?.impressions !== null;
+}
+
+export function formatNumber(value: any) {
+  return value === null || value === undefined ? "N/A" : Number(value).toLocaleString();
+}
+
+export function formatFixed(value: any, digits = 2, suffix = "") {
+  return value === null || value === undefined ? "N/A" : `${Number(value).toFixed(digits)}${suffix}`;
+}
+
+export function formatMoney(value: any) {
+  return value === null || value === undefined ? "N/A" : `$${Number(value).toFixed(2)}`;
+}
+
 export function CampaignStructureDashboard({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   // Navigation level
   const [viewLevel, setViewLevel] = useState<"accounts" | "campaigns" | "adsets" | "ads">("accounts");
@@ -75,6 +92,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
   const [data, setData] = useState<any[]>([]);
   const [dataHealth, setDataHealth] = useState<any>(null);
+  const [coverage, setCoverage] = useState<any>(null);
   const [structureSummary, setStructureSummary] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [syncing, setSyncing] = useState<boolean>(false);
@@ -155,6 +173,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
         const rows = accountsRes.data?.success ? (accountsRes.data.data || []) : [];
         const nextHealth = accountsRes.data?.dataHealth || null;
+        setCoverage(accountsRes.data?.coverage || accountsRes.data?.sourceCoverage || null);
         const statePayload = {
           ...(accountsRes.data || {}),
           health: nextHealth,
@@ -205,6 +224,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
       const res = await axios.get(hierarchyEndpoint, { params: hierarchyParams });
       const hierarchyPayload = res.data || {};
       let nextData: any[] = hierarchyPayload.data || [];
+      setCoverage(hierarchyPayload.coverage || hierarchyPayload.sourceCoverage || null);
       setResponseDateRange(hierarchyPayload.dateRange || hierarchyPayload.appliedFilters || null);
 
       if (isDateRangeMismatch(hierarchyPayload, startStr, endStr)) {
@@ -234,6 +254,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
       toast.error("获取层级数据失败: " + (e.response?.data?.error || e.message));
       setData([]);
       setStructureSummary(null);
+      setCoverage({ status: "ERROR" });
       setDataHealth({
         status: "ERROR",
         reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
@@ -333,47 +354,52 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
   // AI prompt builder customized for current active level
   const handleAskAI = (row: any, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!hasPerformanceFacts(row)) {
+      toast.warning("当前周期无成效事实，无法生成投放诊断");
+      return;
+    }
+
     let promptText = "";
     if (viewLevel === "accounts") {
       promptText = `分析 Meta 广告账户表现 [${row.fb_account_name}] (ID: ${row.fb_account_id})：
 - 日期范围: ${format(startDate, "yyyy-MM-dd")} ~ ${format(endDate, "yyyy-MM-dd")}
 - 绑定店铺: ${row.storeName}
-- 花费金额: $${row.spend.toFixed(2)}
-- 展现次数: ${row.impressions.toLocaleString()}
+- 花费金额: ${formatMoney(row.spend)}
+- 展现次数: ${formatNumber(row.impressions)}
 - 点击数量: ${row.clicks}
-- 平均点击率 (CTR): ${row.ctr.toFixed(2)}%
-- 单次点击费用 (CPC): $${row.cpc.toFixed(2)}
-- 千次展示成本 (CPM): $${row.cpm.toFixed(2)}
+- 平均点击率 (CTR): ${formatFixed(row.ctr, 2, "%")}
+- 单次点击费用 (CPC): ${formatMoney(row.cpc)}
+- 千次展示成本 (CPM): ${formatMoney(row.cpm)}
 - 购买成效: ${row.purchases}
-- 单次获客成本 (CPA/CPP): $${row.cpa.toFixed(2)}
-- Meta 报告 ROAS: ${row.roas.toFixed(2)}
+- 单次获客成本 (CPA/CPP): ${formatMoney(row.cpa)}
+- Meta 报告 ROAS: ${formatFixed(row.roas)}
 
 作为资深海外广告投放专家，请为此账户的整体花费效率、CTR 瓶颈以及获客成本提供全面的诊断分析和预算倾斜建议。`;
     } else if (viewLevel === "campaigns") {
       promptText = `分析 Meta 广告系列 [${row.name}] (ID: ${row.id})：
 - 状态: ${row.status}
 - 营销目标: ${row.objective}
-- 花费金额: $${row.spend.toFixed(2)}
-- 展现次数: ${row.impressions.toLocaleString()}
+- 花费金额: ${formatMoney(row.spend)}
+- 展现次数: ${formatNumber(row.impressions)}
 - 点击量: ${row.clicks}
-- 点击率 (CTR): ${row.ctr.toFixed(2)}%
-- 单次点击费用 (CPC): $${row.cpc.toFixed(2)}
+- 点击率 (CTR): ${formatFixed(row.ctr, 2, "%")}
+- 单次点击费用 (CPC): ${formatMoney(row.cpc)}
 - 转化购买量: ${row.purchases}
-- 获客成本 (CPA): $${row.cpa.toFixed(2)}
-- ROAS: ${row.roas.toFixed(2)}
+- 获客成本 (CPA): ${formatMoney(row.cpa)}
+- ROAS: ${formatFixed(row.roas)}
 
 作为优化师，请在该 Campaign 的状态与表现反馈下给出竞价决策，应当扩增预算、进行成本优化还是关停，并补充可能的优化策略。`;
     } else if (viewLevel === "adsets") {
       promptText = `分析 Meta 广告组 [${row.name}] (ID: ${row.id})：
 - 所属广告系列: ${row.campaignName}
-- 花费金额: $${row.spend.toFixed(2)}
-- 展现次数: ${row.impressions.toLocaleString()}
+- 花费金额: ${formatMoney(row.spend)}
+- 展现次数: ${formatNumber(row.impressions)}
 - 点击数量: ${row.clicks}
-- 点击率 (CTR): ${row.ctr.toFixed(2)}%
-- 千次展示成本 (CPM): $${row.cpm.toFixed(2)}
+- 点击率 (CTR): ${formatFixed(row.ctr, 2, "%")}
+- 千次展示成本 (CPM): ${formatMoney(row.cpm)}
 - 购买获客量: ${row.purchases}
-- 单次获客成本 (CPA): $${row.cpa.toFixed(2)}
-- 转化率 ROAS: ${row.roas.toFixed(2)}
+- 单次获客成本 (CPA): ${formatMoney(row.cpa)}
+- 转化率 ROAS: ${formatFixed(row.roas)}
 
 请根据该 Ad Set 层级的效果反馈提供受众定位和扩增/紧缩竞价调优战术。`;
     } else if (viewLevel === "ads") {
@@ -381,14 +407,14 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 - 创意 ID (Creative ID): ${row.creativeId}
 - 所属广告组: ${row.adsetName}
 - 所属广告系列: ${row.campaignName}
-- 花费金额: $${row.spend.toFixed(2)}
-- 展现量: ${row.impressions.toLocaleString()}
+- 花费金额: ${formatMoney(row.spend)}
+- 展现量: ${formatNumber(row.impressions)}
 - 点击量: ${row.clicks}
-- 点击率 (CTR): ${row.ctr.toFixed(2)}%
-- 千次显示费用 (CPM): $${row.cpm.toFixed(2)}
+- 点击率 (CTR): ${formatFixed(row.ctr, 2, "%")}
+- 千次显示费用 (CPM): ${formatMoney(row.cpm)}
 - 购买成效: ${row.purchases}
-- 获客成本 (CPA): $${row.cpa.toFixed(2)}
-- 转化 ROAS: ${row.roas.toFixed(2)}
+- 获客成本 (CPA): ${formatMoney(row.cpa)}
+- 转化 ROAS: ${formatFixed(row.roas)}
 
 请评估该 Creative ID 素材方案的转化成效，并针对后续的素材测试与创意设计迭代方向提供可行思路。`;
     }
@@ -525,17 +551,18 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
   };
 
   // Footer totals
-  const totalSpend = filteredData.reduce((sum, item) => sum + (item.spend || 0), 0);
-  const totalImpressions = filteredData.reduce((sum, item) => sum + (item.impressions || 0), 0);
-  const totalClicks = filteredData.reduce((sum, item) => sum + (item.clicks || 0), 0);
-  const totalPurchases = filteredData.reduce((sum, item) => sum + (item.purchases || 0), 0);
-  const totalPurchaseValue = filteredData.reduce((sum, item) => sum + (item.purchaseValue || item.purchase_value || 0), 0);
+  const performanceRowsForTotals = filteredData.filter(hasPerformanceFacts);
+  const totalSpend = performanceRowsForTotals.length ? performanceRowsForTotals.reduce((sum, item) => sum + Number(item.spend || 0), 0) : null;
+  const totalImpressions = performanceRowsForTotals.length ? performanceRowsForTotals.reduce((sum, item) => sum + Number(item.impressions || 0), 0) : null;
+  const totalClicks = performanceRowsForTotals.length ? performanceRowsForTotals.reduce((sum, item) => sum + Number(item.clicks || 0), 0) : null;
+  const totalPurchases = performanceRowsForTotals.length ? performanceRowsForTotals.reduce((sum, item) => sum + Number(item.purchases || 0), 0) : null;
+  const totalPurchaseValue = performanceRowsForTotals.length ? performanceRowsForTotals.reduce((sum, item) => sum + Number(item.purchaseValue || item.purchase_value || 0), 0) : null;
 
-  const totalCTR = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
-  const totalCPC = totalClicks > 0 ? totalSpend / totalClicks : 0;
-  const totalCPM = totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0;
-  const totalCPA = totalPurchases > 0 ? totalSpend / totalPurchases : 0;
-  const totalROAS = totalSpend > 0 ? totalPurchaseValue / totalSpend : 0;
+  const totalCTR = totalImpressions && totalClicks !== null ? (totalClicks / totalImpressions) * 100 : null;
+  const totalCPC = totalClicks && totalSpend !== null ? totalSpend / totalClicks : null;
+  const totalCPM = totalImpressions && totalSpend !== null ? (totalSpend / totalImpressions) * 1000 : null;
+  const totalCPA = totalPurchases && totalSpend !== null ? totalSpend / totalPurchases : null;
+  const totalROAS = totalSpend && totalPurchaseValue !== null ? totalPurchaseValue / totalSpend : null;
 
   return (
     <div id="ad-hierarchy-dashboard-container" className="flex flex-col h-full bg-[#f9fafb] p-6 space-y-6">
@@ -719,6 +746,8 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         scope={includeZeroSpend ? "全部广告结构" : "仅有消耗广告结构"}
         includeZeroSpend={includeZeroSpend}
       />
+
+      <DataCoverageBanner coverage={coverage} />
 
       {viewNotice && (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
@@ -909,15 +938,15 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                               )}
                             </TableCell>
                             <TableCell className="text-center font-bold text-xs text-slate-500 uppercase">{row.currency}</TableCell>
-                            <TableCell className="text-right font-semibold">${row.spend.toFixed(2)}</TableCell>
-                            <TableCell className="text-right text-slate-600">{row.impressions.toLocaleString()}</TableCell>
-                            <TableCell className="text-right text-slate-600">{row.clicks.toLocaleString()}</TableCell>
-                            <TableCell className="text-right font-medium">{row.ctr.toFixed(2)}%</TableCell>
-                            <TableCell className="text-right font-medium">${row.cpc.toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-medium text-slate-500">${row.cpm.toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-semibold">{formatMoney(row.spend)}</TableCell>
+                            <TableCell className="text-right text-slate-600">{formatNumber(row.impressions)}</TableCell>
+                            <TableCell className="text-right text-slate-600">{formatNumber(row.clicks)}</TableCell>
+                            <TableCell className="text-right font-medium">{formatFixed(row.ctr, 2, "%")}</TableCell>
+                            <TableCell className="text-right font-medium">{formatMoney(row.cpc)}</TableCell>
+                            <TableCell className="text-right font-medium text-slate-500">{formatMoney(row.cpm)}</TableCell>
                             <TableCell className="text-right font-semibold text-slate-800">{row.purchases}</TableCell>
-                            <TableCell className="text-right font-semibold text-slate-800">${row.cpa.toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-black text-blue-600 bg-blue-50/20">{row.roas.toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-semibold text-slate-800">{formatMoney(row.cpa)}</TableCell>
+                            <TableCell className="text-right font-black text-blue-600 bg-blue-50/20">{formatFixed(row.roas)}</TableCell>
                             <TableCell className="text-center">
                               <span className="inline-flex gap-1 text-[11px] font-mono text-slate-400">
                                 <span>{row.campaignCount}C</span>/
@@ -944,7 +973,8 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                                   size="sm"
                                   className="h-7 w-7 p-0 hover:bg-slate-100 text-indigo-500 hover:text-indigo-600"
                                   onClick={(e) => handleAskAI(row, e)}
-                                  title="向 AI 发问诊断"
+                                  disabled={!hasPerformanceFacts(row)}
+                                  title={hasPerformanceFacts(row) ? "向 AI 发问诊断" : "当前周期无成效事实，无法生成投放诊断"}
                                 >
                                   💬
                                 </Button>
@@ -973,15 +1003,15 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                               </span>
                             </TableCell>
                             <TableCell className="text-center text-xs text-slate-500 font-medium">{row.objective}</TableCell>
-                            <TableCell className="text-right font-semibold">${row.spend.toFixed(2)}</TableCell>
-                            <TableCell className="text-right text-slate-500">{row.impressions.toLocaleString()}</TableCell>
-                            <TableCell className="text-right text-slate-500">{row.clicks.toLocaleString()}</TableCell>
-                            <TableCell className="text-right font-medium">{row.ctr.toFixed(2)}%</TableCell>
-                            <TableCell className="text-right font-medium">${row.cpc.toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-medium text-slate-400">${row.cpm.toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-semibold">{formatMoney(row.spend)}</TableCell>
+                            <TableCell className="text-right text-slate-500">{formatNumber(row.impressions)}</TableCell>
+                            <TableCell className="text-right text-slate-500">{formatNumber(row.clicks)}</TableCell>
+                            <TableCell className="text-right font-medium">{formatFixed(row.ctr, 2, "%")}</TableCell>
+                            <TableCell className="text-right font-medium">{formatMoney(row.cpc)}</TableCell>
+                            <TableCell className="text-right font-medium text-slate-400">{formatMoney(row.cpm)}</TableCell>
                             <TableCell className="text-right font-semibold text-slate-800">{row.purchases}</TableCell>
-                            <TableCell className="text-right font-semibold text-slate-800">${row.cpa.toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-black text-blue-600">{row.roas.toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-semibold text-slate-800">{formatMoney(row.cpa)}</TableCell>
+                            <TableCell className="text-right font-black text-blue-600">{formatFixed(row.roas)}</TableCell>
                             <TableCell className="text-center">
                               <div className="flex items-center justify-center gap-1.5">
                                 <Button
@@ -1001,6 +1031,8 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                                   size="sm"
                                   className="h-7 w-7 p-0 text-indigo-500"
                                   onClick={(e) => handleAskAI(row, e)}
+                                  disabled={!hasPerformanceFacts(row)}
+                                  title={hasPerformanceFacts(row) ? "向 AI 发问诊断" : "当前周期无成效事实，无法生成投放诊断"}
                                 >
                                   💬
                                 </Button>
@@ -1026,15 +1058,15 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                                 {row.status}
                               </span>
                             </TableCell>
-                            <TableCell className="text-right font-semibold">${row.spend.toFixed(2)}</TableCell>
-                            <TableCell className="text-right text-slate-500">{row.impressions.toLocaleString()}</TableCell>
-                            <TableCell className="text-right text-slate-500">{row.clicks.toLocaleString()}</TableCell>
-                            <TableCell className="text-right font-medium">{row.ctr.toFixed(2)}%</TableCell>
-                            <TableCell className="text-right font-medium">${row.cpc.toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-medium text-slate-400">${row.cpm.toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-semibold">{formatMoney(row.spend)}</TableCell>
+                            <TableCell className="text-right text-slate-500">{formatNumber(row.impressions)}</TableCell>
+                            <TableCell className="text-right text-slate-500">{formatNumber(row.clicks)}</TableCell>
+                            <TableCell className="text-right font-medium">{formatFixed(row.ctr, 2, "%")}</TableCell>
+                            <TableCell className="text-right font-medium">{formatMoney(row.cpc)}</TableCell>
+                            <TableCell className="text-right font-medium text-slate-400">{formatMoney(row.cpm)}</TableCell>
                             <TableCell className="text-right font-semibold text-slate-800">{row.purchases}</TableCell>
-                            <TableCell className="text-right font-semibold text-slate-800">${row.cpa.toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-black text-blue-600">{row.roas.toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-semibold text-slate-800">{formatMoney(row.cpa)}</TableCell>
+                            <TableCell className="text-right font-black text-blue-600">{formatFixed(row.roas)}</TableCell>
                             <TableCell className="text-center">
                               <div className="flex items-center justify-center gap-1.5">
                                 <Button
@@ -1054,6 +1086,8 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                                   size="sm"
                                   className="h-7 w-7 p-0 text-indigo-500"
                                   onClick={(e) => handleAskAI(row, e)}
+                                  disabled={!hasPerformanceFacts(row)}
+                                  title={hasPerformanceFacts(row) ? "向 AI 发问诊断" : "当前周期无成效事实，无法生成投放诊断"}
                                 >
                                   💬
                                 </Button>
@@ -1085,21 +1119,23 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                             </TableCell>
                             <TableCell className="max-w-[150px] truncate text-slate-500 text-xs" title={row.adsetName}>{row.adsetName}</TableCell>
                             <TableCell className="max-w-[150px] truncate text-slate-500 text-xs" title={row.campaignName}>{row.campaignName}</TableCell>
-                            <TableCell className="text-right font-semibold">${row.spend.toFixed(2)}</TableCell>
-                            <TableCell className="text-right text-slate-500">{row.impressions.toLocaleString()}</TableCell>
-                            <TableCell className="text-right text-slate-500">{row.clicks.toLocaleString()}</TableCell>
-                            <TableCell className="text-right font-medium">{row.ctr.toFixed(2)}%</TableCell>
-                            <TableCell className="text-right font-medium">${row.cpc.toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-medium text-slate-400">${row.cpm.toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-semibold">{formatMoney(row.spend)}</TableCell>
+                            <TableCell className="text-right text-slate-500">{formatNumber(row.impressions)}</TableCell>
+                            <TableCell className="text-right text-slate-500">{formatNumber(row.clicks)}</TableCell>
+                            <TableCell className="text-right font-medium">{formatFixed(row.ctr, 2, "%")}</TableCell>
+                            <TableCell className="text-right font-medium">{formatMoney(row.cpc)}</TableCell>
+                            <TableCell className="text-right font-medium text-slate-400">{formatMoney(row.cpm)}</TableCell>
                             <TableCell className="text-right font-semibold text-slate-800">{row.purchases}</TableCell>
-                            <TableCell className="text-right font-semibold text-slate-800">${row.cpa.toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-black text-blue-600">{row.roas.toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-semibold text-slate-800">{formatMoney(row.cpa)}</TableCell>
+                            <TableCell className="text-right font-black text-blue-600">{formatFixed(row.roas)}</TableCell>
                             <TableCell className="text-center">
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 w-7 p-0 text-indigo-500"
                                 onClick={(e) => handleAskAI(row, e)}
+                                disabled={!hasPerformanceFacts(row)}
+                                title={hasPerformanceFacts(row) ? "向 AI 发问诊断" : "当前周期无成效事实，无法生成投放诊断"}
                               >
                                 💬
                               </Button>
@@ -1123,15 +1159,15 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                           <TableCell className="text-slate-400">—</TableCell>
                           <TableCell className="text-slate-400">—</TableCell>
                           <TableCell className="text-slate-400">—</TableCell>
-                          <TableCell className="text-right font-bold text-slate-900">${totalSpend.toFixed(2)}</TableCell>
-                          <TableCell className="text-right text-slate-700">{totalImpressions.toLocaleString()}</TableCell>
-                          <TableCell className="text-right text-slate-700">{totalClicks.toLocaleString()}</TableCell>
-                          <TableCell className="text-right text-slate-900">{totalCTR.toFixed(2)}%</TableCell>
-                          <TableCell className="text-right text-slate-900">${totalCPC.toFixed(2)}</TableCell>
-                          <TableCell className="text-right text-slate-500">${totalCPM.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-bold text-slate-900">{formatMoney(totalSpend)}</TableCell>
+                          <TableCell className="text-right text-slate-700">{formatNumber(totalImpressions)}</TableCell>
+                          <TableCell className="text-right text-slate-700">{formatNumber(totalClicks)}</TableCell>
+                          <TableCell className="text-right text-slate-900">{formatFixed(totalCTR, 2, "%")}</TableCell>
+                          <TableCell className="text-right text-slate-900">{formatMoney(totalCPC)}</TableCell>
+                          <TableCell className="text-right text-slate-500">{formatMoney(totalCPM)}</TableCell>
                           <TableCell className="text-right font-bold text-slate-900">{totalPurchases}</TableCell>
-                          <TableCell className="text-right font-bold text-slate-900">${totalCPA.toFixed(2)}</TableCell>
-                          <TableCell className="text-right font-black text-blue-600 bg-blue-100/20">{totalROAS.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-bold text-slate-900">{formatMoney(totalCPA)}</TableCell>
+                          <TableCell className="text-right font-black text-blue-600 bg-blue-100/20">{formatFixed(totalROAS)}</TableCell>
                           <TableCell className="text-slate-400">—</TableCell>
                           <TableCell className="text-slate-400">—</TableCell>
                         </>
@@ -1143,15 +1179,15 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                           <TableCell className="text-slate-400">—</TableCell>
                           <TableCell className="text-slate-400">—</TableCell>
                           <TableCell className="text-slate-400">—</TableCell>
-                          <TableCell className="text-right font-bold text-slate-900">${totalSpend.toFixed(2)}</TableCell>
-                          <TableCell className="text-right text-slate-700">{totalImpressions.toLocaleString()}</TableCell>
-                          <TableCell className="text-right text-slate-700">{totalClicks.toLocaleString()}</TableCell>
-                          <TableCell className="text-right text-slate-900">{totalCTR.toFixed(2)}%</TableCell>
-                          <TableCell className="text-right text-slate-900">${totalCPC.toFixed(2)}</TableCell>
-                          <TableCell className="text-right text-slate-500">${totalCPM.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-bold text-slate-900">{formatMoney(totalSpend)}</TableCell>
+                          <TableCell className="text-right text-slate-700">{formatNumber(totalImpressions)}</TableCell>
+                          <TableCell className="text-right text-slate-700">{formatNumber(totalClicks)}</TableCell>
+                          <TableCell className="text-right text-slate-900">{formatFixed(totalCTR, 2, "%")}</TableCell>
+                          <TableCell className="text-right text-slate-900">{formatMoney(totalCPC)}</TableCell>
+                          <TableCell className="text-right text-slate-500">{formatMoney(totalCPM)}</TableCell>
                           <TableCell className="text-right font-bold text-slate-900">{totalPurchases}</TableCell>
-                          <TableCell className="text-right font-bold text-slate-900">${totalCPA.toFixed(2)}</TableCell>
-                          <TableCell className="text-right font-black text-blue-600">{totalROAS.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-bold text-slate-900">{formatMoney(totalCPA)}</TableCell>
+                          <TableCell className="text-right font-black text-blue-600">{formatFixed(totalROAS)}</TableCell>
                           <TableCell className="text-slate-400">—</TableCell>
                         </>
                       )}
@@ -1162,15 +1198,15 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                           <TableCell className="text-slate-400">—</TableCell>
                           <TableCell className="text-slate-400">—</TableCell>
                           <TableCell className="text-slate-400">—</TableCell>
-                          <TableCell className="text-right font-bold text-slate-900">${totalSpend.toFixed(2)}</TableCell>
-                          <TableCell className="text-right text-slate-700">{totalImpressions.toLocaleString()}</TableCell>
-                          <TableCell className="text-right text-slate-700">{totalClicks.toLocaleString()}</TableCell>
-                          <TableCell className="text-right text-slate-900">{totalCTR.toFixed(2)}%</TableCell>
-                          <TableCell className="text-right text-slate-900">${totalCPC.toFixed(2)}</TableCell>
-                          <TableCell className="text-right text-slate-500">${totalCPM.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-bold text-slate-900">{formatMoney(totalSpend)}</TableCell>
+                          <TableCell className="text-right text-slate-700">{formatNumber(totalImpressions)}</TableCell>
+                          <TableCell className="text-right text-slate-700">{formatNumber(totalClicks)}</TableCell>
+                          <TableCell className="text-right text-slate-900">{formatFixed(totalCTR, 2, "%")}</TableCell>
+                          <TableCell className="text-right text-slate-900">{formatMoney(totalCPC)}</TableCell>
+                          <TableCell className="text-right text-slate-500">{formatMoney(totalCPM)}</TableCell>
                           <TableCell className="text-right font-bold text-slate-900">{totalPurchases}</TableCell>
-                          <TableCell className="text-right font-bold text-slate-900">${totalCPA.toFixed(2)}</TableCell>
-                          <TableCell className="text-right font-black text-blue-600">{totalROAS.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-bold text-slate-900">{formatMoney(totalCPA)}</TableCell>
+                          <TableCell className="text-right font-black text-blue-600">{formatFixed(totalROAS)}</TableCell>
                           <TableCell className="text-slate-400">—</TableCell>
                         </>
                       )}
@@ -1182,15 +1218,15 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                           <TableCell className="text-slate-400">—</TableCell>
                           <TableCell className="text-slate-400">—</TableCell>
                           <TableCell className="text-slate-400">—</TableCell>
-                          <TableCell className="text-right font-bold text-slate-900">${totalSpend.toFixed(2)}</TableCell>
-                          <TableCell className="text-right text-slate-700">{totalImpressions.toLocaleString()}</TableCell>
-                          <TableCell className="text-right text-slate-700">{totalClicks.toLocaleString()}</TableCell>
-                          <TableCell className="text-right text-slate-900">{totalCTR.toFixed(2)}%</TableCell>
-                          <TableCell className="text-right text-slate-900">${totalCPC.toFixed(2)}</TableCell>
-                          <TableCell className="text-right text-slate-500">${totalCPM.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-bold text-slate-900">{formatMoney(totalSpend)}</TableCell>
+                          <TableCell className="text-right text-slate-700">{formatNumber(totalImpressions)}</TableCell>
+                          <TableCell className="text-right text-slate-700">{formatNumber(totalClicks)}</TableCell>
+                          <TableCell className="text-right text-slate-900">{formatFixed(totalCTR, 2, "%")}</TableCell>
+                          <TableCell className="text-right text-slate-900">{formatMoney(totalCPC)}</TableCell>
+                          <TableCell className="text-right text-slate-500">{formatMoney(totalCPM)}</TableCell>
                           <TableCell className="text-right font-bold text-slate-900">{totalPurchases}</TableCell>
-                          <TableCell className="text-right font-bold text-slate-900">${totalCPA.toFixed(2)}</TableCell>
-                          <TableCell className="text-right font-black text-blue-600">{totalROAS.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-bold text-slate-900">{formatMoney(totalCPA)}</TableCell>
+                          <TableCell className="text-right font-black text-blue-600">{formatFixed(totalROAS)}</TableCell>
                           <TableCell className="text-slate-400">—</TableCell>
                         </>
                       )}

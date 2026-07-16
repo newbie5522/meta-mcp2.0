@@ -16,6 +16,7 @@ import { runDataCenterAudit } from "../services/data-center-audit.service.js";
 import { runDataCenterRebuild } from "../services/data-center-rebuild.service.js";
 import { getFreshnessMeta } from "../services/data-center-auto-refresh.service.js";
 import { getDataSourceCoverage, getCoverageMap } from "../services/data-coverage.service.js";
+import { getCanonicalAdHierarchy } from "../services/ad-hierarchy.service.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -2767,6 +2768,14 @@ router.get("/ad-hierarchy/campaigns", async (req, res) => {
     const { startStr, endStr } = getAppliedDateRange(req.query);
     const appliedFilters = buildAppliedFilters({ startStr, endStr, accountId });
     const showAll = includeZeroSpend === "true";
+    const canonicalHierarchy = await getCanonicalAdHierarchy({
+      level: "campaign",
+      accountId: String(accountId),
+      startDate: startStr,
+      endDate: endStr,
+      includeZeroSpend: showAll
+    });
+    return res.json(canonicalHierarchy);
     const normAccountId = normalizeMetaAccountId(String(accountId));
     const numericAccountId = normAccountId.replace(/^act_/, "");
     const hierarchyCoverage = await getDataSourceCoverage({
@@ -2951,6 +2960,15 @@ router.get("/ad-hierarchy/adsets", async (req, res) => {
     const { startStr, endStr } = getAppliedDateRange(req.query);
     const appliedFilters = buildAppliedFilters({ startStr, endStr, accountId });
     const showAll = includeZeroSpend === "true";
+    const canonicalHierarchy = await getCanonicalAdHierarchy({
+      level: "adset",
+      accountId: String(accountId),
+      campaignId: String(campaignId),
+      startDate: startStr,
+      endDate: endStr,
+      includeZeroSpend: showAll
+    });
+    return res.json(canonicalHierarchy);
     const normAccountId = normalizeMetaAccountId(String(accountId));
     const numericAccountId = normAccountId.replace(/^act_/, "");
     const hierarchyCoverage = await getDataSourceCoverage({
@@ -3142,6 +3160,15 @@ router.get("/ad-hierarchy/ads", async (req, res) => {
     const { startStr, endStr } = getAppliedDateRange(req.query);
     const appliedFilters = buildAppliedFilters({ startStr, endStr, accountId });
     const showAll = includeZeroSpend === "true";
+    const canonicalHierarchy = await getCanonicalAdHierarchy({
+      level: "ad",
+      accountId: String(accountId),
+      adsetId: String(adsetId),
+      startDate: startStr,
+      endDate: endStr,
+      includeZeroSpend: showAll
+    });
+    return res.json(canonicalHierarchy);
     const normAccountId = normalizeMetaAccountId(String(accountId));
     const numericAccountId = normAccountId.replace(/^act_/, "");
     const hierarchyCoverage = await getDataSourceCoverage({

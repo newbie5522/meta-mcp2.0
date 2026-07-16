@@ -118,6 +118,32 @@ describe("deriveSyncStatus", () => {
       recordsUpdated: 0
     })).toBe("FAILED");
   });
+
+  it("treats failed slices as PARTIAL_SUCCESS when records exist", () => {
+    expect(deriveSyncStatus({
+      hasFailedTask: false,
+      failedAccounts: [],
+      failedSlices: [{ accountId: "act_1", slice: "2026-07-01" }],
+      truncated: false,
+      coverageComplete: true,
+      recordsFetched: 3,
+      recordsSaved: 3,
+      recordsUpdated: 0
+    })).toBe("PARTIAL_SUCCESS");
+  });
+
+  it("treats truncated or incomplete coverage as FAILED without saved records", () => {
+    expect(deriveSyncStatus({
+      hasFailedTask: false,
+      failedAccounts: [],
+      failedSlices: [],
+      truncated: true,
+      coverageComplete: false,
+      recordsFetched: 0,
+      recordsSaved: 0,
+      recordsUpdated: 0
+    })).toBe("FAILED");
+  });
 });
 
 describe("POST /sync/trigger derived status", () => {
@@ -175,6 +201,30 @@ describe("POST /sync/trigger derived status", () => {
     expect(response.body.success).toBe(true);
     expect(response.body.status).toBe("PARTIAL_SUCCESS");
     expect(response.body.message).toContain("部分任务执行失败");
+  });
+
+  it("surfaces slice coverage fields in partial success responses", async () => {
+    prismaMock.syncLog.findMany.mockResolvedValue([{
+      status: "success",
+      recordsFetched: 2,
+      recordsSaved: 2,
+      metadata: {
+        failedSlices: [{ accountId: "act_1", slice: "creative:2" }],
+        truncated: true,
+        coverageComplete: false
+      }
+    }]);
+
+    const response = await invokeTrigger({ taskType: "sync_view_products" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toMatchObject({
+      success: true,
+      status: "PARTIAL_SUCCESS",
+      failedSlices: [{ accountId: "act_1", slice: "creative:2" }],
+      truncated: true,
+      coverageComplete: false
+    });
   });
 });
 

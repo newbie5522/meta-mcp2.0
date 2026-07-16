@@ -35,4 +35,26 @@ describe("Creative page state contract", () => {
     expect(state.summary).toBeNull();
     expect(state.bucketSummary).toEqual({});
   });
+
+  it("preserves server pagination row counts from the current page response", () => {
+    const state = resolveCreativePageState({
+      performanceRows: [{ id: "creative-page-row", type: "VIDEO" }],
+      summary: { spend: 25 },
+      bucketSummary: { scale: 1 },
+      coverage: { status: "READY" },
+      pagination: { page: 2, pageSize: 25, total: 80, totalPages: 4 },
+      pageRowCount: 25,
+      filteredTotalCount: 80
+    });
+
+    expect(state.performanceRows).toHaveLength(1);
+    expect(state.pagination).toMatchObject({
+      page: 2,
+      pageSize: 25,
+      total: 80,
+      totalPages: 4,
+      pageRowCount: 25,
+      filteredTotalCount: 80
+    });
+  });
 });
