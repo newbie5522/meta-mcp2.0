@@ -34,48 +34,6 @@ function daysRange(days: number): { since: string; until: string } {
   };
 }
 
-function buildUnavailableActionInsight(input: {
-  spend: number;
-  impressions: number;
-  clicks: number;
-  revenue: number;
-  orders: number;
-}) {
-  const ctr = input.impressions > 0 ? Number(((input.clicks / input.impressions) * 100).toFixed(2)) : 0;
-  const cpc = input.clicks > 0 ? Number((input.spend / input.clicks).toFixed(2)) : 0;
-  const cpm = input.impressions > 0 ? Number(((input.spend / input.impressions) * 1000).toFixed(2)) : 0;
-  const cpa = input.orders > 0 ? Number((input.spend / input.orders).toFixed(2)) : null;
-
-  return {
-    spend: input.spend,
-    impressions: input.impressions,
-    reach: null,
-    reachAvailable: false,
-    clicks: input.clicks,
-    inline_link_clicks: null,
-    inlineLinkClicksAvailable: false,
-    inline_link_click_ctr: null,
-    cost_per_inline_link_click: null,
-    ctr,
-    cpc,
-    cpm,
-    cpa,
-    frequency: null,
-    frequencyAvailable: false,
-    addToCart: null,
-    addToCartAvailable: false,
-    initiateCheckout: null,
-    initiateCheckoutAvailable: false,
-    budgetAvailable: false,
-    actions: [
-      { action_type: "purchase", value: String(input.orders) }
-    ],
-    action_values: [
-      { action_type: "purchase", value: String(input.revenue) }
-    ]
-  };
-}
-
 export function normalizeDetailsLevel(level: unknown): CanonicalAdHierarchyLevel | null {
   if (level === "campaigns" || level === "campaign") return "campaign";
   if (level === "adsets" || level === "adset") return "adset";
@@ -584,316 +542,52 @@ router.get("", async (req, res) => {
   }
 });
 
-router.get("/:accountId/details", async (req, res) => {
-  const { accountId } = req.params;
-  const { level = "campaigns", startDate, endDate } = req.query;
+export function createAccountDetailsHandler(deps = {
+  getCanonicalAdHierarchy,
+  mapCanonicalHierarchyToAccountDetails
+}) {
+  return async (req: any, res: any) => {
+    const { accountId } = req.params;
+    const { level = "campaigns", startDate, endDate, includeZeroSpend } = req.query;
 
-  try {
-    const isAll = (accountId === "all_active" || accountId === "all");
-    const normAccountId = normalizeMetaAccountId(accountId);
-    const dateStart = startDate ? String(startDate) : dayjs().subtract(30, 'day').format('YYYY-MM-DD');
-    const dateEnd = endDate ? String(endDate) : dayjs().format('YYYY-MM-DD');
-    const canonicalLevel = normalizeDetailsLevel(level);
+    try {
+      const dateStart = startDate ? String(startDate) : dayjs().subtract(30, 'day').format('YYYY-MM-DD');
+      const dateEnd = endDate ? String(endDate) : dayjs().format('YYYY-MM-DD');
+      const canonicalLevel = normalizeDetailsLevel(level);
 
-    if (canonicalLevel && !isAll) {
-      const canonicalHierarchy = await getCanonicalAdHierarchy({
+      if (!canonicalLevel) {
+        return res.status(400).json({
+          error: "UNKNOWN_HIERARCHY_LEVEL",
+          level
+        });
+      }
+
+      const isAll = accountId === "all_active" || accountId === "all";
+      const canonicalHierarchy = await deps.getCanonicalAdHierarchy({
         level: canonicalLevel,
-        accountId: normAccountId,
+        accountId: isAll ? "all" : normalizeMetaAccountId(accountId),
+        scope: isAll ? "all_accounts" : "current_account",
         startDate: dateStart,
         endDate: dateEnd,
-        includeZeroSpend: true
+        includeZeroSpend: includeZeroSpend === "true" || includeZeroSpend === true
       });
 
       return res.json({
-        data: mapCanonicalHierarchyToAccountDetails(canonicalLevel, canonicalHierarchy.data),
+        data: deps.mapCanonicalHierarchyToAccountDetails(canonicalLevel, canonicalHierarchy.data),
         isFallbackCached: false,
         coverage: canonicalHierarchy.coverage,
         sourceCoverage: canonicalHierarchy.sourceCoverage,
         dataHealth: canonicalHierarchy.dataHealth,
         dateRange: canonicalHierarchy.dateRange
       });
+    } catch (error: any) {
+      console.error("Failed to load details for account:", accountId, error.message);
+      return res.status(500).json({ error: "Failed to fetch account level details", details: error.message });
     }
+  };
+}
 
-    // 1. Get the entities depending on the level requested
-    if (level === "campaigns" || level === "campaign") {
-      let campaigns;
-      if (isAll) {
-        campaigns = await prisma.campaign.findMany();
-      } else {
-        campaigns = await prisma.campaign.findMany({
-          where: { accountId: normAccountId }
-        });
-      }
-
-      // Bulk fetch performance metrics from canonical FactMetaPerformance
-      const summariesRaw = await prisma.factMetaPerformance.findMany({
-        where: {
-          level: "campaign",
-          date: { gte: dateStart, lte: dateEnd },
-          ...(isAll ? {} : { account_id: normAccountId })
-        }
-      });
-
-      // Map FactMetaPerformance rows to expected summary format to avoid breaking downstream fields
-      const summaries = summariesRaw.map(s => ({
-        id: s.id,
-        date: s.date,
-        scope: "campaign",
-        scopeId: s.entity_id || s.campaign_id,
-        spend: s.spend,
-        impressions: s.impressions,
-        clicks: s.clicks,
-        revenue: s.purchase_value,
-        orders: s.purchases
-      }));
-
-      const existingCampaignIds = new Set(campaigns.map(c => c.id));
-      const finalCampaigns = [...campaigns];
-
-      if (isAll) {
-        summaries.forEach((s) => {
-          if (s.spend > 0 && !existingCampaignIds.has(s.scopeId)) {
-            finalCampaigns.push({
-              id: s.scopeId,
-              name: `[结构未同步] Campaign ${s.scopeId}`,
-              accountId: "all",
-              status: "UNKNOWN"
-            });
-            existingCampaignIds.add(s.scopeId);
-          }
-        });
-      }
-
-      // Filter summaries to only include those in finalCampaigns
-      const validCampaignIds = new Set(finalCampaigns.map(c => c.id));
-      const filteredSummaries = summaries.filter(s => validCampaignIds.has(s.scopeId));
-
-      // Map-grouping to prevent N+1 overhead
-      const summaryMap: Record<string, typeof summaries> = {};
-      filteredSummaries.forEach((s) => {
-        if (!summaryMap[s.scopeId]) {
-          summaryMap[s.scopeId] = [];
-        }
-        summaryMap[s.scopeId].push(s);
-      });
-
-      const processedData = finalCampaigns.map((camp) => {
-        const campSummaries = summaryMap[camp.id] || [];
-        const spend = campSummaries.reduce((sum, s) => sum + s.spend, 0);
-        const impressions = campSummaries.reduce((sum, s) => sum + s.impressions, 0);
-        const clicks = campSummaries.reduce((sum, s) => sum + s.clicks, 0);
-        const revenue = campSummaries.reduce((sum, s) => sum + s.revenue, 0);
-        const orders = campSummaries.reduce((sum, s) => sum + s.orders, 0);
-
-        return {
-          id: camp.id,
-          name: camp.name,
-          status: camp.status || "UNKNOWN",
-          daily_budget: null,
-          budgetAvailable: false,
-          insights: {
-            data: [buildUnavailableActionInsight({ spend, impressions, clicks, revenue, orders })]
-          }
-        };
-      });
-
-      return res.json({ data: processedData, isFallbackCached: false });
-    }
-
-    if (level === "adsets" || level === "adset") {
-      let adsets;
-      if (isAll) {
-        adsets = await prisma.adSet.findMany();
-      } else {
-        const campaigns = await prisma.campaign.findMany({
-          where: { accountId: normAccountId },
-          select: { id: true }
-        });
-        const campaignIds = campaigns.map(c => c.id);
-
-        adsets = await prisma.adSet.findMany({
-          where: { campaignId: { in: campaignIds } }
-        });
-      }
-
-      // Bulk fetch performance metrics from FactMetaPerformance instead of DailySummary
-      const summariesRaw = await prisma.factMetaPerformance.findMany({
-        where: {
-          level: "adset",
-          date: { gte: dateStart, lte: dateEnd },
-          ...(isAll ? {} : { account_id: normAccountId })
-        }
-      });
-
-      const summaries = summariesRaw.map(s => ({
-        id: s.id,
-        date: s.date,
-        scope: "adset",
-        scopeId: s.entity_id || s.adset_id,
-        spend: s.spend,
-        impressions: s.impressions,
-        clicks: s.clicks,
-        revenue: s.purchase_value,
-        orders: s.purchases
-      }));
-
-      const existingAdSetIds = new Set(adsets.map(s => s.id));
-      const finalAdsets = [...adsets];
-
-      if (isAll) {
-        summaries.forEach((s) => {
-          if (s.spend > 0 && !existingAdSetIds.has(s.scopeId)) {
-            finalAdsets.push({
-              id: s.scopeId,
-              campaignId: "unknown",
-              name: `[结构未同步] AdSet ${s.scopeId}`,
-              status: "UNKNOWN"
-            });
-            existingAdSetIds.add(s.scopeId);
-          }
-        });
-      }
-
-      // Filter summaries to only include those in finalAdsets
-      const validAdSetIds = new Set(finalAdsets.map(s => s.id));
-      const filteredSummaries = summaries.filter(s => validAdSetIds.has(s.scopeId));
-
-      const summaryMap: Record<string, typeof summaries> = {};
-      filteredSummaries.forEach((s) => {
-        if (!summaryMap[s.scopeId]) {
-          summaryMap[s.scopeId] = [];
-        }
-        summaryMap[s.scopeId].push(s);
-      });
-
-      const processedData = finalAdsets.map((set) => {
-        const setSummaries = summaryMap[set.id] || [];
-        const spend = setSummaries.reduce((sum, s) => sum + s.spend, 0);
-        const impressions = setSummaries.reduce((sum, s) => sum + s.impressions, 0);
-        const clicks = setSummaries.reduce((sum, s) => sum + s.clicks, 0);
-        const revenue = setSummaries.reduce((sum, s) => sum + s.revenue, 0);
-        const orders = setSummaries.reduce((sum, s) => sum + s.orders, 0);
-
-        return {
-          id: set.id,
-          campaign_id: set.campaignId,
-          name: set.name,
-          status: "UNKNOWN",
-          daily_budget: null,
-          budgetAvailable: false,
-          insights: {
-            data: [buildUnavailableActionInsight({ spend, impressions, clicks, revenue, orders })]
-          }
-        };
-      });
-
-      return res.json({ data: processedData, isFallbackCached: false });
-    }
-
-    if (level === "ads" || level === "ad") {
-      let ads;
-      if (isAll) {
-        ads = await prisma.ad.findMany();
-      } else {
-        const campaigns = await prisma.campaign.findMany({
-          where: { accountId: normAccountId },
-          select: { id: true }
-        });
-        const campaignIds = campaigns.map(c => c.id);
-
-        const adsets = await prisma.adSet.findMany({
-          where: { campaignId: { in: campaignIds } },
-          select: { id: true }
-        });
-        const adsetIds = adsets.map(s => s.id);
-
-        ads = await prisma.ad.findMany({
-          where: { adsetId: { in: adsetIds } }
-        });
-      }
-
-      // Bulk fetch performance metrics from FactMetaPerformance instead of DailySummary
-      const summariesRaw = await prisma.factMetaPerformance.findMany({
-        where: {
-          level: "ad",
-          date: { gte: dateStart, lte: dateEnd },
-          ...(isAll ? {} : { account_id: normAccountId })
-        }
-      });
-
-      const summaries = summariesRaw.map(s => ({
-        id: s.id,
-        date: s.date,
-        scope: "ad",
-        scopeId: s.entity_id || s.ad_id,
-        spend: s.spend,
-        impressions: s.impressions,
-        clicks: s.clicks,
-        revenue: s.purchase_value,
-        orders: s.purchases
-      }));
-
-      const existingAdIds = new Set(ads.map(a => a.id));
-      const finalAds = [...ads];
-
-      if (isAll) {
-        summaries.forEach((s) => {
-          if (s.spend > 0 && !existingAdIds.has(s.scopeId)) {
-            finalAds.push({
-              id: s.scopeId,
-              campaignId: "unknown",
-              adsetId: "unknown",
-              name: `[结构未同步] Ad ${s.scopeId}`,
-              creativeId: "unknown",
-              status: "UNKNOWN"
-            });
-            existingAdIds.add(s.scopeId);
-          }
-        });
-      }
-
-      // Filter summaries to only include those in finalAds
-      const validAdIds = new Set(finalAds.map(a => a.id));
-      const filteredSummaries = summaries.filter(s => validAdIds.has(s.scopeId));
-
-      const summaryMap: Record<string, typeof summaries> = {};
-      filteredSummaries.forEach((s) => {
-        if (!summaryMap[s.scopeId]) {
-          summaryMap[s.scopeId] = [];
-        }
-        summaryMap[s.scopeId].push(s);
-      });
-
-      const processedData = finalAds.map((ad) => {
-        const adSummaries = summaryMap[ad.id] || [];
-        const spend = adSummaries.reduce((sum, s) => sum + s.spend, 0);
-        const impressions = adSummaries.reduce((sum, s) => sum + s.impressions, 0);
-        const clicks = adSummaries.reduce((sum, s) => sum + s.clicks, 0);
-        const revenue = adSummaries.reduce((sum, s) => sum + s.revenue, 0);
-        const orders = adSummaries.reduce((sum, s) => sum + s.orders, 0);
-
-        return {
-          id: ad.id,
-          campaign_id: ad.campaignId,
-          adset_id: ad.adsetId,
-          name: ad.name,
-          creative_id: ad.creativeId,
-          status: "UNKNOWN",
-          insights: {
-            data: [buildUnavailableActionInsight({ spend, impressions, clicks, revenue, orders })]
-          }
-        };
-      });
-
-      return res.json({ data: processedData, isFallbackCached: false });
-    }
-
-    return res.json({ data: [], isFallbackCached: true });
-  } catch (error: any) {
-    console.error("Failed to load details for account:", accountId, error.message);
-    return res.status(500).json({ error: "Failed to fetch account level details", details: error.message });
-  }
-});
+router.get("/:accountId/details", createAccountDetailsHandler());
 
 router.get("/:accountId/audience-insights", async (req, res) => {
   const { accountId } = req.params;

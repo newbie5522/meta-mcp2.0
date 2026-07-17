@@ -29,15 +29,16 @@ import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel"
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
 import { DataCoverageBanner } from "./common/DataCoverageBanner";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
+import { buildDataViewRequestKey } from "@/lib/data-view-state";
 import {
-  buildDataViewRequestKey,
-  CURRENT_RANGE_NOT_READY_MESSAGE,
-  DATE_RANGE_MISMATCH_MESSAGE,
-  getSafeLastGoodData,
-  isDateRangeMismatch,
-  makeLastGoodData,
-  shouldPreserveLastGoodData
-} from "@/lib/data-view-state";
+  buildHierarchyPerformanceTotals,
+  dispatchCampaignAiRequest,
+  formatFixed,
+  formatMoney,
+  formatNumber,
+  hasPerformanceFacts,
+  resolveCampaignStructureResponseState
+} from "./campaign-structure-view-state";
 
 function getHierarchyEmptyMessage(dataHealth: any, includeZeroSpend: boolean) {
   if (dataHealth?.status === "EMPTY_STRUCTURE" || dataHealth?.reason === "NO_STRUCTURE_ROWS") {
@@ -53,22 +54,6 @@ function getHierarchyEmptyMessage(dataHealth: any, includeZeroSpend: boolean) {
   }
 
   return "未检索到符合条件的层级节点。请检查日期范围、账户筛选或同步状态。";
-}
-
-export function hasPerformanceFacts(row: any) {
-  return row?.hasPerformanceFacts !== false && row?.spend !== null && row?.impressions !== null;
-}
-
-export function formatNumber(value: any) {
-  return value === null || value === undefined ? "N/A" : Number(value).toLocaleString();
-}
-
-export function formatFixed(value: any, digits = 2, suffix = "") {
-  return value === null || value === undefined ? "N/A" : `${Number(value).toFixed(digits)}${suffix}`;
-}
-
-export function formatMoney(value: any) {
-  return value === null || value === undefined ? "N/A" : `$${Number(value).toFixed(2)}`;
 }
 
 export function CampaignStructureDashboard({ startDate, endDate }: { startDate: Date; endDate: Date }) {
@@ -180,29 +165,20 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
           appliedFilters: accountsRes.data?.appliedFilters,
           dateRange: accountsRes.data?.dateRange
         };
-        setResponseDateRange(statePayload.dateRange || null);
-        if (isDateRangeMismatch(statePayload, startStr, endStr)) {
-          setData([]);
-          setStructureSummary(null);
-          setDataHealth({ status: "DATE_RANGE_MISMATCH", message: DATE_RANGE_MISMATCH_MESSAGE });
-          setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
-          return;
-        }
-        if (shouldPreserveLastGoodData(statePayload, rows, lastGoodData, requestKey)) {
-          const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
-          if (safeLastGoodData) {
-            setData(safeLastGoodData.data || []);
-            setStructureSummary(safeLastGoodData.structureSummary || null);
-            setDataHealth(safeLastGoodData.dataHealth || null);
-            setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-            return;
-          }
-        }
-        setStructureSummary(accountsRes.data || null);
-        setDataHealth(nextHealth);
-        setData(rows);
-        setLastGoodData(makeLastGoodData(requestKey, rows, { structureSummary: accountsRes.data || null, dataHealth: nextHealth }));
-        setViewNotice(null);
+        const state = resolveCampaignStructureResponseState({
+          payload: statePayload,
+          rows,
+          startStr,
+          endStr,
+          requestKey,
+          lastGoodData
+        });
+        setResponseDateRange(state.responseDateRange);
+        setData(state.data);
+        setStructureSummary(state.structureSummary);
+        setDataHealth(state.dataHealth);
+        setLastGoodData(state.nextLastGoodData);
+        setViewNotice(state.viewNotice);
         return;
       }
 
@@ -225,30 +201,20 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
       const hierarchyPayload = res.data || {};
       let nextData: any[] = hierarchyPayload.data || [];
       setCoverage(hierarchyPayload.coverage || hierarchyPayload.sourceCoverage || null);
-      setResponseDateRange(hierarchyPayload.dateRange || hierarchyPayload.appliedFilters || null);
-
-      if (isDateRangeMismatch(hierarchyPayload, startStr, endStr)) {
-        setData([]);
-        setStructureSummary(hierarchyPayload);
-        setDataHealth({ status: "DATE_RANGE_MISMATCH", message: DATE_RANGE_MISMATCH_MESSAGE });
-        setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
-        return;
-      }
-      if (shouldPreserveLastGoodData(hierarchyPayload, nextData, lastGoodData, requestKey)) {
-        const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
-        if (safeLastGoodData) {
-          setData(safeLastGoodData.data || []);
-          setStructureSummary(safeLastGoodData.structureSummary || null);
-          setDataHealth(safeLastGoodData.dataHealth || null);
-          setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-          return;
-        }
-      }
-      setStructureSummary(hierarchyPayload);
-      setDataHealth(hierarchyPayload.dataHealth || hierarchyPayload.health || null);
-      setData(nextData);
-      setLastGoodData(makeLastGoodData(requestKey, nextData, { structureSummary: hierarchyPayload, dataHealth: hierarchyPayload.dataHealth || hierarchyPayload.health || null }));
-      setViewNotice(null);
+      const state = resolveCampaignStructureResponseState({
+        payload: hierarchyPayload,
+        rows: nextData,
+        startStr,
+        endStr,
+        requestKey,
+        lastGoodData
+      });
+      setResponseDateRange(state.responseDateRange);
+      setData(state.data);
+      setStructureSummary(state.structureSummary);
+      setDataHealth(state.dataHealth);
+      setLastGoodData(state.nextLastGoodData);
+      setViewNotice(state.viewNotice);
     } catch (e: any) {
       console.error("Failed to fetch ad hierarchy details:", e);
       toast.error("获取层级数据失败: " + (e.response?.data?.error || e.message));
@@ -354,101 +320,24 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
   // AI prompt builder customized for current active level
   const handleAskAI = (row: any, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!hasPerformanceFacts(row)) {
+    const result = dispatchCampaignAiRequest({
+      row,
+      viewLevel,
+      startDate: format(startDate, "yyyy-MM-dd"),
+      endDate: format(endDate, "yyyy-MM-dd"),
+      selectedAccount,
+      selectedAccountName,
+      selectedCampaignId,
+      selectedAdSetId,
+      dispatchEvent: (event) => window.dispatchEvent(event),
+      writeClipboard: (text) => navigator.clipboard.writeText(text).catch(() => undefined)
+    });
+
+    if (result.blocked) {
       toast.warning("当前周期无成效事实，无法生成投放诊断");
       return;
     }
 
-    let promptText = "";
-    if (viewLevel === "accounts") {
-      promptText = `分析 Meta 广告账户表现 [${row.fb_account_name}] (ID: ${row.fb_account_id})：
-- 日期范围: ${format(startDate, "yyyy-MM-dd")} ~ ${format(endDate, "yyyy-MM-dd")}
-- 绑定店铺: ${row.storeName}
-- 花费金额: ${formatMoney(row.spend)}
-- 展现次数: ${formatNumber(row.impressions)}
-- 点击数量: ${row.clicks}
-- 平均点击率 (CTR): ${formatFixed(row.ctr, 2, "%")}
-- 单次点击费用 (CPC): ${formatMoney(row.cpc)}
-- 千次展示成本 (CPM): ${formatMoney(row.cpm)}
-- 购买成效: ${row.purchases}
-- 单次获客成本 (CPA/CPP): ${formatMoney(row.cpa)}
-- Meta 报告 ROAS: ${formatFixed(row.roas)}
-
-作为资深海外广告投放专家，请为此账户的整体花费效率、CTR 瓶颈以及获客成本提供全面的诊断分析和预算倾斜建议。`;
-    } else if (viewLevel === "campaigns") {
-      promptText = `分析 Meta 广告系列 [${row.name}] (ID: ${row.id})：
-- 状态: ${row.status}
-- 营销目标: ${row.objective}
-- 花费金额: ${formatMoney(row.spend)}
-- 展现次数: ${formatNumber(row.impressions)}
-- 点击量: ${row.clicks}
-- 点击率 (CTR): ${formatFixed(row.ctr, 2, "%")}
-- 单次点击费用 (CPC): ${formatMoney(row.cpc)}
-- 转化购买量: ${row.purchases}
-- 获客成本 (CPA): ${formatMoney(row.cpa)}
-- ROAS: ${formatFixed(row.roas)}
-
-作为优化师，请在该 Campaign 的状态与表现反馈下给出竞价决策，应当扩增预算、进行成本优化还是关停，并补充可能的优化策略。`;
-    } else if (viewLevel === "adsets") {
-      promptText = `分析 Meta 广告组 [${row.name}] (ID: ${row.id})：
-- 所属广告系列: ${row.campaignName}
-- 花费金额: ${formatMoney(row.spend)}
-- 展现次数: ${formatNumber(row.impressions)}
-- 点击数量: ${row.clicks}
-- 点击率 (CTR): ${formatFixed(row.ctr, 2, "%")}
-- 千次展示成本 (CPM): ${formatMoney(row.cpm)}
-- 购买获客量: ${row.purchases}
-- 单次获客成本 (CPA): ${formatMoney(row.cpa)}
-- 转化率 ROAS: ${formatFixed(row.roas)}
-
-请根据该 Ad Set 层级的效果反馈提供受众定位和扩增/紧缩竞价调优战术。`;
-    } else if (viewLevel === "ads") {
-      promptText = `分析 Meta 广告创意 [${row.name}] (ID: ${row.id})：
-- 创意 ID (Creative ID): ${row.creativeId}
-- 所属广告组: ${row.adsetName}
-- 所属广告系列: ${row.campaignName}
-- 花费金额: ${formatMoney(row.spend)}
-- 展现量: ${formatNumber(row.impressions)}
-- 点击量: ${row.clicks}
-- 点击率 (CTR): ${formatFixed(row.ctr, 2, "%")}
-- 千次显示费用 (CPM): ${formatMoney(row.cpm)}
-- 购买成效: ${row.purchases}
-- 获客成本 (CPA): ${formatMoney(row.cpa)}
-- 转化 ROAS: ${formatFixed(row.roas)}
-
-请评估该 Creative ID 素材方案的转化成效，并针对后续的素材测试与创意设计迭代方向提供可行思路。`;
-    }
-
-    const context = {
-      level: viewLevel,
-      accountId: selectedAccount || row.fb_account_id || row.accountId || "",
-      accountName: selectedAccountName || row.fb_account_name || row.accountName || "",
-      campaignId: row.campaignId || (viewLevel === "campaigns" ? row.id : selectedCampaignId) || "",
-      adsetId: row.adsetId || (viewLevel === "adsets" ? row.id : selectedAdSetId) || "",
-      adId: viewLevel === "ads" ? row.id : "",
-      name: row.name || row.fb_account_name || row.id,
-      spend: Number(row.spend || 0),
-      impressions: Number(row.impressions || 0),
-      clicks: Number(row.clicks || 0),
-      purchases: Number(row.purchases || 0),
-      cpa: Number(row.cpa || 0),
-      roas: Number(row.roas || 0),
-      dateRange: {
-        startDate: format(startDate, "yyyy-MM-dd"),
-        endDate: format(endDate, "yyyy-MM-dd")
-      }
-    };
-
-    window.dispatchEvent(new CustomEvent("open-ai-context", {
-      detail: {
-        source: "campaign_structure",
-        title: `分析${viewLevel}: ${context.name || context.adId || context.campaignId || context.accountId}`,
-        prompt: promptText,
-        context
-      }
-    }));
-
-    navigator.clipboard.writeText(promptText).catch(() => undefined);
     toast.success("已打开 AI 上下文，并已复制该层级分析提示词。", { duration: 4000 });
   };
 
@@ -551,18 +440,16 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
   };
 
   // Footer totals
-  const performanceRowsForTotals = filteredData.filter(hasPerformanceFacts);
-  const totalSpend = performanceRowsForTotals.length ? performanceRowsForTotals.reduce((sum, item) => sum + Number(item.spend || 0), 0) : null;
-  const totalImpressions = performanceRowsForTotals.length ? performanceRowsForTotals.reduce((sum, item) => sum + Number(item.impressions || 0), 0) : null;
-  const totalClicks = performanceRowsForTotals.length ? performanceRowsForTotals.reduce((sum, item) => sum + Number(item.clicks || 0), 0) : null;
-  const totalPurchases = performanceRowsForTotals.length ? performanceRowsForTotals.reduce((sum, item) => sum + Number(item.purchases || 0), 0) : null;
-  const totalPurchaseValue = performanceRowsForTotals.length ? performanceRowsForTotals.reduce((sum, item) => sum + Number(item.purchaseValue || item.purchase_value || 0), 0) : null;
-
-  const totalCTR = totalImpressions && totalClicks !== null ? (totalClicks / totalImpressions) * 100 : null;
-  const totalCPC = totalClicks && totalSpend !== null ? totalSpend / totalClicks : null;
-  const totalCPM = totalImpressions && totalSpend !== null ? (totalSpend / totalImpressions) * 1000 : null;
-  const totalCPA = totalPurchases && totalSpend !== null ? totalSpend / totalPurchases : null;
-  const totalROAS = totalSpend && totalPurchaseValue !== null ? totalPurchaseValue / totalSpend : null;
+  const totals = buildHierarchyPerformanceTotals(filteredData);
+  const totalSpend = totals.spend;
+  const totalImpressions = totals.impressions;
+  const totalClicks = totals.clicks;
+  const totalPurchases = totals.purchases;
+  const totalCTR = totals.ctr;
+  const totalCPC = totals.cpc;
+  const totalCPM = totals.cpm;
+  const totalCPA = totals.cpa;
+  const totalROAS = totals.roas;
 
   return (
     <div id="ad-hierarchy-dashboard-container" className="flex flex-col h-full bg-[#f9fafb] p-6 space-y-6">

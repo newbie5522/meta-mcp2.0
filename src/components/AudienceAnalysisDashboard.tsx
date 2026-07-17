@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import axios from "axios";
 import { format } from "date-fns";
 import { 
@@ -19,30 +19,17 @@ import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel"
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
 import { DataCoverageBanner } from "./common/DataCoverageBanner";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
+import { buildDataViewRequestKey } from "@/lib/data-view-state";
 import {
-  buildDataViewRequestKey,
-  CURRENT_RANGE_NOT_READY_MESSAGE,
-  DATE_RANGE_MISMATCH_MESSAGE,
-  getSafeLastGoodData,
-  isDateRangeMismatch,
-  makeLastGoodData,
-  shouldPreserveLastGoodData
-} from "@/lib/data-view-state";
+  buildAudienceClearedState,
+  buildAudienceSourceRequestParams,
+  resolveAudienceMetaSourceResult,
+  resolveAudienceStoreSourceResult,
+  shouldApplyAudienceSourceResult,
+  type AudienceRequestContext
+} from "./audience-dashboard-orchestrator";
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
-
-export function buildAudienceClearedState() {
-  return {
-    data: [],
-    summary: null,
-    orderCountryRows: [],
-    metaCoverage: null,
-    storeCoverage: null,
-    dataHealth: null,
-    countriesHealth: null,
-    viewNotice: null
-  };
-}
 
 export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: Date; endDate: Date }) {
   const [stores, setStores] = useState<any[]>([]);
@@ -88,6 +75,8 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     minSpend: minSpend || "all",
     sort: sortBy
   });
+  const currentRequestKeyRef = useRef(currentRequestKey);
+  currentRequestKeyRef.current = currentRequestKey;
 
   useEffect(() => {
     setViewNotice(null);
@@ -117,49 +106,25 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     fetchFilters();
   }, [startDate, endDate]);
 
-  const fetchStoreCountries = async (startStr: string, endStr: string) => {
-    if (activeTab !== "country") {
-      setOrderCountryRows([]);
-      setCountriesHealth(null);
-      return;
-    }
-    setCountriesLoading(true);
-    try {
-      const countriesRes = await axios.get("/api/data-center/countries", {
-        params: {
-          startDate: startStr,
-          endDate: endStr,
-          storeId: selectedStore,
-          minSpend: minSpend || undefined,
-          includeUnmappedSpend: "true"
-        }
-      });
-      setOrderCountryRows(countriesRes.data?.rows || []);
-      setCountriesHealth(countriesRes.data?.dataHealth || null);
-      setStoreCoverage(countriesRes.data?.storeCoverage || countriesRes.data?.coverage || null);
-    } catch (countriesErr) {
-      console.error("Failed to fetch order country statistics", countriesErr);
-      setOrderCountryRows([]);
-      const errData = (countriesErr as any)?.response?.data;
-      setCountriesHealth({
-        status: "COUNTRIES_REQUEST_FAILED",
-        reason: "ORDER_COUNTRY_AUXILIARY_REQUEST_FAILED",
-        message: errData?.message || errData?.details || errData?.error || (countriesErr as any)?.message || "店铺订单国家辅助请求失败。",
-        dateRange: { startDate: startStr, endDate: endStr, timezone: "America/Los_Angeles" }
-      });
-      setStoreCoverage({ status: "ERROR" });
-    } finally {
-      setCountriesLoading(false);
-    }
-  };
-
   // Load audience insights from server matching the exact requirements
   const fetchAudienceInsights = async () => {
     setLoading(true);
-    let storeCountriesPromise: Promise<void> | null = null;
     try {
       const startStr = format(startDate, "yyyy-MM-dd");
       const endStr = format(endDate, "yyyy-MM-dd");
+      const requestKey = currentRequestKey;
+      const context: AudienceRequestContext = {
+        requestKey,
+        startStr,
+        endStr,
+        selectedStore,
+        selectedAccount,
+        activeTab,
+        minSpend,
+        includeZeroSpend,
+        sortBy
+      };
+      const { metaParams, storeParams } = buildAudienceSourceRequestParams(context);
       const cleared = buildAudienceClearedState();
       setData(cleared.data);
       setSummary(cleared.summary);
@@ -169,90 +134,54 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       setDataHealth(cleared.dataHealth);
       setCountriesHealth(cleared.countriesHealth);
       setViewNotice(cleared.viewNotice);
-      storeCountriesPromise = fetchStoreCountries(startStr, endStr);
-      
-      const res = await axios.get("/api/data-center/audience", {
-        params: {
-          storeId: selectedStore,
-          accountId: selectedAccount,
-          dimensionType: activeTab,
-          minSpend: minSpend || undefined,
-          includeZeroSpend: includeZeroSpend ? "true" : "false",
-          sortBy: sortBy,
-          startDate: startStr,
-          endDate: endStr
-        }
-      });
-      
-      if (res.data) {
-        const rows = res.data.rows || [];
-        const requestKey = currentRequestKey;
-        setMetaCoverage(res.data.metaCoverage || res.data.coverage?.meta || null);
-        setStoreCoverage(res.data.storeCoverage || res.data.coverage?.store || null);
-        setResponseDateRange(res.data.dateRange || res.data.appliedFilters || null);
-        if (isDateRangeMismatch(res.data, startStr, endStr)) {
-          setData([]);
-          setSummary(null);
-          setDataHealth({ status: "DATE_RANGE_MISMATCH", message: DATE_RANGE_MISMATCH_MESSAGE });
-          setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
-          await storeCountriesPromise;
-          return;
-        }
-        if (shouldPreserveLastGoodData(res.data, rows, lastGoodData, requestKey)) {
-          const safeLastGoodData = getSafeLastGoodData(lastGoodData, requestKey);
-          if (safeLastGoodData) {
-            setData(safeLastGoodData.rows || []);
-            setSummary(safeLastGoodData.summary || null);
-            setDataHealth(safeLastGoodData.dataHealth || null);
-            setMetaCoverage(safeLastGoodData.metaCoverage || null);
-            setStoreCoverage(safeLastGoodData.storeCoverage || null);
-            setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
-            await storeCountriesPromise;
-            return;
-          }
-        }
-        setData(rows);
-        setSummary(res.data.summary || null);
-        setDataHealth(res.data.dataHealth || null);
-        setLastGoodData(makeLastGoodData(requestKey, rows, {
-          rows,
-          summary: res.data.summary || null,
-          dataHealth: res.data.dataHealth || null,
-          metaCoverage: res.data.metaCoverage || null,
-          storeCoverage: res.data.storeCoverage || null
-        }));
-        setViewNotice(null);
+
+      if (storeParams) {
+        setCountriesLoading(true);
       } else {
-        setData([]);
-        setSummary(null);
-        setMetaCoverage(null);
-        setStoreCoverage(null);
-        setDataHealth({
-          status: "EMPTY_RESPONSE",
-          reason: "NO_PAYLOAD_FOR_CURRENT_REQUEST",
-          message: "当前受众筛选周期没有返回有效数据，未使用旧数据。",
-          dateRange: { startDate: startStrKey, endDate: endStrKey, timezone: "America/Los_Angeles" }
-        });
-        setViewNotice("当前受众筛选周期没有返回有效数据。");
+        setCountriesLoading(false);
       }
 
-      await storeCountriesPromise;
+      const metaPromise = axios.get("/api/data-center/audience", { params: metaParams });
+      const storePromise = storeParams
+        ? axios.get("/api/data-center/countries", { params: storeParams })
+        : Promise.resolve({ data: null });
+
+      const [metaSettled, storeSettled] = await Promise.allSettled([metaPromise, storePromise]);
+
+      if (shouldApplyAudienceSourceResult(requestKey, currentRequestKeyRef.current)) {
+        const metaResult = resolveAudienceMetaSourceResult({
+          payload: metaSettled.status === "fulfilled" ? metaSettled.value.data : undefined,
+          error: metaSettled.status === "rejected" ? metaSettled.reason : undefined,
+          context,
+          lastGoodData
+        });
+        setData(metaResult.data);
+        setSummary(metaResult.summary);
+        setDataHealth(metaResult.dataHealth);
+        setMetaCoverage(metaResult.metaCoverage);
+        setResponseDateRange(metaResult.responseDateRange);
+        setViewNotice(metaResult.viewNotice);
+        setLastGoodData(metaResult.nextLastGoodData);
+        if (metaResult.toastError) {
+          toast.error("加载受众成效分析发生错误");
+        }
+      }
+
+      if (shouldApplyAudienceSourceResult(requestKey, currentRequestKeyRef.current)) {
+        const storeResult = resolveAudienceStoreSourceResult({
+          payload: storeSettled.status === "fulfilled" ? storeSettled.value.data : undefined,
+          error: storeSettled.status === "rejected" ? storeSettled.reason : undefined,
+          context
+        });
+        setOrderCountryRows(storeResult.orderCountryRows);
+        setCountriesHealth(storeResult.countriesHealth);
+        setStoreCoverage(storeResult.storeCoverage);
+        setCountriesLoading(storeResult.countriesLoading);
+      }
 
     } catch (err: any) {
       console.error("Failed to fetch audience insights", err);
-      setData([]);
-      setSummary(null);
-      setMetaCoverage({ status: "ERROR" });
-      setDataHealth({
-        status: "ERROR",
-        reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
-        message: "当前受众筛选周期请求失败，未使用旧数据。",
-        dateRange: { startDate: startStrKey, endDate: endStrKey, timezone: "America/Los_Angeles" }
-      });
-      setViewNotice("当前受众筛选周期请求失败，未展示旧数据。");
-      if (storeCountriesPromise) {
-        await storeCountriesPromise.catch(() => undefined);
-      }
+      setLoading(false);
       toast.error("加载受众成效分析发生错误");
     } finally {
       setLoading(false);

@@ -5,10 +5,12 @@ import { getDataSourceCoverage } from "./data-coverage.service.js";
 const DATA_CENTER_TIMEZONE = "America/Los_Angeles";
 
 export type CanonicalAdHierarchyLevel = "campaign" | "adset" | "ad";
+export type CanonicalAdHierarchyScope = "current_account" | "all_accounts";
 
 type CanonicalAdHierarchyInput = {
   level: CanonicalAdHierarchyLevel;
-  accountId: string;
+  accountId?: string;
+  scope?: CanonicalAdHierarchyScope;
   startDate: string;
   endDate: string;
   campaignId?: string;
@@ -18,6 +20,8 @@ type CanonicalAdHierarchyInput = {
 
 function emptyAgg() {
   return {
+    entityId: "",
+    accountId: "",
     spend: 0,
     impressions: 0,
     clicks: 0,
@@ -34,6 +38,27 @@ function addAgg(agg: any, row: any) {
   agg.purchases += Number(row.purchases || 0);
   agg.purchase_value += Number(row.purchase_value || 0);
   if (row.creative_id) agg.creative_id = row.creative_id;
+}
+
+function isAllAccountId(value: unknown) {
+  return value === "all" || value === "all_active";
+}
+
+function resolveHierarchyScope(input: CanonicalAdHierarchyInput): CanonicalAdHierarchyScope {
+  if (input.scope) return input.scope;
+  return isAllAccountId(input.accountId) ? "all_accounts" : "current_account";
+}
+
+function normalizeOptionalAccountId(value: unknown) {
+  if (!value || isAllAccountId(value)) return "all";
+  return normalizeMetaAccountId(String(value));
+}
+
+function entityKey(scope: CanonicalAdHierarchyScope, accountId: unknown, level: CanonicalAdHierarchyLevel, entityId: string) {
+  if (scope === "all_accounts") {
+    return `${normalizeOptionalAccountId(accountId)}:${level}:${entityId}`;
+  }
+  return entityId;
 }
 
 function metricFields(hasPerformanceFacts: boolean, agg: any) {
@@ -59,13 +84,13 @@ function metricFields(hasPerformanceFacts: boolean, agg: any) {
   };
 }
 
-function buildAppliedFilters(input: CanonicalAdHierarchyInput, normAccountId: string) {
+function buildAppliedFilters(input: CanonicalAdHierarchyInput, normAccountId: string, scope: CanonicalAdHierarchyScope) {
   return {
     startDate: input.startDate,
     endDate: input.endDate,
     timezone: DATA_CENTER_TIMEZONE,
     storeId: "all",
-    accountId: normAccountId,
+    accountId: scope === "all_accounts" ? "all" : normAccountId,
     campaignId: input.campaignId || "all",
     adsetId: input.adsetId || "all",
     includeZeroSpend: Boolean(input.includeZeroSpend)
@@ -76,6 +101,7 @@ function buildQueryDebug(input: {
   level: CanonicalAdHierarchyLevel;
   source: string;
   accountId: string;
+  scope: CanonicalAdHierarchyScope;
   campaignId?: string;
   adsetId?: string;
   includeZeroSpend?: boolean;
@@ -84,7 +110,7 @@ function buildQueryDebug(input: {
 }) {
   return {
     source: input.source,
-    scope: "current_account",
+    scope: input.scope,
     includeUnmapped: false,
     includeZeroSpend: Boolean(input.includeZeroSpend),
     mappedOnly: false,
@@ -194,7 +220,8 @@ export function mapCanonicalHierarchyToAccountDetails(level: CanonicalAdHierarch
 }
 
 export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) {
-  const normAccountId = normalizeMetaAccountId(String(input.accountId));
+  const scope = resolveHierarchyScope(input);
+  const normAccountId = normalizeOptionalAccountId(input.accountId);
   const numericAccountId = normAccountId.replace(/^act_/, "");
   const showAll = Boolean(input.includeZeroSpend);
   const structureName = input.level === "campaign" ? "Campaign" : input.level === "adset" ? "AdSet" : "Ad";
@@ -204,9 +231,9 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
     source: "META_CREATIVE",
     requestedStartDate: input.startDate,
     requestedEndDate: input.endDate,
-    accountId: normAccountId,
     factLevel: input.level
   };
+  if (scope === "current_account") coverageArgs.accountId = normAccountId;
   if (input.campaignId) coverageArgs.campaignId = input.campaignId;
   if (input.adsetId) coverageArgs.adsetId = input.adsetId;
 
@@ -214,9 +241,11 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
 
   const baseWhere: any = {
     level: input.level,
-    account_id: { in: [normAccountId, numericAccountId] },
     date: { gte: input.startDate, lte: input.endDate }
   };
+  if (scope === "current_account") {
+    baseWhere.account_id = { in: [normAccountId, numericAccountId] };
+  }
   if (input.level === "adset" && input.campaignId) baseWhere.campaign_id = input.campaignId;
   if (input.level === "ad" && input.adsetId) baseWhere.adset_id = input.adsetId;
 
@@ -225,7 +254,9 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
   let structures: any[] = [];
   let parent: any = null;
   if (input.level === "campaign") {
-    structures = await prisma.campaign.findMany({ where: { accountId: normAccountId } });
+    structures = await prisma.campaign.findMany({
+      where: scope === "current_account" ? { accountId: normAccountId } : {}
+    });
   } else if (input.level === "adset") {
     if (input.campaignId) {
       structures = await prisma.adSet.findMany({
@@ -235,7 +266,7 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
       parent = await prisma.campaign.findUnique({ where: { id: String(input.campaignId) } });
     } else {
       const campaigns = await prisma.campaign.findMany({
-        where: { accountId: normAccountId },
+        where: scope === "current_account" ? { accountId: normAccountId } : {},
         select: { id: true }
       });
       structures = await prisma.adSet.findMany({
@@ -255,7 +286,7 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
       });
     } else {
       const campaigns = await prisma.campaign.findMany({
-        where: { accountId: normAccountId },
+        where: scope === "current_account" ? { accountId: normAccountId } : {},
         select: { id: true }
       });
       const adsets = await prisma.adSet.findMany({
@@ -277,19 +308,38 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
         ? row.adset_id || row.entity_id
         : row.ad_id || row.entity_id;
     if (!id) continue;
-    if (!perfMap.has(id)) perfMap.set(id, emptyAgg());
-    addAgg(perfMap.get(id), row);
+    const accountId = normalizeOptionalAccountId(row.account_id);
+    const key = entityKey(scope, accountId, input.level, id);
+    if (!perfMap.has(key)) {
+      perfMap.set(key, { ...emptyAgg(), entityId: id, accountId });
+    }
+    addAgg(perfMap.get(key), row);
   }
 
   const structMap = new Map<string, any>();
-  structures.forEach((row) => structMap.set(row.id, row));
+  structures.forEach((row) => {
+    const accountId = input.level === "campaign"
+      ? row.accountId
+      : input.level === "adset"
+        ? row.campaign?.accountId
+        : row.adSet?.campaign?.accountId;
+    structMap.set(entityKey(scope, accountId, input.level, row.id), row);
+  });
   const allIds = new Set<string>([...perfMap.keys(), ...structMap.keys()]);
 
   let results: any[] = [];
-  for (const id of allIds) {
-    const hasPerformanceFacts = perfMap.has(id);
-    const agg = perfMap.get(id) || emptyAgg();
-    const struct = structMap.get(id);
+  for (const key of allIds) {
+    const hasPerformanceFacts = perfMap.has(key);
+    const agg = perfMap.get(key) || emptyAgg();
+    const struct = structMap.get(key);
+    const id = struct?.id || agg.entityId || key;
+    const rowAccountId = normalizeOptionalAccountId(
+      input.level === "campaign"
+        ? struct?.accountId || agg.accountId
+        : input.level === "adset"
+          ? struct?.campaign?.accountId || agg.accountId
+          : struct?.adSet?.campaign?.accountId || agg.accountId
+    );
     const unsynced = !struct;
     const commonMetrics = metricFields(hasPerformanceFacts, agg);
 
@@ -300,6 +350,7 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
         status: struct?.status || "UNKNOWN",
         objective: null,
         budget: null,
+        accountId: rowAccountId,
         ...commonMetrics,
         unsynced
       });
@@ -308,6 +359,7 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
         id,
         name: struct?.name || `${id} (结构未同步)`,
         status: "UNKNOWN",
+        accountId: rowAccountId,
         campaignId: input.campaignId || struct?.campaignId || struct?.campaign?.id,
         campaignName: parent?.name || struct?.campaign?.name || "未知广告系列",
         ...commonMetrics,
@@ -318,6 +370,7 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
         id,
         name: struct?.name || `${id} (结构未同步)`,
         status: "UNKNOWN",
+        accountId: rowAccountId,
         campaignId: struct?.campaignId || struct?.adSet?.campaign?.id || parent?.campaignId || parent?.campaign?.id,
         adsetId: input.adsetId || struct?.adsetId,
         adsetName: parent?.name || struct?.adSet?.name || "未知广告组",
@@ -336,18 +389,18 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
 
   let reason = "OK";
   if (results.length === 0) {
-    if (!input.accountId || String(input.accountId) === "undefined") {
+    if (scope === "current_account" && (!input.accountId || String(input.accountId) === "undefined")) {
       reason = "ACCOUNT_ID_FORMAT_MISMATCH";
     } else if (input.level === "adset" && input.campaignId && !parent) {
       reason = "CAMPAIGN_ID_MISMATCH";
     } else if (input.level === "ad" && input.adsetId && !parent) {
       reason = "ADSET_ID_MISMATCH";
+    } else if (!showAll && performanceRows.length > 0) {
+      reason = "FILTER_ZERO_SPEND_HIDDEN";
     } else if (structures.length === 0) {
       reason = "NO_STRUCTURE_ROWS";
     } else if (performanceRows.length === 0) {
       reason = "NO_FACT_LEVEL_ROWS";
-    } else if (!showAll) {
-      reason = "FILTER_ZERO_SPEND_HIDDEN";
     } else {
       reason = "NO_FACT_LEVEL_ROWS";
     }
@@ -369,11 +422,12 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
         endDate: input.endDate,
         timezone: DATA_CENTER_TIMEZONE
       },
-      accountId: normAccountId,
+      accountId: scope === "all_accounts" ? "all" : normAccountId,
       queryDebug: buildQueryDebug({
         level: input.level,
         source,
         accountId: normAccountId,
+        scope,
         campaignId: input.campaignId,
         adsetId: input.adsetId,
         includeZeroSpend: showAll,
@@ -381,7 +435,7 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
         structureRows: structures.length
       })
     },
-    appliedFilters: buildAppliedFilters(input, normAccountId),
+    appliedFilters: buildAppliedFilters(input, normAccountId, scope),
     dateRange: {
       startDate: input.startDate,
       endDate: input.endDate,
