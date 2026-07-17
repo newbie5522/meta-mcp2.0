@@ -113,6 +113,7 @@ interface CreativeData {
   riskLevel?: string;
   imageUrl?: string;
   impressions: number;
+  hasPerformanceFacts: boolean;
 }
 
 interface FatigueDetails {
@@ -549,7 +550,7 @@ export function CreativeIntelligenceDashboard({
 
   const startStrKey = startDate ? format(startDate, "yyyy-MM-dd") : "";
   const endStrKey = endDate ? format(endDate, "yyyy-MM-dd") : "";
-  const currentRequestKey = buildDataViewRequestKey({
+  const serverRequestKey = buildDataViewRequestKey({
     page: "creative",
     startDate: startStrKey,
     endDate: endStrKey,
@@ -557,17 +558,18 @@ export function CreativeIntelligenceDashboard({
     accountId: selectedAccountFilter,
     campaignId: selectedCampaignFilter,
     type: selectedType,
-    tab: activeSubTab,
-    includeZeroSpend: true,
+    opsBucket: activeOpsBucket,
     search: searchTerm,
-    sort: `${activeSubTab}:${previewSortField}:${previewSortOrder}:${metricsSortField}:${metricsSortOrder}`
+    pageNumber: page,
+    pageSize,
+    includeZeroSpend: true
   });
 
   useEffect(() => {
     setViewNotice(null);
     setResponseDateRange(null);
     setSyncStatus({ status: "idle" });
-  }, [currentRequestKey]);
+  }, [serverRequestKey]);
 
   useEffect(() => {
     setPage(1);
@@ -606,6 +608,10 @@ export function CreativeIntelligenceDashboard({
   };
 
   const handleAskCreativeAI = (creative: CreativeData) => {
+    if (creative.hasPerformanceFacts !== true) {
+      toast.info("当前素材在所选周期没有可用成效事实，未生成 AI 提示词。");
+      return;
+    }
     const accountName = getCreativeAccountName(creative);
     const prompt = `请分析这个 Meta 素材在当前筛选周期内的表现，并给出下一步投放动作。
 
@@ -1576,6 +1582,7 @@ CPM：${creative.cpm}
                                 variant="outline"
                                 className="h-8 text-xs font-bold border-slate-200 text-slate-700 hover:bg-slate-50 cursor-pointer"
                                 onClick={() => handleAskCreativeAI(c)}
+                                disabled={c.hasPerformanceFacts !== true}
                               >
                                 问 AI 分析该素材
                               </Button>
@@ -2115,6 +2122,7 @@ CPM：${creative.cpm}
                 </p>
                 <Button
                   onClick={() => handleAskCreativeAI(selectedPreviewCreative)}
+                  disabled={selectedPreviewCreative.hasPerformanceFacts !== true}
                   className="w-full h-8 bg-slate-900 text-white hover:bg-slate-800 text-xs font-bold rounded-lg"
                 >
                   问 AI 分析该素材

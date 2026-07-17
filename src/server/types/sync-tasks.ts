@@ -51,6 +51,7 @@ export function deriveCanonicalSyncStatus(input: {
   failedAccounts?: unknown[];
   failedSlices?: unknown[];
   truncated?: boolean;
+  coverageComplete?: boolean;
 }): CanonicalSyncStatus {
   const hasRecords =
     Number(input.recordsFetched || 0) > 0 ||
@@ -58,6 +59,7 @@ export function deriveCanonicalSyncStatus(input: {
     Number(input.recordsUpdated || 0) > 0;
   const hasFailure =
     Boolean(input.truncated) ||
+    input.coverageComplete === false ||
     Boolean(input.failedAccounts?.length) ||
     Boolean(input.failedSlices?.length);
 

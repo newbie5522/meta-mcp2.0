@@ -22,6 +22,7 @@ export interface ViewTaskExecutionReceipt {
   truncated: boolean;
   coverageComplete: boolean;
   targetAccountsCount: number;
+  eligibleTargetAccountsCount: number;
   startDate: string;
   endDate: string;
   dimensionsRequested?: string[];
@@ -32,6 +33,26 @@ function metadataOf(log: any) {
   if (!log?.metadata) return {};
   if (typeof log.metadata === "object") return log.metadata;
   try { return JSON.parse(String(log.metadata)); } catch { return {}; }
+}
+
+const DEMO_STORE_NAMES = [
+  "Shopline Fashion Store",
+  "Shopify Electronics Hub",
+  "Shoplazza Home Decor"
+];
+
+const DEMO_STORE_DOMAINS = [
+  "fashion.shoplineapp.com",
+  "electronics.myshopify.com",
+  "decor.shoplazza.com"
+];
+
+function isSandboxOrDemoStore(store: any) {
+  return (
+    String(store?.mode || "").toLowerCase() === "sandbox" ||
+    DEMO_STORE_NAMES.includes(String(store?.name || "")) ||
+    DEMO_STORE_DOMAINS.includes(String(store?.domain || ""))
+  );
 }
 
 async function resolveTargets(input: {
@@ -48,12 +69,27 @@ async function resolveTargets(input: {
     ? undefined
     : Math.max(1, Math.min(50, Number.parseInt(String(input.limit), 10) || 1));
   const parsedStoreId = input.storeId && input.storeId !== "all" ? Number(input.storeId) : null;
+  if (parsedStoreId !== null) {
+    const store = await prisma.store.findUnique({ where: { id: parsedStoreId } });
+    if (!store) {
+      const error: any = new Error(`Store ${parsedStoreId} was not found`);
+      error.statusCode = 404;
+      error.code = "STORE_NOT_FOUND";
+      throw error;
+    }
+    if (isSandboxOrDemoStore(store)) {
+      const error: any = new Error(`Store ${parsedStoreId} is excluded from production sync targets`);
+      error.statusCode = 400;
+      error.code = "SANDBOX_STORE_EXCLUDED";
+      throw error;
+    }
+  }
   const where: any = {
     ...(requested.length ? { fb_account_id: { in: requested } } : { recentActivity90d: true }),
     ...(parsedStoreId !== null ? { storeId: parsedStoreId } : {}),
     OR: [{ storeId: null }, { store: { mode: { not: "sandbox" } } }]
   };
-  if (parsedStoreId !== null) delete where.OR;
+  const eligibleTargetCount = await prisma.adAccount.count({ where });
   const targets = await prisma.adAccount.findMany({
     where,
     include: { store: true },
@@ -66,7 +102,12 @@ async function resolveTargets(input: {
     error.code = requested.length ? "ACCOUNT_NOT_FOUND" : "NO_SYNC_TARGETS";
     throw error;
   }
-  return targets;
+  return {
+    targets,
+    eligibleTargetCount,
+    selectedTargetCount: targets.length,
+    truncatedByLimit: parsedLimit !== undefined && eligibleTargetCount > targets.length
+  };
 }
 
 async function summarize(taskIds: string[]) {
@@ -91,7 +132,7 @@ async function summarize(taskIds: string[]) {
     if (metadata.truncated === true) truncated = true;
     if (metadata.coverageComplete === false || log.status === "failed") coverageComplete = false;
   }
-  const status = deriveCanonicalSyncStatus({ recordsFetched, recordsSaved, recordsUpdated, failedAccounts, failedSlices, truncated });
+  const status = deriveCanonicalSyncStatus({ recordsFetched, recordsSaved, recordsUpdated, failedAccounts, failedSlices, truncated, coverageComplete });
   return { recordsFetched, recordsSaved, recordsUpdated, failedAccounts, failedSlices, truncated, coverageComplete: coverageComplete && status !== "FAILED", status, dimensionsSynced: Array.from(dimensionsSynced) };
 }
 
@@ -108,7 +149,8 @@ export async function executeSyncViewTask(input: {
   triggeredBy?: string;
 }): Promise<ViewTaskExecutionReceipt> {
   const chainId = input.chainId || uuidv4();
-  const targets = await resolveTargets(input);
+  const targetResolution = await resolveTargets(input);
+  const targets = targetResolution.targets;
   const normalizedAccountIds = targets.map(account => normalizeMetaAccountId(account.fb_account_id));
   const dimensionsRequested = ["country", "age", "gender", "publisher_platform"];
   const scopeKey = buildCoverageScopeKey({
@@ -153,24 +195,38 @@ export async function executeSyncViewTask(input: {
       }
 
       childSummary = await summarize(childTaskIds);
+      const finalTruncated = childSummary.truncated || targetResolution.truncatedByLimit;
+      const finalCoverageComplete = childSummary.coverageComplete && !finalTruncated;
+      const finalStatus = deriveCanonicalSyncStatus({
+        recordsFetched: childSummary.recordsFetched,
+        recordsSaved: childSummary.recordsSaved,
+        recordsUpdated: childSummary.recordsUpdated,
+        failedAccounts: childSummary.failedAccounts,
+        failedSlices: childSummary.failedSlices,
+        truncated: finalTruncated,
+        coverageComplete: finalCoverageComplete
+      });
       return {
         recordsFetched: childSummary.recordsFetched,
         recordsSaved: childSummary.recordsSaved,
         recordsUpdated: childSummary.recordsUpdated,
         failedAccounts: childSummary.failedAccounts,
         failedSlices: childSummary.failedSlices,
-        truncated: childSummary.truncated,
-        coverageComplete: childSummary.coverageComplete,
+        truncated: finalTruncated,
+        coverageComplete: finalCoverageComplete,
         metadata: {
-          status: childSummary.status,
+          status: finalStatus,
           taskIds: childTaskIds,
-          targetAccountsCount: targets.length,
+          targetAccountsCount: targetResolution.selectedTargetCount,
+          eligibleTargetCount: targetResolution.eligibleTargetCount,
+          selectedTargetCount: targetResolution.selectedTargetCount,
+          truncatedByLimit: targetResolution.truncatedByLimit,
           dimensionsRequested: input.taskType === "sync_view_audience" ? dimensionsRequested : undefined,
           dimensionsSynced: input.taskType === "sync_view_audience" ? childSummary.dimensionsSynced : undefined
         }
       };
     },
-    { rangeStart: input.startDate, rangeEnd: input.endDate, scopeKey, coverageComplete: true }
+    { rangeStart: input.startDate, rangeEnd: input.endDate, scopeKey, coverageComplete: !targetResolution.truncatedByLimit }
   );
 
   const parentLog = await prisma.syncLog.findUnique({ where: { id: parentTaskId } });
@@ -193,7 +249,8 @@ export async function executeSyncViewTask(input: {
     failedSlices: parentMetadata.failedSlices || summary.failedSlices,
     truncated: Boolean(parentMetadata.truncated ?? summary.truncated),
     coverageComplete: parentMetadata.coverageComplete === true,
-    targetAccountsCount: targets.length,
+    targetAccountsCount: targetResolution.selectedTargetCount,
+    eligibleTargetAccountsCount: targetResolution.eligibleTargetCount,
     startDate: input.startDate,
     endDate: input.endDate,
     ...(input.taskType === "sync_view_audience" ? {

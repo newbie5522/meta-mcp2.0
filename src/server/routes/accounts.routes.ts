@@ -55,7 +55,7 @@ export function parseSingleHierarchyFilter(value: unknown) {
 }
 
 // Endpoint dedicated to testing Meta Token validity and retrieving diagnostics
-router.get("/test-token", async (req, res) => {
+router.post("/test-token", async (req, res) => {
   let token: string | null = null;
   try {
     token = await getMetaToken();
@@ -252,8 +252,28 @@ router.get("/db-list", async (req, res) => {
   }
 });
 
+router.get("/active-list", async (_req, res) => {
+  try {
+    const accounts = await prisma.adAccount.findMany({
+      where: { recentActivity90d: true },
+      orderBy: { fb_account_name: "asc" }
+    });
+
+    return res.json(accounts.map(acc => ({
+      id: acc.fb_account_id,
+      name: acc.fb_account_name || "",
+      status: "active",
+      fbStatus: acc.status ? Number(acc.status) : 2,
+      currency: acc.currency || "USD",
+      timezone: acc.timezone || "UTC"
+    })));
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to read active accounts from DB.", details: err.message });
+  }
+});
+
 // Endpoint dedicated to fetching and syncing the active accounts from Meta quickly
-router.get("/active-list", async (req, res) => {
+router.post("/active-list/sync", async (req, res) => {
   let token: string | null = null;
   try {
     token = await getMetaToken();
@@ -505,7 +525,17 @@ return res.status(statusCode).json({
       timezone: a.timezone
     })).sort((a, b) => a.name.localeCompare(b.name));
 
-    return res.json(results);
+    const truncated = Boolean(nextUrl);
+    const rateLimited = Boolean(isRateLimited);
+    return res.json({
+      success: true,
+      status: truncated || rateLimited ? "PARTIAL_SUCCESS" : "SUCCESS",
+      accounts: results,
+      recordsFetched: allAccounts.length,
+      recordsSaved: uniqueAccountsSync.length,
+      truncated,
+      rateLimited
+    });
   } catch (err: any) {
     console.error("Error fetching accounts list:", err.message);
     const errorMsg = err.response?.data?.error?.message || err.message;
@@ -605,6 +635,15 @@ export function createAccountDetailsHandler(deps = {
         appliedFilters: canonicalHierarchy.appliedFilters
       });
     } catch (error: any) {
+      if (
+        error?.code === "HIERARCHY_PARENT_SCOPE_MISMATCH" ||
+        error?.statusCode === 404
+      ) {
+        return res.status(404).json({
+          error: "HIERARCHY_PARENT_SCOPE_MISMATCH",
+          details: error.message
+        });
+      }
       console.error("Failed to load details for account:", accountId, error.message);
       return res.status(500).json({ error: "Failed to fetch account level details", details: error.message });
     }
@@ -708,14 +747,21 @@ router.get("/:accountId/hierarchy", async (req, res) => {
   }
 });
 
-router.get("/list", async (req, res) => {
+export function createAccountListHandler(deps = { prisma }) {
+  return async (req: any, res: any) => {
   try {
-    const accounts = await prisma.adAccount.findMany();
+    const includeHistorical = req.query.includeHistorical === "true";
+    const accounts = await deps.prisma.adAccount.findMany({
+      where: includeHistorical
+        ? undefined
+        : { recentActivity90d: true },
+      orderBy: { updatedAt: "desc" }
+    });
     
     const uniqueMap = accounts.map((acc: any) => ({
       accountId: acc.fb_account_id,
       accountName: acc.fb_account_name,
-      recentActivity90d: acc.recentActivity90d
+      recentActivity90d: Boolean(acc.recentActivity90d)
     }));
     
     res.json(uniqueMap);
@@ -726,6 +772,9 @@ router.get("/list", async (req, res) => {
       code: err.code,
     });
   }
-});
+  };
+}
+
+router.get("/list", createAccountListHandler());
 
 export default router;

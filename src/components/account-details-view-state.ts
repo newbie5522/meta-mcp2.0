@@ -147,6 +147,35 @@ export function compareAccountDetailsSortValues(a: any, b: any, direction: "asc"
   return 0;
 }
 
+export function matchesAccountDetailsParentFilters(input: {
+  item: any;
+  level: "campaigns" | "adsets" | "ads";
+  selectedCampaignIds?: string[];
+  selectedAdSetIds?: string[];
+}) {
+  const selectedCampaignIds = input.selectedCampaignIds || [];
+  const selectedAdSetIds = input.selectedAdSetIds || [];
+  const matchCamp =
+    selectedCampaignIds.length === 0 ||
+    selectedCampaignIds.includes(input.item?.campaignId);
+  const matchAdSet =
+    selectedAdSetIds.length === 0 ||
+    selectedAdSetIds.includes(input.item?.adsetId);
+
+  if (input.level === "campaigns") return true;
+  if (input.level === "adsets") return matchCamp;
+  if (input.level === "ads") return matchCamp && matchAdSet;
+  return true;
+}
+
+export function getAccountDetailsStatusSortWeight(status: string | null | undefined) {
+  const normalized = String(status || "").toUpperCase();
+  if (normalized === "ACTIVE") return 2;
+  if (normalized.includes("PAUSED")) return 1;
+  if (normalized === "UNKNOWN") return null;
+  return 0;
+}
+
 export function getAccountDetailsCoverageMode(coverage: any, dataHealth?: any) {
   const status = String(dataHealth?.status || coverage?.status || "UNKNOWN").toUpperCase();
   if (status === "READY" || status === "OK") return "READY";

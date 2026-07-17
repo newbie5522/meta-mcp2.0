@@ -25,6 +25,34 @@ function buildAutoViewScope(storeId?: number | null) {
   return `store:${storeId ?? "all"}`;
 }
 
+const DEMO_STORE_NAMES = [
+  "Shopline Fashion Store",
+  "Shopify Electronics Hub",
+  "Shoplazza Home Decor"
+];
+
+const DEMO_STORE_DOMAINS = [
+  "fashion.shoplineapp.com",
+  "electronics.myshopify.com",
+  "decor.shoplazza.com"
+];
+
+const productionStoreWhere = {
+  NOT: [
+    { mode: "sandbox" },
+    { name: { in: DEMO_STORE_NAMES } },
+    { domain: { in: DEMO_STORE_DOMAINS } }
+  ]
+};
+
+function isSandboxOrDemoStore(store: any) {
+  return (
+    String(store?.mode || "").toLowerCase() === "sandbox" ||
+    DEMO_STORE_NAMES.includes(String(store?.name || "")) ||
+    DEMO_STORE_DOMAINS.includes(String(store?.domain || ""))
+  );
+}
+
 export async function ensureDataCenterViewFreshness(params?: {
   requestedStartDate?: string;
   requestedEndDate?: string;
@@ -45,7 +73,7 @@ export async function ensureDataCenterViewFreshness(params?: {
     },
     orderBy: { startedAt: "desc" }
   });
-  if (recent) return { skipped: true, status: "NO_NEW_DATA", reason: "AUTO_VIEW_REFRESH_INTERVAL_NOT_DUE", startDate, endDate, scope };
+  if (recent) return { skipped: true, status: "SKIPPED", reason: "AUTO_VIEW_REFRESH_INTERVAL_NOT_DUE", startDate, endDate, scope };
 
   const running = await prisma.dataCenterRefreshRun.findFirst({
     where: {
@@ -143,6 +171,7 @@ export async function ensureDataCenterFreshness(params?: {
 
   const finalStartDate = params?.requestedStartDate || defaultStartDate;
   const finalEndDate = params?.requestedEndDate || defaultEndDate;
+  const lightScope = buildAutoViewScope(params?.storeId ?? null);
 
   // Let's check if disabled
   if (!AUTO_REFRESH_ENABLED && !params?.force) {
@@ -159,6 +188,9 @@ export async function ensureDataCenterFreshness(params?: {
   const running = await prisma.dataCenterRefreshRun.findFirst({
     where: {
       type: "auto_light_refresh",
+      scope: lightScope,
+      startDate: finalStartDate,
+      endDate: finalEndDate,
       status: "running",
       startedAt: {
         gte: dayjs().subtract(15, "minute").toDate()
@@ -181,6 +213,9 @@ export async function ensureDataCenterFreshness(params?: {
     const lastSuccessful = await prisma.dataCenterRefreshRun.findFirst({
       where: {
         type: "auto_light_refresh",
+        scope: lightScope,
+        startDate: finalStartDate,
+        endDate: finalEndDate,
         status: { in: ["SUCCESS", "PARTIAL", "success", "partial", "SUCCESS", "PARTIAL"] },
         finishedAt: {
           gte: dayjs().subtract(AUTO_REFRESH_STALE_SECONDS, "second").toDate()
@@ -280,7 +315,7 @@ async function runActualRefresh(params: {
   const run = await prisma.dataCenterRefreshRun.create({
     data: {
       type: "auto_light_refresh",
-      scope: "datacenter",
+      scope: buildAutoViewScope(params.storeId),
       startDate: params.startDate,
       endDate: params.endDate,
       status: "running",
@@ -326,11 +361,19 @@ async function runActualRefresh(params: {
       const singleStore = await prisma.store.findUnique({
         where: { id: params.storeId }
       });
-      if (singleStore) {
-        storesToSync.push(singleStore);
+      if (!singleStore) {
+        const error: any = new Error(`Store ${params.storeId} was not found`);
+        error.code = "STORE_NOT_FOUND";
+        throw error;
       }
+      if (isSandboxOrDemoStore(singleStore)) {
+        const error: any = new Error(`Store ${params.storeId} is excluded from production refresh`);
+        error.code = "SANDBOX_STORE_EXCLUDED";
+        throw error;
+      }
+      storesToSync.push(singleStore);
     } else {
-      storesToSync = await prisma.store.findMany();
+      storesToSync = await prisma.store.findMany({ where: productionStoreWhere });
     }
 
     for (const store of storesToSync) {

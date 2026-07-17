@@ -161,6 +161,7 @@ export async function getCountryAnalytics(
     clicks: number;
     purchases: number;
     purchaseValue: number;
+    factRowCount: number;
     accountIds: Set<string>;
     mappedStoreIds: Set<number>;
   }> = {};
@@ -213,6 +214,7 @@ export async function getCountryAnalytics(
         clicks: 0,
         purchases: 0,
         purchaseValue: 0,
+        factRowCount: 0,
         accountIds: new Set<string>(),
         mappedStoreIds: new Set<number>()
       };
@@ -224,6 +226,7 @@ export async function getCountryAnalytics(
     group.clicks += item.clicks || 0;
     group.purchases += purchasesVal;
     group.purchaseValue += purchaseValueVal;
+    group.factRowCount += 1;
     if (aid) group.accountIds.add(aid);
     if (mappedStoreId) group.mappedStoreIds.add(mappedStoreId);
   }
@@ -328,6 +331,7 @@ export async function getCountryAnalytics(
 
       const accountIds = g ? Array.from(g.accountIds) : [];
       const mappedStoreIds = g ? Array.from(g.mappedStoreIds) : [];
+      const hasMetaFacts = Boolean(g && g.factRowCount > 0);
 
       return {
         countryCode,
@@ -348,6 +352,7 @@ export async function getCountryAnalytics(
         metaPurchases,
         metaPurchaseValue,
         metaRoas,
+        hasMetaFacts,
         ctr,
         cpc,
         cpm,

@@ -2,6 +2,8 @@
 import prisma from "../../db/index.js";
 import dayjs from "dayjs";
 import { normalizeMetaAccountId } from "../utils.js";
+import { getProductIntelligence } from "./product-intelligence.service.js";
+import { getCoverageMap } from "./data-coverage.service.js";
 
 function toNumber(value: unknown): number {
   if (value === null || value === undefined) return 0;
@@ -14,7 +16,7 @@ function safeRatio(numerator: number, denominator: number): number | null {
   return denominator > 0 ? numerator / denominator : null;
 }
 
-export async function getDashboardSummary(options: { refresh?: boolean; since?: Date; until?: Date } = {}) {
+export async function getDashboardSummary(options: { since?: Date; until?: Date } = {}) {
   const until = options.until ? dayjs(options.until) : dayjs().endOf('day');
   const since = options.since ? dayjs(options.since) : dayjs(until).subtract(29, 'day').startOf('day');
   
@@ -22,22 +24,37 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
   const untilStr = until.format('YYYY-MM-DD');
   const days = until.diff(since, 'day') + 1;
 
-  // STRICT RULE: Dashboard overview MUST ONLY query DataCenterMetaAccountDaily and DataCenterStoreDaily
+  const DEMO_STORE_NAMES = [
+    "Shopline Fashion Store",
+    "Shopify Electronics Hub",
+    "Shoplazza Home Decor"
+  ];
+
+  const DEMO_STORE_DOMAINS = [
+    "fashion.shoplineapp.com",
+    "electronics.myshopify.com",
+    "decor.shoplazza.com"
+  ];
+
+  const productionStoreWhere = {
+    NOT: [
+      { mode: "sandbox" },
+      { name: { in: DEMO_STORE_NAMES } },
+      { domain: { in: DEMO_STORE_DOMAINS } }
+    ]
+  };
+
   const [
-    storeCount,
-    activeStoreCount,
     rawStores,
     adAccountCount,
     mappedAdAccounts,
     adAccounts,
     recentLogs,
     storeDailyLedgers,
-    metaDailyLedgers,
-    ordersForProducts
+    metaDailyLedgers
   ] = await Promise.all([
-    prisma.store.count(),
-    prisma.store.count(),
     prisma.store.findMany({
+      where: productionStoreWhere,
       include: { accounts: true, accountMappings: true }
     }),
     prisma.adAccount.count({ where: { recentActivity90d: true } }),
@@ -58,23 +75,35 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
       where: {
         date: { gte: sinceStr, lte: untilStr }
       }
-    }),
-    // We only query Order specifically for the top products SKU list (as declared under data-products schema)
-    prisma.order.findMany({
-      where: {
-        OR: [
-          { store_local_date: { gte: sinceStr, lte: untilStr } },
-          { store_local_date: null, createdAt: { gte: since.toDate(), lte: until.toDate() } }
-        ]
+    })
+  ]);
+
+  const [canonicalProducts, coverageMap] = await Promise.all([
+    getProductIntelligence(sinceStr, untilStr, "all"),
+    getCoverageMap({
+      storeCoverage: {
+        source: "STORE_LEDGER",
+        requestedStartDate: sinceStr,
+        requestedEndDate: untilStr,
+        scopeKey: "store:all"
       },
-      select: {
-        id: true,
-        orderId: true,
-        productId: true,
-        revenue: true
+      metaCoverage: {
+        source: "META_ACCOUNT",
+        requestedStartDate: sinceStr,
+        requestedEndDate: untilStr
+      },
+      productCoverage: {
+        source: "PRODUCT_ORDER",
+        requestedStartDate: sinceStr,
+        requestedEndDate: untilStr,
+        scopeKey: "store:all"
       }
     })
   ]);
+  const storeCount = rawStores.length;
+  const activeStoreCount = rawStores.filter(
+    store => String(store.status || "active").toLowerCase() === "active"
+  ).length;
 
   // 1. Aggregate store metrics purely from DataCenterStoreDaily ledger
   let storeSales = 0;
@@ -132,6 +161,11 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
   // Assemble stores list using computed ledger data
   const stores = rawStores.map(s => {
     const stats = storeOrderStats.get(s.id) || { count: 0, sales: 0 };
+    const storeMetricsAvailable = [
+      "READY",
+      "PARTIAL_COVERAGE",
+      "TRUE_EMPTY"
+    ].includes(coverageMap.storeCoverage.status);
     return {
       id: String(s.id),
       name: s.name,
@@ -140,10 +174,10 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
       status: s.status || "active",
       currency: "USD",
       mappedAccounts: s.accounts.length + s.accountMappings.length,
-      orderCount: stats.count,
-      sales: stats.sales
+      orderCount: storeMetricsAvailable ? stats.count : null,
+      sales: storeMetricsAvailable ? stats.sales : null
     };
-  }).sort((a, b) => b.sales - a.sales);
+  }).sort((a, b) => Number(b.sales ?? -1) - Number(a.sales ?? -1));
 
   // Assemble accounts list using computed ledger data
   const accountsMap = new Map<string, any>();
@@ -155,11 +189,12 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
       name: a.fb_account_name || `Account ${normId}`,
       status: String(a.activityStatus || '1'),
       storeName: a.store?.name,
-      spend: 0,
-      impressions: 0,
-      clicks: 0,
-      purchases: 0,
-      purchaseValue: 0,
+      hasPerformanceFacts: false,
+      spend: null,
+      impressions: null,
+      clicks: null,
+      purchases: null,
+      purchaseValue: null,
       roas: null
     });
   }
@@ -169,20 +204,24 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
     let accEntry = accountsMap.get(normId);
     if (!accEntry) {
       accEntry = {
-        id: `synth_${normId}`,
+        id: normId,
         metaAccountId: normId,
-        name: `Meta Account ${normId}`,
-        status: "1",
+        name: null,
+        nameAvailable: false,
+        status: "UNKNOWN",
+        structureAvailable: false,
         storeName: undefined,
-        spend: 0,
-        impressions: 0,
-        clicks: 0,
-        purchases: 0,
-        purchaseValue: 0,
+        hasPerformanceFacts: true,
+        spend: null,
+        impressions: null,
+        clicks: null,
+        purchases: null,
+        purchaseValue: null,
         roas: null
       };
       accountsMap.set(normId, accEntry);
     }
+    accEntry.hasPerformanceFacts = true;
     accEntry.spend = st.spend;
     accEntry.impressions = st.imp;
     accEntry.clicks = st.clicks;
@@ -192,35 +231,17 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
   });
 
   const accounts = Array.from(accountsMap.values())
-    .filter(a => a.spend > 0)
-    .sort((a, b) => b.spend - a.spend);
+    .filter(a => a.hasPerformanceFacts === true)
+    .sort((a, b) => Number(b.spend ?? 0) - Number(a.spend ?? 0));
 
-  // 3. Aggregate product level stats specifically from raw order rows for top products SKU list
-  const productStats = new Map<string, { orderCount: number; quantity: number; sales: number; uniqueOrderIds?: Set<string> }>();
-  for (const order of ordersForProducts) {
-    const pId = order.productId || "unknown";
-    if (!productStats.has(pId)) {
-      productStats.set(pId, { orderCount: 0, quantity: 0, sales: 0, uniqueOrderIds: new Set<string>() });
-    }
-    const ps = productStats.get(pId)!;
-    ps.quantity += 1;
-    ps.sales += toNumber(order.revenue);
-    const oId = order.orderId || order.id;
-    ps.uniqueOrderIds?.add(oId);
-  }
-
-  productStats.forEach((ps) => {
-    ps.orderCount = ps.uniqueOrderIds ? ps.uniqueOrderIds.size : ps.quantity;
-    delete ps.uniqueOrderIds;
-  });
-
-  const products = Array.from(productStats.entries()).map(([id, st]) => ({
-    productName: `Product ${id.substring(0, 6)}`,
-    sku: id,
-    orderCount: st.orderCount,
-    quantity: st.quantity,
-    sales: st.sales
-  })).sort((a, b) => b.sales - a.sales).slice(0, 50);
+  const products = canonicalProducts.slice(0, 50).map(product => ({
+    productId: product.productId,
+    productName: product.productName,
+    sku: product.sku,
+    orderCount: product.orders,
+    quantity: null,
+    sales: product.revenue
+  }));
 
   // Data readiness counters
   const totalStoreLedgerCount = storeDailyLedgers.length;
@@ -248,22 +269,34 @@ export async function getDashboardSummary(options: { refresh?: boolean; since?: 
   });
 
   return {
+    dateRange: {
+      startDate: sinceStr,
+      endDate: untilStr,
+      timezone: "America/Los_Angeles"
+    },
+    storeCoverage: coverageMap.storeCoverage,
+    metaCoverage: coverageMap.metaCoverage,
+    productCoverage: coverageMap.productCoverage,
     range: { since: sinceStr, until: untilStr, days },
     storeCount,
     activeStoreCount,
     adAccountCount,
     mappedAdAccountCount: mappedAdAccounts || adAccounts.filter(a => a.storeId).length,
     overview: {
-      storeOrderCount,
-      storeSales,
-      metaSpend,
-      realRoas: safeRatio(storeSales, metaSpend),
-      metaRoas: safeRatio(metaPurchaseValue, metaSpend),
-      metaPurchases,
-      metaPurchaseValue,
-      impressions,
-      clicks,
-      ctr: safeRatio(clicks, impressions) ? (clicks/impressions)*100 : 0
+      storeOrderCount: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.storeCoverage.status) ? storeOrderCount : null,
+      storeSales: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.storeCoverage.status) ? storeSales : null,
+      metaSpend: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? metaSpend : null,
+      realRoas: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.storeCoverage.status) &&
+        ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) &&
+        metaSpend > 0 ? safeRatio(storeSales, metaSpend) : null,
+      metaRoas: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? safeRatio(metaPurchaseValue, metaSpend) : null,
+      metaPurchases: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? metaPurchases : null,
+      metaPurchaseValue: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? metaPurchaseValue : null,
+      impressions: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? impressions : null,
+      clicks: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? clicks : null,
+      ctr: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status)
+        ? (safeRatio(clicks, impressions) ? (clicks/impressions)*100 : 0)
+        : null
     },
     stores,
     accounts,

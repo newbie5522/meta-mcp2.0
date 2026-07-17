@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
+    adAccount: { findMany: vi.fn() },
     campaign: { findMany: vi.fn() },
     adSet: { findMany: vi.fn() },
     ad: { findMany: vi.fn() },
@@ -15,7 +16,7 @@ vi.mock("../utils.js", () => ({
   normalizeMetaAccountId: (value: string) => value.startsWith("act_") ? value : `act_${value}`
 }));
 
-import { createAccountDetailsHandler, normalizeDetailsLevel } from "./accounts.routes";
+import { createAccountDetailsHandler, createAccountListHandler, normalizeDetailsLevel } from "./accounts.routes";
 
 function responseMock() {
   const response: any = {
@@ -134,6 +135,19 @@ describe("account details canonical hierarchy routing", () => {
     expect(failed.body.error).toBe("Failed to fetch account level details");
   });
 
+  it("maps hierarchy parent scope mismatch to 404", async () => {
+    const error: any = new Error("campaign foreign-camp does not belong to the requested account scope");
+    error.code = "HIERARCHY_PARENT_SCOPE_MISMATCH";
+    error.statusCode = 404;
+    getCanonicalAdHierarchy.mockRejectedValueOnce(error);
+
+    const response = await invoke(handler, { accountId: "act_1" }, { level: "adsets", campaignId: "foreign-camp" });
+    expect(response.statusCode).toBe(404);
+    expect(response.body).toMatchObject({
+      error: "HIERARCHY_PARENT_SCOPE_MISMATCH"
+    });
+  });
+
   it("preserves coverage/sourceCoverage/dataHealth/dateRange and mapper legacy shape", async () => {
     const response = await invoke(handler, { accountId: "act_1" }, { level: "campaigns" });
 
@@ -156,5 +170,37 @@ describe("account details canonical hierarchy routing", () => {
     expect(prismaMock.adSet.findMany).not.toHaveBeenCalled();
     expect(prismaMock.ad.findMany).not.toHaveBeenCalled();
     expect(prismaMock.factMetaPerformance.findMany).not.toHaveBeenCalled();
+  });
+
+  it("AD-LIST-01 default list only recentActivity90d", async () => {
+    prismaMock.adAccount.findMany.mockResolvedValueOnce([
+      { fb_account_id: "act_1", fb_account_name: "Recent", recentActivity90d: true }
+    ]);
+    const listHandler = createAccountListHandler({ prisma: prismaMock as any });
+    const response = await invoke(listHandler, {}, {});
+
+    expect(prismaMock.adAccount.findMany).toHaveBeenCalledWith({
+      where: { recentActivity90d: true },
+      orderBy: { updatedAt: "desc" }
+    });
+    expect(response.body).toEqual([
+      { accountId: "act_1", accountName: "Recent", recentActivity90d: true }
+    ]);
+  });
+
+  it("AD-LIST-02 includeHistorical true returns history", async () => {
+    prismaMock.adAccount.findMany.mockResolvedValueOnce([
+      { fb_account_id: "act_old", fb_account_name: "Old", recentActivity90d: false }
+    ]);
+    const listHandler = createAccountListHandler({ prisma: prismaMock as any });
+    const response = await invoke(listHandler, {}, { includeHistorical: "true" });
+
+    expect(prismaMock.adAccount.findMany).toHaveBeenCalledWith({
+      where: undefined,
+      orderBy: { updatedAt: "desc" }
+    });
+    expect(response.body).toEqual([
+      { accountId: "act_old", accountName: "Old", recentActivity90d: false }
+    ]);
   });
 });

@@ -51,6 +51,8 @@ import {
   compareAccountDetailsSortValues,
   getAccountDetailsCoverageMode,
   getAccountDetailsMetric,
+  getAccountDetailsStatusSortWeight,
+  matchesAccountDetailsParentFilters,
   resolveAccountDetailsResponseState,
   shouldApplyAccountDetailsResult,
   shouldApplyAccountHierarchyResult
@@ -158,9 +160,9 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   // Cleanup sub-selections when parent selection changes
   useEffect(() => {
     if (selectedCampaignIds.length > 0) {
-      const validAdSetIds = new Set(
+        const validAdSetIds = new Set(
         hierarchy.adSets
-          .filter((as) => selectedCampaignIds.includes(as.campaign_id))
+          .filter((as) => selectedCampaignIds.includes(as.campaignId))
           .map((as) => as.id),
       );
       setSelectedAdSetIds((prev) => prev.filter((id) => validAdSetIds.has(id)));
@@ -169,9 +171,9 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
 
   useEffect(() => {
     if (selectedAdSetIds.length > 0) {
-      const validAdIds = new Set(
+        const validAdIds = new Set(
         hierarchy.ads
-          .filter((ad) => selectedAdSetIds.includes(ad.adset_id))
+          .filter((ad) => selectedAdSetIds.includes(ad.adsetId))
           .map((ad) => ad.id),
       );
       setSelectedAdIds((prev) => prev.filter((id) => validAdIds.has(id)));
@@ -182,7 +184,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   const [sortConfig, setSortConfig] = useState<{
     key: string;
     direction: "asc" | "desc";
-  } | null>({ key: "effective_status", direction: "desc" });
+  } | null>({ key: "status", direction: "desc" });
 
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
@@ -393,23 +395,12 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
       // Coupling: Only filter by PARENT selections, not CURRENT level selection.
       // This allows the user to see all items at the current level and pick multiple ones.
 
-      const matchCamp =
-        selectedCampaignIds.length === 0 ||
-        selectedCampaignIds.includes(item.campaign_id);
-      const matchAdSet =
-        selectedAdSetIds.length === 0 ||
-        selectedAdSetIds.includes(item.adset_id);
-
-      if (level === "campaigns") {
-        return true; // Show all campaigns for this account
-      }
-      if (level === "adsets") {
-        return matchCamp; // Filter adsets by selected campaigns
-      }
-      if (level === "ads") {
-        return matchCamp && matchAdSet; // Filter ads by parents
-      }
-      return true;
+      return matchesAccountDetailsParentFilters({
+        item,
+        level,
+        selectedCampaignIds,
+        selectedAdSetIds
+      });
     });
   }, [data, level, selectedCampaignIds, selectedAdSetIds, tableSearch]);
 
@@ -447,16 +438,9 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
       bVal = getBudgetValue(b);
     }
 
-    if (key === "effective_status") {
-      const getStatusWeight = (status: string) => {
-        const s = (status || "").toUpperCase();
-        if (s === "ACTIVE") return 2;
-        if (s.includes("PAUSED")) return 1;
-        if (s === "UNKNOWN") return null;
-        return 0;
-      };
-      aVal = getStatusWeight(a[key]);
-      bVal = getStatusWeight(b[key]);
+    if (key === "status") {
+      aVal = getAccountDetailsStatusSortWeight(a[key]);
+      bVal = getAccountDetailsStatusSortWeight(b[key]);
     }
 
     return compareAccountDetailsSortValues(aVal, bVal, direction);
@@ -497,15 +481,15 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   const adSetOptions =
     selectedCampaignIds.length > 0
       ? hierarchy.adSets.filter((a) =>
-          selectedCampaignIds.includes(a.campaign_id),
+          selectedCampaignIds.includes(a.campaignId),
         )
       : hierarchy.adSets;
   const adOptions =
     selectedAdSetIds.length > 0
-      ? hierarchy.ads.filter((a) => selectedAdSetIds.includes(a.adset_id))
+      ? hierarchy.ads.filter((a) => selectedAdSetIds.includes(a.adsetId))
       : selectedCampaignIds.length > 0
         ? hierarchy.ads.filter((a) =>
-            selectedCampaignIds.includes(a.campaign_id),
+            selectedCampaignIds.includes(a.campaignId),
           )
         : hierarchy.ads;
 
@@ -832,11 +816,11 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                     )}
                     <th
                       className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]"
-                      onClick={() => requestSort("effective_status")}
+                      onClick={() => requestSort("status")}
                     >
                       投放状态{" "}
                       <ArrowUpDown
-                        className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === "effective_status" ? "text-meta-blue" : "text-gray-300"}`}
+                        className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === "status" ? "text-meta-blue" : "text-gray-300"}`}
                       />
                     </th>
 
@@ -1047,9 +1031,9 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                         </td>
                         {level === "ads" && (
                           <td className="p-2 align-middle whitespace-nowrap text-left font-mono text-xs border-r border-[#e5e7eb] px-4 text-gray-500">
-                            {item.creative?.id || item.creative_id || (item.creative ? item.creative.id : null) ? (
+                            {item.creative?.id || item.creativeId || (item.creative ? item.creative.id : null) ? (
                               <span className="bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded-md font-semibold text-slate-700 select-all" title="双击全选复制">
-                                {item.creative?.id || item.creative_id || item.creative?.id}
+                                {item.creative?.id || item.creativeId || item.creative?.id}
                               </span>
                             ) : (
                               <span className="text-gray-300 italic">未绑定创意</span>
@@ -1060,12 +1044,12 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                           <span
                             className={cn(
                               "px-2 py-1 rounded text-[10px] font-bold uppercase",
-                              item.effective_status === "ACTIVE"
+                              item.status === "ACTIVE"
                                 ? "bg-green-100 text-green-700"
                                 : "bg-gray-100 text-gray-700",
                             )}
                           >
-                            {item.effective_status}
+                            {item.status}
                           </span>
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap font-bold border-r border-[#e5e7eb] text-gray-800 px-4">

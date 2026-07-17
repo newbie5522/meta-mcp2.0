@@ -84,6 +84,11 @@ function isSuccessfulReceipt(status: string | null | undefined) {
   return normalized === "SUCCESS" || normalized === "NO_NEW_DATA";
 }
 
+function isFailedReceipt(status: string | null | undefined) {
+  const normalized = String(status || "").toUpperCase();
+  return normalized === "FAILED" || normalized === "ERROR";
+}
+
 function defaultBusinessToday() {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Los_Angeles",
@@ -140,12 +145,16 @@ export function resolveDataCoverageStatus(input: ResolveDataCoverageInput): Data
     };
   }
 
-  const factsCoverRange = coversRequestedRange(
-    earliestAvailableDate,
-    latestAvailableDate,
-    input.requestedStartDate,
-    input.requestedEndDate
-  );
+  if (syncEvidence && isFailedReceipt(syncEvidence.status)) {
+    return {
+      ...base,
+      status: "ERROR",
+      message: "当前筛选范围最近一次同步失败。",
+      coverageComplete: false,
+      coverageBasis: "QUERY_ERROR"
+    };
+  }
+
   const receiptCoversRange = coversRequestedRange(
     syncEvidence?.rangeStart,
     syncEvidence?.rangeEnd,
@@ -158,22 +167,20 @@ export function resolveDataCoverageStatus(input: ResolveDataCoverageInput): Data
       receiptCoversRange &&
       syncEvidence.failedCount === 0 &&
       input.truncated !== true &&
-      input.coverageComplete !== false
+      input.coverageComplete === true
   );
 
   if (rangeRowCount > 0) {
-    const complete = factsCoverRange && input.truncated !== true && input.coverageComplete !== false &&
-      (!syncEvidence || syncEvidence.failedCount === 0);
     return {
       ...base,
       explicitRangeSyncSuccess: receiptComplete,
-      status: complete ? "READY" : "PARTIAL_COVERAGE",
-      message: complete
+      status: receiptComplete ? "READY" : "PARTIAL_COVERAGE",
+      message: receiptComplete
         ? currentDayInProgress
           ? "今日数据进行中。"
-          : "当前筛选范围数据已覆盖。"
-        : "当前筛选范围仅有部分数据覆盖。",
-      coverageComplete: complete,
+          : "当前筛选范围数据已完整同步。"
+        : "当前筛选范围已有事实，但缺少完整同步回执。",
+      coverageComplete: receiptComplete,
       coverageBasis: receiptComplete ? "FACT_ROWS_AND_SYNC_RECEIPT" : "FACT_ROWS_ONLY"
     };
   }

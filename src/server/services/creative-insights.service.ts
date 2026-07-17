@@ -237,7 +237,24 @@ export async function getAggregatedCreativeInsights(params: {
 }) {
   const startStr = params.startDate || dayjs().subtract(30, "day").format("YYYY-MM-DD");
   const endStr = params.endDate || dayjs().format("YYYY-MM-DD");
-  const filterAccountId = params.accountId && params.accountId !== "all" ? normalizeMetaAccountId(params.accountId) : null;
+  const normalizedFilterAccountId =
+    params.accountId && params.accountId !== "all"
+      ? normalizeMetaAccountId(params.accountId)
+      : null;
+  const numericFilterAccountId =
+    normalizedFilterAccountId
+      ? normalizedFilterAccountId.replace(/^act_/, "")
+      : null;
+  if (
+    params.storeId &&
+    params.storeId !== "all" &&
+    (!/^\d+$/.test(String(params.storeId)) || Number(params.storeId) <= 0)
+  ) {
+    const error: any = new Error("INVALID_STORE_FILTER");
+    error.code = "INVALID_STORE_FILTER";
+    error.statusCode = 400;
+    throw error;
+  }
   const filterStoreId = params.storeId && params.storeId !== "all" ? Number(params.storeId) : null;
   const filterCampaignId = params.campaignId && params.campaignId !== "all" ? params.campaignId : null;
   const filterAdsetId = params.adsetId && params.adsetId !== "all" ? params.adsetId : null;
@@ -259,6 +276,12 @@ export async function getAggregatedCreativeInsights(params: {
     prisma.accountMapping.findMany(),
     prisma.adAccount.findMany()
   ]);
+  if (filterStoreId !== null && !stores.some((store: any) => Number(store.id) === filterStoreId)) {
+    const error: any = new Error("STORE_FILTER_UNRESOLVED");
+    error.code = "STORE_FILTER_UNRESOLVED";
+    error.statusCode = 404;
+    throw error;
+  }
 
   const adMap = new Map(ads.map((ad: any) => [ad.id, ad]));
   const creativeMap = new Map(creatives.map((creative: any) => [creative.creativeId, creative]));
@@ -278,12 +301,14 @@ export async function getAggregatedCreativeInsights(params: {
     ? null
     : new Set(Array.from(accountToStoreMap.entries()).filter(([, storeId]) => storeId === filterStoreId).map(([accountId]) => accountId));
 
-  if (filterAccountId && storeAccountIds && !storeAccountIds.has(filterAccountId)) {
+  if (normalizedFilterAccountId && storeAccountIds && !storeAccountIds.has(normalizedFilterAccountId)) {
     return emptyResponse({ page, pageSize, startStr, endStr, totalAdPerfCount, ads, creatives, includeZero, exportRequested });
   }
 
   const performanceWhere: any = { level: "ad", date: { gte: startStr, lte: endStr } };
-  if (filterAccountId) performanceWhere.account_id = filterAccountId;
+  if (normalizedFilterAccountId) performanceWhere.account_id = {
+    in: [normalizedFilterAccountId, numericFilterAccountId]
+  };
   else if (storeAccountIds) performanceWhere.account_id = { in: Array.from(storeAccountIds) };
   if (filterCampaignId) performanceWhere.campaign_id = filterCampaignId;
   if (filterAdsetId) performanceWhere.adset_id = filterAdsetId;
@@ -308,12 +333,13 @@ export async function getAggregatedCreativeInsights(params: {
         adsetIds: new Set<string>(), accountIds: new Set<string>(), accountNames: new Set<string>(),
         storeId: creative?.storeId || accountToStoreMap.get(normalizeMetaAccountId(row.account_id)) || null,
         creative,
-        spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0,
+        spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0, factRowCount: 0,
         reach: 0, reachSeen: false, addToCart: 0, addToCartSeen: false,
         maxSyncedAt: null as Date | null, latestPerformanceDate: null as string | null
       });
     }
     const item = grouped.get(key);
+    item.factRowCount += 1;
     if (creativeId) item.creativeIds.add(creativeId);
     if (adId) item.adIds.add(adId);
     const campaignId = row.campaign_id || ad?.campaignId || ad?.adSet?.campaignId || "";
@@ -346,7 +372,7 @@ export async function getAggregatedCreativeInsights(params: {
     const adsetIds = Array.from(item.adsetIds) as string[];
     const accountIds = Array.from(item.accountIds) as string[];
     const accountNames = Array.from(item.accountNames) as string[];
-    const hasPerformanceFacts = item.spend > 0 || item.impressions > 0 || item.clicks > 0 || item.purchases > 0 || item.purchaseValue > 0;
+    const hasPerformanceFacts = item.factRowCount > 0;
     const ctr = item.impressions > 0 ? (item.clicks / item.impressions) * 100 : 0;
     const cpc = item.clicks > 0 ? item.spend / item.clicks : 0;
     const cpm = item.impressions > 0 ? (item.spend / item.impressions) * 1000 : 0;
@@ -401,7 +427,7 @@ export async function getAggregatedCreativeInsights(params: {
       performanceSyncedAt: null, latestPerformanceDate: null
     };
   }).filter((row: any) => {
-    if (filterAccountId && row.accountId !== filterAccountId) return false;
+    if (normalizedFilterAccountId && row.accountId !== normalizedFilterAccountId) return false;
     if (filterStoreId !== null && row.storeId !== filterStoreId) return false;
     if (filterCampaignId && !row.campaignIds.includes(filterCampaignId)) return false;
     if (filterAdsetId && !row.adsetIds.includes(filterAdsetId)) return false;

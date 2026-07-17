@@ -1,61 +1,57 @@
 import { Router } from "express";
 import { getDashboardSummary } from "../services/dashboard.service.js";
 import { ensureDataCenterFreshness, getFreshnessMeta } from "../services/data-center-auto-refresh.service.js";
-import dayjs from "dayjs";
-import prisma from "../../db/index.js";
 
 const router = Router();
 
 router.get("/", async (req, res) => {
-  const { since, until, refresh } = req.query;
-  
+  const { since, until } = req.query;
+
   try {
-    const startDate = since ? dayjs(since as string).format("YYYY-MM-DD") : undefined;
-    const endDate = until ? dayjs(until as string).format("YYYY-MM-DD") : undefined;
-
-    let mode: "background" | "blocking_if_missing" = "background";
-    if (startDate && endDate) {
-      const ledgerCount = await prisma.dataCenterStoreDaily.count({
-        where: {
-          date: {
-            gte: startDate,
-            lte: endDate
-          }
-        }
-      });
-      if (ledgerCount === 0) {
-        mode = "blocking_if_missing";
-      }
-    }
-
-    ensureDataCenterFreshness({
-      reason: "api_request",
-      requestedStartDate: startDate,
-      requestedEndDate: endDate,
-      mode
-    }).catch(err => console.warn("[DataCenterAutoRefresh] background ensure failed", err));
-
     const summary = await getDashboardSummary({
-      refresh: refresh === "true",
-      since: since ? new Date(since as string) : undefined,
-      until: until ? new Date(until as string) : undefined
+      since: since ? new Date(String(since)) : undefined,
+      until: until ? new Date(String(until)) : undefined
     });
 
     const freshness = await getFreshnessMeta();
-    
-    // UI expects API result wrapper { data: ... }
-    res.json({
+
+    return res.json({
       data: summary,
-      dataSourceExplain: {
-        primarySource: "FactMetaPerformance",
-        fallbackSource: null,
-        fallbackUsed: false
-      },
+      dateRange: summary.dateRange,
+      storeCoverage: summary.storeCoverage,
+      metaCoverage: summary.metaCoverage,
+      productCoverage: summary.productCoverage,
       freshness
     });
   } catch (err: any) {
-    console.error("Dashboard endpoint error:", err);
-    res.status(500).json({ error: "Failed to generate dashboard summary" });
+    return res.status(500).json({
+      status: "ERROR",
+      error: "DASHBOARD_QUERY_FAILED",
+      details: err.message
+    });
+  }
+});
+
+router.post("/refresh", async (req, res) => {
+  const { startDate, endDate, storeId } = req.body || {};
+
+  try {
+    const result = await ensureDataCenterFreshness({
+      reason: "manual_internal",
+      requestedStartDate: startDate,
+      requestedEndDate: endDate,
+      storeId: storeId ? Number(storeId) : null,
+      force: true,
+      mode: "blocking"
+    });
+
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({
+      status: "ERROR",
+      error: "DASHBOARD_REFRESH_FAILED",
+      details: err.message
+    });
   }
 });
 

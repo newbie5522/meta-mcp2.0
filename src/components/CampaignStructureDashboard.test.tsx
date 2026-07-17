@@ -151,7 +151,7 @@ describe("Campaign structure behavior contract", () => {
 
   it("keeps TRUE_EMPTY empty and does not restore stale data", () => {
     const state = resolveCampaignStructureResponseState({
-      payload: { dataHealth: { status: "TRUE_EMPTY" } },
+      payload: { dataHealth: { status: "TRUE_EMPTY" }, dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" } },
       rows: [],
       startStr: "2026-07-01",
       endStr: "2026-07-07",
@@ -173,7 +173,7 @@ describe("Campaign structure behavior contract", () => {
       lastGoodData: null
     });
     const error = resolveCampaignStructureResponseState({
-      payload: { dataHealth: { status: "ERROR" } },
+      payload: { dataHealth: { status: "ERROR" }, dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" } },
       rows: [],
       startStr: "2026-07-01",
       endStr: "2026-07-07",
@@ -252,7 +252,7 @@ describe("Campaign structure behavior contract", () => {
   it("allows only same-key SYNC_RUNNING preservation of lastGoodData", () => {
     const lastGoodData = { requestKey: "same", data: [{ id: "safe" }] };
     const same = resolveCampaignStructureResponseState({
-      payload: { coverage: { status: "SYNC_RUNNING" }, dataHealth: { status: "SYNC_RUNNING" }, allowStaleWhileRunning: true },
+      payload: { coverage: { status: "SYNC_RUNNING" }, dataHealth: { status: "SYNC_RUNNING" }, allowStaleWhileRunning: true, dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" } },
       rows: [],
       startStr: "2026-07-01",
       endStr: "2026-07-07",
@@ -262,7 +262,7 @@ describe("Campaign structure behavior contract", () => {
       lastGoodData
     });
     const changed = resolveCampaignStructureResponseState({
-      payload: { coverage: { status: "SYNC_RUNNING" }, dataHealth: { status: "SYNC_RUNNING" }, allowStaleWhileRunning: true },
+      payload: { coverage: { status: "SYNC_RUNNING" }, dataHealth: { status: "SYNC_RUNNING" }, allowStaleWhileRunning: true, dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" } },
       rows: [],
       startStr: "2026-07-01",
       endStr: "2026-07-07",

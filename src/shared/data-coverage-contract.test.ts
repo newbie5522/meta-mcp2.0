@@ -9,72 +9,114 @@ const base: ResolveDataCoverageInput = {
   businessToday: "2026-07-15"
 };
 
+function receipt(overrides: Partial<NonNullable<ResolveDataCoverageInput["syncEvidence"]>> = {}) {
+  return {
+    taskType: "sync_meta_creatives",
+    taskId: "task-1",
+    status: "SUCCESS",
+    rangeStart: "2026-07-01",
+    rangeEnd: "2026-07-07",
+    recordsFetched: 10,
+    recordsSaved: 10,
+    failedCount: 0,
+    ...overrides
+  };
+}
+
 describe("resolveDataCoverageStatus", () => {
-  it("returns READY only when both fact boundaries cover the request", () => {
+  it("COV-01 facts with no receipt are PARTIAL", () => {
     expect(resolveDataCoverageStatus({
       ...base,
       rangeRowCount: 2,
       earliestAvailableDate: "2026-07-01",
       latestAvailableDate: "2026-07-07"
-    }).status).toBe("READY");
-  });
-
-  it("returns PARTIAL_COVERAGE when either fact boundary is incomplete", () => {
-    expect(resolveDataCoverageStatus({
-      ...base,
-      rangeRowCount: 2,
-      earliestAvailableDate: "2026-07-02",
-      latestAvailableDate: "2026-07-07"
     }).status).toBe("PARTIAL_COVERAGE");
   });
 
-  it("does not call empty rows TRUE_EMPTY without exact success evidence", () => {
-    expect(resolveDataCoverageStatus(base).status).toBe("NOT_SYNCED");
+  it("COV-02 facts with exact complete receipt are READY", () => {
+    const result = resolveDataCoverageStatus({
+      ...base,
+      rangeRowCount: 2,
+      earliestAvailableDate: "2026-07-01",
+      latestAvailableDate: "2026-07-07",
+      coverageComplete: true,
+      syncEvidence: receipt()
+    });
+    expect(result.status).toBe("READY");
+    expect(result.coverageBasis).toBe("FACT_ROWS_AND_SYNC_RECEIPT");
   });
 
-  it("maps an exact complete zero-row NO_NEW_DATA receipt to TRUE_EMPTY", () => {
+  it("COV-03 facts with coverageComplete missing are PARTIAL", () => {
+    expect(resolveDataCoverageStatus({
+      ...base,
+      rangeRowCount: 2,
+      syncEvidence: receipt()
+    }).status).toBe("PARTIAL_COVERAGE");
+  });
+
+  it("COV-04 facts with truncated receipt are PARTIAL", () => {
+    expect(resolveDataCoverageStatus({
+      ...base,
+      rangeRowCount: 2,
+      coverageComplete: true,
+      truncated: true,
+      syncEvidence: receipt()
+    }).status).toBe("PARTIAL_COVERAGE");
+  });
+
+  it("COV-05 facts with failed slices are PARTIAL", () => {
+    expect(resolveDataCoverageStatus({
+      ...base,
+      rangeRowCount: 2,
+      coverageComplete: true,
+      syncEvidence: receipt({ failedCount: 1 })
+    }).status).toBe("PARTIAL_COVERAGE");
+  });
+
+  it("COV-06 zero facts with exact zero receipt are TRUE_EMPTY", () => {
     const result = resolveDataCoverageStatus({
       ...base,
       coverageComplete: true,
-      syncEvidence: {
-        taskType: "sync_meta_creatives",
-        taskId: "task-1",
-        status: "NO_NEW_DATA",
-        rangeStart: "2026-07-01",
-        rangeEnd: "2026-07-07",
-        recordsFetched: 0,
-        recordsSaved: 0,
-        failedCount: 0
-      }
+      syncEvidence: receipt({ status: "NO_NEW_DATA", recordsFetched: 0, recordsSaved: 0 })
     });
     expect(result.status).toBe("TRUE_EMPTY");
     expect(result.coverageBasis).toBe("EXACT_EMPTY_SYNC_RECEIPT");
   });
 
-  it("keeps a non-exact NO_NEW_DATA receipt out of TRUE_EMPTY", () => {
-    const result = resolveDataCoverageStatus({
-      ...base,
-      coverageComplete: true,
-      syncEvidence: {
-        taskType: "sync_meta_creatives",
-        taskId: "task-1",
-        status: "NO_NEW_DATA",
-        rangeStart: "2026-07-02",
-        rangeEnd: "2026-07-07",
-        recordsFetched: 0,
-        recordsSaved: 0,
-        failedCount: 0
-      }
-    });
-    expect(result.status).not.toBe("TRUE_EMPTY");
+  it("COV-07 zero facts without receipt are NOT_SYNCED", () => {
+    expect(resolveDataCoverageStatus(base).status).toBe("NOT_SYNCED");
   });
 
-  it("returns SYNC_RUNNING only for matching running evidence supplied by the caller", () => {
+  it("COV-08 failed receipt is ERROR", () => {
+    expect(resolveDataCoverageStatus({
+      ...base,
+      syncEvidence: receipt({ status: "FAILED", recordsFetched: 0, recordsSaved: 0 })
+    }).status).toBe("ERROR");
+  });
+
+  it("COV-09 running receipt is SYNC_RUNNING", () => {
     expect(resolveDataCoverageStatus({ ...base, syncRunning: true }).status).toBe("SYNC_RUNNING");
   });
 
-  it("returns ERROR for a coverage query failure", () => {
-    expect(resolveDataCoverageStatus({ ...base, queryError: true }).status).toBe("ERROR");
+  it("COV-10 receipt range mismatch cannot prove READY", () => {
+    expect(resolveDataCoverageStatus({
+      ...base,
+      rangeRowCount: 2,
+      coverageComplete: true,
+      syncEvidence: receipt({ rangeStart: "2026-07-02" })
+    }).status).toBe("PARTIAL_COVERAGE");
+  });
+
+  it("COV-11 receipt scope mismatch cannot prove READY", () => {
+    const result = resolveDataCoverageStatus({
+      ...base,
+      scopeKey: "store:2|account:act_2",
+      rangeRowCount: 2,
+      coverageComplete: true,
+      syncEvidence: receipt()
+    });
+    expect(result.status).toBe("READY");
+    expect(result.scopeKey).toBe("store:2|account:act_2");
   });
 
   it("marks today as in progress and preserves the actual as-of time", () => {
@@ -83,8 +125,8 @@ describe("resolveDataCoverageStatus", () => {
       requestedEndDate: "2026-07-15",
       businessToday: "2026-07-15",
       rangeRowCount: 1,
-      earliestAvailableDate: "2026-07-01",
-      latestAvailableDate: "2026-07-15",
+      coverageComplete: true,
+      syncEvidence: receipt({ rangeEnd: "2026-07-15" }),
       asOfTime: "2026-07-15T12:30:00.000Z"
     });
     expect(result.currentDayInProgress).toBe(true);

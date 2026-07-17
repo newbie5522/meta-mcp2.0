@@ -1,5 +1,20 @@
 import React from "react";
 
+export function coverageClass(status: string) {
+  switch (status) {
+    case "ERROR":
+      return "border-red-200 bg-red-50 text-red-800";
+    case "PARTIAL_COVERAGE":
+      return "border-amber-200 bg-amber-50 text-amber-800";
+    case "TRUE_EMPTY":
+      return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    case "SYNC_RUNNING":
+    case "NOT_SYNCED":
+    default:
+      return "border-blue-200 bg-blue-50 text-blue-800";
+  }
+}
+
 export function DataCoverageBanner({ coverage }: { coverage?: any }) {
   if (!coverage?.status) return null;
   const showCurrentDayNotice = Boolean(coverage.currentDayInProgress && coverage.asOfTime);
@@ -15,10 +30,9 @@ export function DataCoverageBanner({ coverage }: { coverage?: any }) {
     SYNC_RUNNING: "当前周期正在同步；仅在同一筛选范围显式允许时保留上次成功结果。",
     ERROR: "当前周期数据查询失败，未展示旧数据。"
   };
-  const warning = coverage.status === "ERROR" || coverage.status === "PARTIAL_COVERAGE";
 
   return (
-    <div className={`rounded-lg border px-3 py-2 text-xs font-medium ${warning ? "border-amber-200 bg-amber-50 text-amber-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}>
+    <div className={`rounded-lg border px-3 py-2 text-xs font-medium ${coverageClass(coverage.status)}`}>
       {copy[coverage.status] || `数据覆盖状态：${coverage.status}`}
       {showCurrentDayNotice ? `（今日数据进行中，统计截至 ${coverage.asOfTime}）` : ""}
     </div>

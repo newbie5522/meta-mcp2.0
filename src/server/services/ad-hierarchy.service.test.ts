@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { prismaMock, coverageMock } = vi.hoisted(() => ({
   prismaMock: {
     factMetaPerformance: { findMany: vi.fn() },
-    campaign: { findMany: vi.fn(), findUnique: vi.fn() },
-    adSet: { findMany: vi.fn(), findUnique: vi.fn() },
-    ad: { findMany: vi.fn() }
+    campaign: { findMany: vi.fn(), findUnique: vi.fn(), findFirst: vi.fn() },
+    adSet: { findMany: vi.fn(), findUnique: vi.fn(), findFirst: vi.fn() },
+    ad: { findMany: vi.fn(), findFirst: vi.fn() }
   },
   coverageMock: vi.fn()
 }));
@@ -17,6 +17,10 @@ vi.mock("../utils.js", () => ({
 vi.mock("./data-coverage.service.js", () => ({ getDataSourceCoverage: coverageMock }));
 
 import { getCanonicalAdHierarchy, mapCanonicalHierarchyToAccountDetails } from "./ad-hierarchy.service";
+import {
+  getAccountDetailsStatusSortWeight,
+  matchesAccountDetailsParentFilters
+} from "../../components/account-details-view-state";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -24,9 +28,12 @@ beforeEach(() => {
   prismaMock.factMetaPerformance.findMany.mockResolvedValue([]);
   prismaMock.campaign.findMany.mockResolvedValue([]);
   prismaMock.campaign.findUnique.mockResolvedValue(null);
+  prismaMock.campaign.findFirst.mockResolvedValue({ id: "scoped-campaign" });
   prismaMock.adSet.findMany.mockResolvedValue([]);
   prismaMock.adSet.findUnique.mockResolvedValue(null);
+  prismaMock.adSet.findFirst.mockResolvedValue({ id: "scoped-adset" });
   prismaMock.ad.findMany.mockResolvedValue([]);
+  prismaMock.ad.findFirst.mockResolvedValue({ id: "scoped-ad" });
 });
 
 describe("canonical ad hierarchy service", () => {
@@ -82,9 +89,9 @@ describe("canonical ad hierarchy service", () => {
 
     expect(mapCanonicalHierarchyToAccountDetails("ad", rows)).toEqual([expect.objectContaining({
       id: "ad-1",
-      campaign_id: "camp-1",
-      adset_id: "set-1",
-      creative_id: "creative-1",
+      campaignId: "camp-1",
+      adsetId: "set-1",
+      creativeId: "creative-1",
       hasPerformanceFacts: true,
       insights: {
         data: [expect.objectContaining({
@@ -348,5 +355,114 @@ describe("canonical ad hierarchy service", () => {
     expect(coverageMock).toHaveBeenCalledWith(expect.objectContaining({ adId: "ad-1" }));
     expect(result.appliedFilters.adId).toBe("ad-1");
     expect(result.dataHealth.queryDebug.adId).toBe("ad-1");
+  });
+
+  it("AD-CONTRACT-01 mapper adset campaignId is consumed by page", () => {
+    const [row] = mapCanonicalHierarchyToAccountDetails("adset", [{
+      id: "set-1",
+      campaignId: "camp-1",
+      name: "Set 1",
+      status: "ACTIVE",
+      accountId: "act_1",
+      hasPerformanceFacts: true,
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      purchases: 0,
+      purchase_value: 0
+    }]);
+    expect(row).toHaveProperty("campaignId", "camp-1");
+    expect(row).not.toHaveProperty("campaign_id");
+    expect(matchesAccountDetailsParentFilters({
+      item: row,
+      level: "adsets",
+      selectedCampaignIds: ["camp-1"]
+    })).toBe(true);
+  });
+
+  it("AD-CONTRACT-02 mapper ad adsetId is consumed by page", () => {
+    const [row] = mapCanonicalHierarchyToAccountDetails("ad", [{
+      id: "ad-1",
+      campaignId: "camp-1",
+      adsetId: "set-1",
+      creativeId: "creative-1",
+      name: "Ad 1",
+      status: "ACTIVE",
+      accountId: "act_1",
+      hasPerformanceFacts: true,
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      purchases: 0,
+      purchase_value: 0
+    }]);
+    expect(row).toMatchObject({ campaignId: "camp-1", adsetId: "set-1", creativeId: "creative-1" });
+    expect(row).not.toHaveProperty("adset_id");
+    expect(matchesAccountDetailsParentFilters({
+      item: row,
+      level: "ads",
+      selectedCampaignIds: ["camp-1"],
+      selectedAdSetIds: ["set-1"]
+    })).toBe(true);
+  });
+
+  it("AD-CONTRACT-03 status is consumed by page sort", () => {
+    const [row] = mapCanonicalHierarchyToAccountDetails("campaign", [{
+      id: "camp-1",
+      name: "Campaign 1",
+      status: "ACTIVE",
+      accountId: "act_1",
+      hasPerformanceFacts: false,
+      spend: null,
+      impressions: null,
+      clicks: null,
+      purchases: null,
+      purchase_value: null
+    }]);
+    expect(row).toHaveProperty("status", "ACTIVE");
+    expect(row).not.toHaveProperty("effective_status");
+    expect(getAccountDetailsStatusSortWeight(row.status)).toBe(2);
+  });
+
+  it("AD-SCOPE-01 foreign campaign returns 404", async () => {
+    prismaMock.campaign.findFirst.mockResolvedValueOnce(null);
+    await expect(getCanonicalAdHierarchy({
+      level: "adset",
+      accountId: "act_1",
+      campaignId: "foreign-camp",
+      startDate: "2026-07-01",
+      endDate: "2026-07-03"
+    })).rejects.toMatchObject({
+      code: "HIERARCHY_PARENT_SCOPE_MISMATCH",
+      statusCode: 404
+    });
+  });
+
+  it("AD-SCOPE-02 foreign adset returns 404", async () => {
+    prismaMock.adSet.findFirst.mockResolvedValueOnce(null);
+    await expect(getCanonicalAdHierarchy({
+      level: "ad",
+      accountId: "act_1",
+      adsetId: "foreign-set",
+      startDate: "2026-07-01",
+      endDate: "2026-07-03"
+    })).rejects.toMatchObject({
+      code: "HIERARCHY_PARENT_SCOPE_MISMATCH",
+      statusCode: 404
+    });
+  });
+
+  it("AD-SCOPE-03 foreign ad returns 404", async () => {
+    prismaMock.ad.findFirst.mockResolvedValueOnce(null);
+    await expect(getCanonicalAdHierarchy({
+      level: "ad",
+      accountId: "act_1",
+      adId: "foreign-ad",
+      startDate: "2026-07-01",
+      endDate: "2026-07-03"
+    })).rejects.toMatchObject({
+      code: "HIERARCHY_PARENT_SCOPE_MISMATCH",
+      statusCode: 404
+    });
   });
 });

@@ -111,6 +111,19 @@ function coverageMetric(coverage: any, value: number) {
     : null;
 }
 
+function countryMetaMetric(
+  coverage: any,
+  hasMetaFacts: boolean,
+  value: number
+) {
+  const status = String(coverage?.status || "").toUpperCase();
+
+  if (status === "TRUE_EMPTY") return 0;
+  if (status === "READY") return hasMetaFacts ? value : 0;
+  if (status === "PARTIAL_COVERAGE") return hasMetaFacts ? value : null;
+  return null;
+}
+
 function queryFlag(value: unknown, fallback = false) {
   if (value === true || value === "true") return true;
   if (value === false || value === "false") return false;
@@ -1216,14 +1229,15 @@ router.get("/countries", async (req, res) => {
     );
     const visibleCountryRows = (Array.isArray(result.rows) ? result.rows : []).map((row: any) => ({
       ...row,
-      metaSpend: coverageMetric(countryCoverage.metaCoverage, row.metaSpend),
-      metaImpressions: coverageMetric(countryCoverage.metaCoverage, row.metaImpressions),
-      metaClicks: coverageMetric(countryCoverage.metaCoverage, row.metaClicks),
-      metaPurchases: coverageMetric(countryCoverage.metaCoverage, row.metaPurchases),
-      metaPurchaseValue: coverageMetric(countryCoverage.metaCoverage, row.metaPurchaseValue),
-      metaRoas: coverageMetric(countryCoverage.metaCoverage, row.metaRoas),
-      cpc: coverageMetric(countryCoverage.metaCoverage, row.cpc),
-      cpm: coverageMetric(countryCoverage.metaCoverage, row.cpm)
+      metaSpend: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.metaSpend),
+      metaImpressions: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.metaImpressions),
+      metaClicks: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.metaClicks),
+      metaPurchases: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.metaPurchases),
+      metaPurchaseValue: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.metaPurchaseValue),
+      metaRoas: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.metaRoas),
+      ctr: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.ctr),
+      cpc: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.cpc),
+      cpm: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.cpm)
     }));
     const rawCountrySummary: any = result.summary || {};
     const visibleCountrySummary = {
@@ -1311,6 +1325,28 @@ router.get("/products", async (req, res) => {
     const { storeId } = req.query;
     const { startStr, endStr } = getAppliedDateRange(req.query);
     const normalizedStoreId = storeId && storeId !== "undefined" ? String(storeId) : "all";
+    if (
+      normalizedStoreId !== "all" &&
+      (!/^\d+$/.test(normalizedStoreId) || Number(normalizedStoreId) <= 0)
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "INVALID_STORE_FILTER"
+      });
+    }
+    if (normalizedStoreId !== "all") {
+      const storeExists = await prisma.store.findUnique({
+        where: { id: Number(normalizedStoreId) },
+        select: { id: true }
+      });
+
+      if (!storeExists) {
+        return res.status(404).json({
+          success: false,
+          error: "STORE_FILTER_UNRESOLVED"
+        });
+      }
+    }
     const appliedFilters = buildAppliedFilters({ startStr, endStr, storeId: normalizedStoreId });
 
     const products = await getProductIntelligence(startStr, endStr, normalizedStoreId);
@@ -2237,15 +2273,20 @@ router.get("/accounts-performance", async (req, res) => {
     };
 
     const rows = await prisma.dataCenterMetaAccountDaily.findMany({ where });
+    const hasPositiveMetric = (value: unknown) => {
+      if (value === null || value === undefined || value === "") return false;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && parsed > 0;
+    };
 
     const activeRowAccountIds = new Set(
       rows
         .filter(row =>
-          Number(row.spend || 0) > 0 ||
-          Number(row.impressions || 0) > 0 ||
-          Number(row.clicks || 0) > 0 ||
-          Number(row.purchases || 0) > 0 ||
-          Number(row.purchaseValue || 0) > 0
+          hasPositiveMetric(row.spend) ||
+          hasPositiveMetric(row.impressions) ||
+          hasPositiveMetric(row.clicks) ||
+          hasPositiveMetric(row.purchases) ||
+          hasPositiveMetric(row.purchaseValue)
         )
         .map(row => normalizeMetaAccountId(row.accountId))
     );
@@ -2332,13 +2373,25 @@ router.get("/accounts-performance", async (req, res) => {
 
     let results = Array.from(inventoryMap.values()).map(acc => {
       const accountRows = rowsByAccount.get(normalizeMetaAccountId(acc.fb_account_id)) || [];
+      const hasPerformanceFacts = accountRows.length > 0;
 
-      const spend = Number(accountRows.reduce((s, r) => s + Number(r.spend || 0), 0).toFixed(2));
-      const impressions = accountRows.reduce((s, r) => s + Number(r.impressions || 0), 0);
-      const reach = accountRows.reduce((s, r) => s + Number(r.reach || 0), 0);
-      const clicks = accountRows.reduce((s, r) => s + Number(r.clicks || 0), 0);
-      const purchases = accountRows.reduce((s, r) => s + Number(r.purchases || 0), 0);
-      const purchaseValue = Number(accountRows.reduce((s, r) => s + Number(r.purchaseValue || 0), 0).toFixed(2));
+      const spend = hasPerformanceFacts
+        ? Number(accountRows.reduce((s, r) => s + Number(r.spend || 0), 0).toFixed(2))
+        : null;
+      const impressions = hasPerformanceFacts
+        ? accountRows.reduce((s, r) => s + Number(r.impressions || 0), 0)
+        : null;
+      const reach = null;
+      const reachAvailable = false;
+      const clicks = hasPerformanceFacts
+        ? accountRows.reduce((s, r) => s + Number(r.clicks || 0), 0)
+        : null;
+      const purchases = hasPerformanceFacts
+        ? accountRows.reduce((s, r) => s + Number(r.purchases || 0), 0)
+        : null;
+      const purchaseValue = hasPerformanceFacts
+        ? Number(accountRows.reduce((s, r) => s + Number(r.purchaseValue || 0), 0).toFixed(2))
+        : null;
 
       const latestFetchedAt = accountRows
         .map(r => r.apiFetchedAt)
@@ -2349,22 +2402,45 @@ router.get("/accounts-performance", async (req, res) => {
         id: acc.fb_account_id,
         accountId: acc.fb_account_id,
         accountName: acc.fb_account_name,
+        hasPerformanceFacts,
         spend,
         impressions,
         reach,
+        reachAvailable,
         clicks,
         purchases,
         purchase_value: purchaseValue,
         purchaseValue,
-        ctr: impressions > 0 ? Number(((clicks / impressions) * 100).toFixed(4)) : 0,
-        cpc: clicks > 0 ? Number((spend / clicks).toFixed(4)) : 0,
-        cpm: impressions > 0 ? Number(((spend / impressions) * 1000).toFixed(4)) : 0,
-        roas: spend > 0 ? Number((purchaseValue / spend).toFixed(4)) : 0,
+        ctr: !hasPerformanceFacts
+          ? null
+          : impressions > 0
+            ? Number(((clicks / impressions) * 100).toFixed(4))
+            : 0,
+        cpc: !hasPerformanceFacts
+          ? null
+          : clicks > 0
+            ? Number((spend / clicks).toFixed(4))
+            : 0,
+        cpm: !hasPerformanceFacts
+          ? null
+          : impressions > 0
+            ? Number(((spend / impressions) * 1000).toFixed(4))
+            : 0,
+        cpa: !hasPerformanceFacts
+          ? null
+          : purchases > 0
+            ? Number((spend / purchases).toFixed(4))
+            : null,
+        roas: !hasPerformanceFacts
+          ? null
+          : spend > 0
+            ? Number((purchaseValue / spend).toFixed(4))
+            : 0,
         latestFetchedAt,
         source: "DataCenterMetaAccountDaily",
         mode: "DATACENTER_LEDGER",
         snapshotRows: accountRows.length,
-        hasSnapshot: accountRows.length > 0,
+        hasSnapshot: hasPerformanceFacts,
         isBound: !!acc.storeId,
         mappingStatus: acc.storeId ? "BOUND" : "UNBOUND",
         needsRefresh: accountRows.length === 0
@@ -2387,18 +2463,19 @@ router.get("/accounts-performance", async (req, res) => {
       );
     }
 
-    results.sort((a, b) => b.spend - a.spend);
+    results.sort((a, b) => Number(b.spend ?? -1) - Number(a.spend ?? -1));
 
     const latestFetched = rows
       .map(r => r.apiFetchedAt)
       .sort((a, b) => b.getTime() - a.getTime())[0] || null;
 
-    const totalSpend = Number(results.reduce((sum, a) => sum + a.spend, 0).toFixed(2));
+    const performanceResults = results.filter(row => row.hasPerformanceFacts === true);
+    const totalSpend = Number(performanceResults.reduce((sum, a) => sum + Number(a.spend ?? 0), 0).toFixed(2));
     const boundAccounts = results.filter(r => r.isBound).length;
     const unboundAccounts = results.filter(r => !r.isBound).length;
 
-    const unboundSpend = Number(results.filter(r => !r.isBound).reduce((sum, r) => sum + r.spend, 0).toFixed(2));
-    const unboundSpendAccounts = results.filter(r => !r.isBound && r.spend > 0).length;
+    const unboundSpend = Number(performanceResults.filter(r => !r.isBound).reduce((sum, r) => sum + Number(r.spend ?? 0), 0).toFixed(2));
+    const unboundSpendAccounts = performanceResults.filter(r => !r.isBound && Number(r.spend ?? 0) > 0).length;
     const unboundSpendRate = totalSpend > 0 ? unboundSpend / totalSpend : 0;
 
     const freshness = await getFreshnessMeta();
@@ -2430,10 +2507,10 @@ router.get("/accounts-performance", async (req, res) => {
       hiddenHistoricalAccountsCount: includeHistoricalAccounts
         ? 0
         : Math.max(0, totalAdAccountsInventoryCount - results.length),
-      accountsWithSpendCount: results.filter(a => a.spend > 0).length,
+      accountsWithSpendCount: performanceResults.filter(a => Number(a.spend ?? 0) > 0).length,
       inventoryAccountCount: results.length,
-      performanceAccountCount: results.filter(a => a.spend > 0 || a.impressions > 0 || a.clicks > 0 || a.purchases > 0).length,
-      structureOnlyAccountCount: results.filter(a => a.spend === 0 && a.impressions === 0 && a.clicks === 0 && a.purchases === 0).length,
+      performanceAccountCount: performanceResults.length,
+      structureOnlyAccountCount: results.filter(row => !row.hasPerformanceFacts).length,
       accountDisplayScope: includeHistoricalAccounts ? "historical_all" : "active_only",
       totalSpend,
       metaReconciliation: {
@@ -2451,7 +2528,7 @@ router.get("/accounts-performance", async (req, res) => {
         source: "DataCenterMetaAccountDaily"
       },
       health: {
-        status: rows.length > 0 ? "READY" : "EMPTY_FACTS",
+        status: accountCoverage.status,
         missingReason: rows.length > 0 ? "所有数据来自 DataCenter Meta Account Daily 账目表。" : "此日期范围内暂无 DataCenter 账目记录。",
         warnings: [],
         lastSyncTime: latestFetched,
@@ -2481,9 +2558,9 @@ router.get("/accounts-performance", async (req, res) => {
       },
       summary: {
         totalAccounts: results.length,
-        activeAccounts: results.filter(a => a.spend > 0).length,
-        spendAccounts: results.filter(a => a.spend > 0).length,
-        zeroSpendAccounts: results.filter(a => a.spend === 0).length,
+        activeAccounts: performanceResults.filter(a => Number(a.spend ?? 0) > 0).length,
+        spendAccounts: performanceResults.filter(a => Number(a.spend ?? 0) > 0).length,
+        zeroSpendAccounts: performanceResults.filter(a => Number(a.spend ?? 0) === 0).length,
         boundAccounts,
         unboundAccounts,
         unboundSpendAccounts,
@@ -2972,7 +3049,12 @@ router.get("/creative-insights", async (req, res) => {
       }
     });
   } catch (error: any) {
-    res.status(500).json({ success: false, status: "ERROR", error: "CREATIVE_INSIGHTS_QUERY_FAILED", details: error.message });
+    res.status(error?.statusCode || 500).json({
+      success: false,
+      status: "ERROR",
+      error: error?.code || "CREATIVE_INSIGHTS_QUERY_FAILED",
+      details: error.message
+    });
   }
 });
 

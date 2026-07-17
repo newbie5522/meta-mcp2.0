@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import axios from "axios";
 import { format } from "date-fns";
 import { 
@@ -29,7 +29,9 @@ import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel"
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 import {
   buildDataViewRequestKey,
-  isDateRangeMismatch
+  isCanceledRequest,
+  isDateRangeMismatch,
+  shouldApplyLatestRequest
 } from "@/lib/data-view-state";
 
 // Types matching API structure
@@ -177,10 +179,12 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
     page: "stores",
     startDate: formattedStartDate,
     endDate: formattedEndDate,
-    search: searchTerm,
-    sort: `${sortField}:${sortOrder}`,
     scope: "all_stores"
   });
+  const latestRequestIdRef = useRef(0);
+  const latestRequestKeyRef = useRef(currentRequestKey);
+  const requestAbortRef = useRef<AbortController | null>(null);
+  latestRequestKeyRef.current = currentRequestKey;
 
   useEffect(() => {
     setViewNotice(null);
@@ -189,14 +193,36 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
 
   // 1. Fetch Store Metrics and Summaries
   const fetchStoresData = async (silent = false) => {
+    const requestId = latestRequestIdRef.current + 1;
+    latestRequestIdRef.current = requestId;
+    const sourceRequestKey = currentRequestKey;
+    requestAbortRef.current?.abort();
+    const controller = new AbortController();
+    requestAbortRef.current = controller;
+    const isCurrent = () => shouldApplyLatestRequest({
+      requestId,
+      latestRequestId: latestRequestIdRef.current,
+      sourceRequestKey,
+      latestRequestKey: latestRequestKeyRef.current
+    });
     if (!silent) setLoading(true);
+    if (!silent) {
+      setStores([]);
+      setUnmappedSummary({ count: 0, spend: 0, message: "" });
+      setAppliedDateRange(null);
+      setStoreCoverage(null);
+      setMetaCoverage(null);
+      setViewNotice(null);
+    }
     try {
       const response = await axios.get("/api/data-center/stores", {
         params: {
           startDate: formattedStartDate,
           endDate: formattedEndDate
-        }
+        },
+        signal: controller.signal
       });
+      if (!isCurrent()) return;
       
       if (isDateRangeMismatch(response.data, formattedStartDate, formattedEndDate)) {
         setStores([]);
@@ -225,6 +251,7 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
         }
       }
     } catch (error: any) {
+      if (!isCurrent() || isCanceledRequest(error)) return;
       console.error("Failed to load stores analytics:", error);
       setStores([]);
       setUnmappedSummary({ count: 0, spend: 0, message: "" });
@@ -235,12 +262,13 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
       setViewNotice("当前店铺筛选周期请求失败，未展示旧数据。");
       toast.error("加载店铺数据失败: " + getApiErrorMessage(error));
     } finally {
-      if (!silent) setLoading(false);
+      if (isCurrent() && !silent) setLoading(false);
     }
   };
 
   useEffect(() => {
     fetchStoresData();
+    return () => requestAbortRef.current?.abort();
   }, [formattedStartDate, formattedEndDate]);
 
   // 2. Load order reconciliation panel for specific store

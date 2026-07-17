@@ -125,7 +125,7 @@ describe("Audience source orchestration contract", () => {
       storeCoverage: { status: "STALE_STORE_SHOULD_NOT_APPLY" }
     };
     const meta = resolveAudienceMetaSourceResult({
-      payload: { rows: [], dataHealth: { status: "SYNC_RUNNING" }, allowStaleWhileRunning: true },
+      payload: { rows: [], dataHealth: { status: "SYNC_RUNNING" }, allowStaleWhileRunning: true, dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" } },
       context: ctx,
       lastGoodData
     });

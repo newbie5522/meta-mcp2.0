@@ -21,6 +21,18 @@ function getAccountName(acc: unknown): string {
   return String(a.name ?? a.accountName ?? a.fb_account_name ?? accountId ?? "Unknown").trim();
 }
 
+export function extractSyncedAccounts(data: any) {
+  return Array.isArray(data)
+    ? data
+    : Array.isArray(data?.accounts)
+      ? data.accounts
+      : [];
+}
+
+export function isPartialAccountSync(data: any) {
+  return String(data?.status || "").toUpperCase() === "PARTIAL_SUCCESS";
+}
+
 export function MetaConfigPage() {
   const [token, setToken] = useState<string>('');
   const [maskedToken, setMaskedToken] = useState<string>('');
@@ -78,7 +90,7 @@ export function MetaConfigPage() {
     setTestingToken(true);
     setApiError(null);
     try {
-      const res = await axios.get('/api/accounts/test-token');
+      const res = await axios.post('/api/accounts/test-token');
       setTestResult(res.data);
       setLastSyncError(null);
       return res.data;
@@ -107,9 +119,16 @@ export function MetaConfigPage() {
       });
 
       // Step 2: Grab the accounts list
-      const res = await axios.get('/api/accounts/active-list');
-      const accountsList = Array.isArray(res.data) ? res.data : [];
+      const res = await axios.post('/api/accounts/active-list/sync');
+      const accountsList = extractSyncedAccounts(res.data);
       setAccounts(accountsList);
+      if (isPartialAccountSync(res.data)) {
+        const partialMessage = "账户同步部分完成：可能触发了同步上限或 Meta rate limit，已展示本次返回账户。";
+        setAccountRefreshStatus("success");
+        setLastSyncError(partialMessage);
+        toast.warning(partialMessage);
+        return;
+      }
 
       const isFallback = accountsList.some((acc: any) => acc.isFallbackDbCopy);
 

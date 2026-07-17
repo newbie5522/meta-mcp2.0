@@ -143,7 +143,11 @@ describe("Account details view-state contract", () => {
 
   it("clears rows for ERROR and DATE_RANGE_MISMATCH response states", () => {
     const error = resolveAccountDetailsResponseState({
-      payload: { coverage: { status: "ERROR" }, dataHealth: { status: "ERROR" } },
+      payload: {
+        coverage: { status: "ERROR" },
+        dataHealth: { status: "ERROR" },
+        dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" }
+      },
       rows: [{ id: "stale" }],
       startStr: "2026-07-01",
       endStr: "2026-07-07",
@@ -165,7 +169,11 @@ describe("Account details view-state contract", () => {
 
   it("keeps PARTIAL rows while facts-only totals exclude unavailable rows", () => {
     const state = resolveAccountDetailsResponseState({
-      payload: { coverage: { status: "PARTIAL_COVERAGE" }, dataHealth: { status: "PARTIAL_COVERAGE" } },
+      payload: {
+        coverage: { status: "PARTIAL_COVERAGE" },
+        dataHealth: { status: "PARTIAL_COVERAGE" },
+        dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" }
+      },
       rows: [structureOnly, fact(5, 100, 5, 1, 15)],
       startStr: "2026-07-01",
       endStr: "2026-07-07",
@@ -184,7 +192,10 @@ describe("Account details view-state contract", () => {
       currentRequestKey: "new"
     })).toBe(false);
     expect(resolveAccountDetailsResponseState({
-      payload: { coverage: { status: "READY" } },
+      payload: {
+        coverage: { status: "READY" },
+        dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" }
+      },
       rows: [{ id: "old" }],
       startStr: "2026-07-01",
       endStr: "2026-07-07",

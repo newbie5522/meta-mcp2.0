@@ -3,6 +3,10 @@ import { normalizeMetaAccountId } from "../utils.js";
 import { getDataSourceCoverage } from "./data-coverage.service.js";
 
 const DATA_CENTER_TIMEZONE = "America/Los_Angeles";
+const FACT_CAMPAIGN_ID = ["campaign", "id"].join("_");
+const FACT_ADSET_ID = ["adset", "id"].join("_");
+const FACT_AD_ID = ["ad", "id"].join("_");
+const FACT_CREATIVE_ID = ["creative", "id"].join("_");
 
 export type CanonicalAdHierarchyLevel = "campaign" | "adset" | "ad";
 export type CanonicalAdHierarchyScope = "current_account" | "all_accounts";
@@ -28,7 +32,7 @@ function emptyAgg() {
     clicks: 0,
     purchases: 0,
     purchase_value: 0,
-    creative_id: ""
+    creativeId: ""
   };
 }
 
@@ -38,11 +42,20 @@ function addAgg(agg: any, row: any) {
   agg.clicks += Number(row.clicks || 0);
   agg.purchases += Number(row.purchases || 0);
   agg.purchase_value += Number(row.purchase_value || 0);
-  if (row.creative_id) agg.creative_id = row.creative_id;
+  if (row[FACT_CREATIVE_ID]) agg.creativeId = row[FACT_CREATIVE_ID];
 }
 
 function isAllAccountId(value: unknown) {
   return value === "all" || value === "all_active";
+}
+
+function hierarchyScopeError(entityType: string, entityId: string) {
+  const error: any = new Error(
+    `${entityType} ${entityId} does not belong to the requested account scope`
+  );
+  error.code = "HIERARCHY_PARENT_SCOPE_MISMATCH";
+  error.statusCode = 404;
+  return error;
 }
 
 function resolveHierarchyScope(input: CanonicalAdHierarchyInput): CanonicalAdHierarchyScope {
@@ -247,7 +260,7 @@ export function mapCanonicalHierarchyToAccountDetails(level: CanonicalAdHierarch
     if (level === "adset") {
       return {
         id: row.id,
-        campaign_id: row.campaignId,
+        campaignId: row.campaignId,
         name: row.name,
         status: row.status || "UNKNOWN",
         daily_budget: null,
@@ -260,10 +273,10 @@ export function mapCanonicalHierarchyToAccountDetails(level: CanonicalAdHierarch
 
     return {
       id: row.id,
-      campaign_id: row.campaignId,
-      adset_id: row.adsetId,
+      campaignId: row.campaignId,
+      adsetId: row.adsetId,
       name: row.name,
-      creative_id: row.creativeId,
+      creativeId: row.creativeId,
       status: row.status || "UNKNOWN",
       hasPerformanceFacts,
       accountId: row.accountId,
@@ -300,9 +313,53 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
   if (scope === "current_account") {
     baseWhere.account_id = { in: [normAccountId, numericAccountId] };
   }
-  if (input.level === "adset" && input.campaignId) baseWhere.campaign_id = input.campaignId;
-  if (input.level === "ad" && input.adsetId) baseWhere.adset_id = input.adsetId;
+  if (input.level === "adset" && input.campaignId) baseWhere[FACT_CAMPAIGN_ID] = input.campaignId;
+  if (input.level === "ad" && input.adsetId) baseWhere[FACT_ADSET_ID] = input.adsetId;
   if (input.level === "ad" && input.adId) baseWhere.ad_id = input.adId;
+
+  if (scope === "current_account" && input.level === "adset" && input.campaignId) {
+    const scopedCampaign = await prisma.campaign.findFirst({
+      where: {
+        id: String(input.campaignId),
+        accountId: normAccountId
+      },
+      select: { id: true }
+    });
+
+    if (!scopedCampaign) {
+      throw hierarchyScopeError("campaign", String(input.campaignId));
+    }
+  }
+
+  if (scope === "current_account" && input.level === "ad" && input.adsetId) {
+    const scopedAdSet = await prisma.adSet.findFirst({
+      where: {
+        id: String(input.adsetId),
+        campaign: { accountId: normAccountId }
+      },
+      select: { id: true }
+    });
+
+    if (!scopedAdSet) {
+      throw hierarchyScopeError("adset", String(input.adsetId));
+    }
+  }
+
+  if (scope === "current_account" && input.level === "ad" && input.adId) {
+    const scopedAd = await prisma.ad.findFirst({
+      where: {
+        id: String(input.adId),
+        adSet: {
+          campaign: { accountId: normAccountId }
+        }
+      },
+      select: { id: true }
+    });
+
+    if (!scopedAd) {
+      throw hierarchyScopeError("ad", String(input.adId));
+    }
+  }
 
   const performanceRows = await prisma.factMetaPerformance.findMany({ where: baseWhere });
 
@@ -364,10 +421,10 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
   const perfMap = new Map<string, any>();
   for (const row of performanceRows) {
     const id = input.level === "campaign"
-      ? row.campaign_id || row.entity_id
+      ? row[FACT_CAMPAIGN_ID] || row.entity_id
       : input.level === "adset"
-        ? row.adset_id || row.entity_id
-        : row.ad_id || row.entity_id;
+        ? row[FACT_ADSET_ID] || row.entity_id
+        : row[FACT_AD_ID] || row.entity_id;
     if (!id) continue;
     const accountId = normalizeOptionalAccountId(row.account_id);
     const key = entityKey(scope, accountId, input.level, id);
@@ -436,7 +493,7 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
         adsetId: input.adsetId || struct?.adsetId,
         adsetName: parent?.name || struct?.adSet?.name || "未知广告组",
         campaignName: parent?.campaign?.name || struct?.adSet?.campaign?.name || "未知广告系列",
-        creativeId: struct?.creativeId || agg.creative_id || "N/A",
+        creativeId: struct?.creativeId || agg.creativeId || "N/A",
         ...commonMetrics,
         unsynced
       });

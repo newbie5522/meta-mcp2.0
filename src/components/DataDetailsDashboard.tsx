@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import axios from "axios";
 import { format, isValid } from "date-fns";
 import { 
@@ -32,8 +32,16 @@ import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountD
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
 import {
   buildDataViewRequestKey,
-  isDateRangeMismatch
+  isCanceledRequest,
+  isDateRangeMismatch,
+  shouldApplyLatestRequest
 } from "@/lib/data-view-state";
+import {
+  accountMetric,
+  buildAccountPerformanceTotals,
+  compareAccountPerformanceValues,
+  displayAccountTotal
+} from "./account-performance-view-state";
 
 import { useNavigate } from "react-router-dom";
 
@@ -74,9 +82,21 @@ function DataHealthAlert({ dataHealth }: { dataHealth: any }) {
   if (!dataHealth) return null;
   const status = String(dataHealth.status || "").toUpperCase();
   if (["READY", "OK", "SUCCESS"].includes(status)) return null;
+  const alertClass = (() => {
+    if (["ERROR", "FAILED", "SYNC_FAILED"].includes(status)) {
+      return "border-rose-200 bg-rose-50 text-rose-700";
+    }
+    if (["PARTIAL", "PARTIAL_COVERAGE", "WARNING"].includes(status)) {
+      return "border-amber-200 bg-amber-50 text-amber-800";
+    }
+    if (["TRUE_EMPTY"].includes(status)) {
+      return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    }
+    return "border-blue-200 bg-blue-50 text-blue-800";
+  })();
 
   return (
-    <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+    <div className={`rounded-lg border px-4 py-3 text-sm ${alertClass}`}>
       <div className="font-medium flex items-center gap-2">
         <AlertTriangle className="w-4 h-4" />
         数据健康提醒
@@ -123,26 +143,40 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const startStrKey = format(startDate, "yyyy-MM-dd");
   const endStrKey = format(endDate, "yyyy-MM-dd");
-  const currentRequestKey = buildDataViewRequestKey({
+  const serverRequestKey = buildDataViewRequestKey({
     page: "accounts-performance",
     startDate: startStrKey,
     endDate: endStrKey,
     storeId: storeFilter,
-    includeHistoricalAccounts: showHistoricalAccounts,
-    statusFilter,
-    search: searchTerm,
-    sort: `${sortField}:${sortOrder}`
+    includeHistoricalAccounts: showHistoricalAccounts
   });
+  const latestRequestIdRef = useRef(0);
+  const latestRequestKeyRef = useRef(serverRequestKey);
+  const requestAbortRef = useRef<AbortController | null>(null);
+
+  latestRequestKeyRef.current = serverRequestKey;
 
   useEffect(() => {
     setSyncStatus({ status: "idle" });
-  }, [currentRequestKey]);
+  }, [serverRequestKey]);
 
   const loadData = async (options: { silent?: boolean } = {}) => {
     const silent = options.silent === true;
+    requestAbortRef.current?.abort();
+    const controller = new AbortController();
+    requestAbortRef.current = controller;
+    const requestId = ++latestRequestIdRef.current;
+    const sourceRequestKey = serverRequestKey;
+    const isCurrent = () => shouldApplyLatestRequest({
+      requestId,
+      latestRequestId: latestRequestIdRef.current,
+      sourceRequestKey,
+      latestRequestKey: latestRequestKeyRef.current
+    });
 
     if (!silent) {
       setLoading(true);
+      setData(makeEmptyAccountsPerformanceData("LOADING", ""));
     }
 
     try {
@@ -150,6 +184,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       const endStr = endStrKey;
 
       const response = await axios.get("/api/data-center/accounts-performance", {
+        signal: controller.signal,
         params: {
           startDate: startStr,
           endDate: endStr,
@@ -157,6 +192,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
           includeHistoricalAccounts: showHistoricalAccounts ? "true" : "false"
         }
       });
+      if (!isCurrent()) return;
 
       if (isDateRangeMismatch(response.data, startStr, endStr)) {
         setData(makeEmptyAccountsPerformanceData(
@@ -169,6 +205,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
 
       setData(response.data);
     } catch (error: any) {
+      if (!isCurrent() || isCanceledRequest(error)) return;
       console.error("Load Accounts Performance error:", error);
       setData(makeEmptyAccountsPerformanceData(
         "ERROR",
@@ -185,7 +222,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
         toast.error("加载账户数据明细失败: " + getApiErrorMessage(error));
       }
     } finally {
-      if (!silent) {
+      if (!silent && isCurrent()) {
         setLoading(false);
       }
     }
@@ -222,7 +259,9 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const filteredAccounts = useMemo(() => {
     let list = [...(data.accounts || [])];
 
-    const isActiveAccount = (item: any) => (item.spend || 0) > 0;
+    const isActiveAccount = (item: any) =>
+      item.hasPerformanceFacts === true &&
+      Number(item.spend ?? 0) > 0;
 
     // 1. Apply Search
     if (searchTerm) {
@@ -236,7 +275,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
     // 2. Apply Custom Account Status Filters
     if (statusFilter === "spend") {
       // 有消耗账户: spend > 0
-      list = list.filter(item => (item.spend || 0) > 0);
+      list = list.filter(item => isActiveAccount(item));
     } else if (statusFilter === "active") {
       // 活跃账户: spend > 0
       list = list.filter(item => isActiveAccount(item));
@@ -251,13 +290,11 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       let valA = a[sortField];
       let valB = b[sortField];
 
-      if (valA === undefined) return 1;
-      if (valB === undefined) return -1;
-
-      if (typeof valA === "string") {
-        return sortOrder === "asc" ? valA.localeCompare(valB) : valB.localeCompare(valA);
+      if (["spend", "impressions", "clicks", "purchases", "purchaseValue", "purchase_value", "ctr", "cpc", "cpm", "cpa", "roas"].includes(sortField)) {
+        valA = accountMetric(a, sortField);
+        valB = accountMetric(b, sortField);
       }
-      return sortOrder === "asc" ? valA - valB : valB - valA;
+      return compareAccountPerformanceValues(valA, valB, sortOrder);
     });
 
     return list;
@@ -362,7 +399,11 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   };
 
   const handleAskAI = (row: any) => {
-    const prompt = `分析广告账户：${row.fb_account_name} (${row.fb_account_id})\n关联店铺：${row.storeName}\n花费 $${row.spend.toFixed(2)}，曝光 ${row.impressions}，点击数 ${row.clicks}，点击率 ${row.ctr.toFixed(2)}%，购买数 ${row.purchases}，CPC $${row.cpc.toFixed(2)}，CPA $${(row.cpa || 0).toFixed(2)}，Meta ROAS ${row.roas.toFixed(2)}。如何优化投放预算？`;
+    if (row?.hasPerformanceFacts !== true) {
+      toast.info("当前账户在所选周期没有可用成效事实，未生成 AI 提示词。");
+      return;
+    }
+    const prompt = `分析广告账户：${row.fb_account_name} (${row.fb_account_id})\n关联店铺：${row.storeName}\n花费 ${displayMoney(accountMetric(row, "spend"))}，曝光 ${displayNumber(accountMetric(row, "impressions"))}，点击数 ${displayNumber(accountMetric(row, "clicks"))}，点击率 ${displayFixed(accountMetric(row, "ctr"), 2, "%")}，购买数 ${displayNumber(accountMetric(row, "purchases"))}，CPC ${displayMoney(accountMetric(row, "cpc"))}，CPA ${displayMoney(accountMetric(row, "cpa"))}，Meta ROAS ${displayFixed(accountMetric(row, "roas"))}。如何优化投放预算？`;
     navigator.clipboard.writeText(prompt);
     toast.success("💡 已自动复制账户多维诊断提示词！请点击右侧 AI Copilot 悬浮窗粘贴提问。");
   };
@@ -383,31 +424,31 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
   const appliedStartDate = data.appliedFilters?.startDate || format(startDate, "yyyy-MM-dd");
   const appliedEndDate = data.appliedFilters?.endDate || format(endDate, "yyyy-MM-dd");
   const displayScopeText = accountDisplayScope === "historical_all" ? "全部历史账户" : "当前日期范围内活跃账户";
-  const accountTotals = useMemo(() => {
-    const rows = filteredAccounts || [];
-    const spend = rows.reduce((sum, item) => sum + Number(item.spend || 0), 0);
-    const impressions = rows.reduce((sum, item) => sum + Number(item.impressions || 0), 0);
-    const clicks = rows.reduce((sum, item) => sum + Number(item.clicks || 0), 0);
-    const purchases = rows.reduce((sum, item) => sum + Number(item.purchases || item.metaPurchases || 0), 0);
-    const purchaseValue = rows.reduce((sum, item) => sum + Number(item.purchaseValue || item.purchase_value || 0), 0);
-    const cpc = clicks > 0 ? spend / clicks : 0;
-    const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
-    const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
-    const roas = spend > 0 ? purchaseValue / spend : 0;
-
-    return {
-      accountCount: rows.length,
-      spend,
-      impressions,
-      clicks,
-      purchases,
-      purchaseValue,
-      cpc,
-      cpm,
-      ctr,
-      roas
-    };
-  }, [filteredAccounts]);
+  const accountTotals = useMemo(
+    () => buildAccountPerformanceTotals(filteredAccounts),
+    [filteredAccounts]
+  );
+  const coverageStatus = String(
+    data.coverage?.status ||
+    data.dataHealth?.status ||
+    data.health?.status ||
+    ""
+  ).toUpperCase();
+  const displayNumber = (val: number | null | undefined) =>
+    val === null || val === undefined ? "N/A" : val.toLocaleString();
+  const displayMoney = (val: number | null | undefined) =>
+    val === null || val === undefined ? "N/A" : `$${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const displayFixed = (val: number | null | undefined, digits = 2, suffix = "") =>
+    val === null || val === undefined ? "N/A" : `${val.toFixed(digits)}${suffix}`;
+  const visibleAccountTotals = {
+    spend: displayAccountTotal(coverageStatus, accountTotals.spend),
+    impressions: displayAccountTotal(coverageStatus, accountTotals.impressions),
+    clicks: displayAccountTotal(coverageStatus, accountTotals.clicks),
+    purchases: displayAccountTotal(coverageStatus, accountTotals.purchases),
+    purchaseValue: displayAccountTotal(coverageStatus, accountTotals.purchaseValue),
+    ctr: displayAccountTotal(coverageStatus, accountTotals.ctr),
+    roas: displayAccountTotal(coverageStatus, accountTotals.roas)
+  };
 
   // Formatting date safely
   const formatTimeStr = (rawVal: any) => {
@@ -583,14 +624,14 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
-        <MetricCard label="账户数" value={accountTotals.accountCount.toLocaleString()} />
-        <MetricCard label="总消耗" value={`$${accountTotals.spend.toFixed(2)}`} />
-        <MetricCard label="展示" value={accountTotals.impressions.toLocaleString()} />
-        <MetricCard label="点击" value={accountTotals.clicks.toLocaleString()} />
-        <MetricCard label="购买" value={accountTotals.purchases.toLocaleString()} />
-        <MetricCard label="转化价值" value={`$${accountTotals.purchaseValue.toFixed(2)}`} />
-        <MetricCard label="CTR" value={`${accountTotals.ctr.toFixed(2)}%`} />
-        <MetricCard label="ROAS" value={accountTotals.roas.toFixed(2)} />
+        <MetricCard label="账户数" value={filteredAccounts.length.toLocaleString()} />
+        <MetricCard label="总消耗" value={displayMoney(visibleAccountTotals.spend)} />
+        <MetricCard label="展示" value={displayNumber(visibleAccountTotals.impressions)} />
+        <MetricCard label="点击" value={displayNumber(visibleAccountTotals.clicks)} />
+        <MetricCard label="购买" value={displayNumber(visibleAccountTotals.purchases)} />
+        <MetricCard label="转化价值" value={displayMoney(visibleAccountTotals.purchaseValue)} />
+        <MetricCard label="CTR" value={displayFixed(visibleAccountTotals.ctr, 2, "%")} />
+        <MetricCard label="ROAS" value={displayFixed(visibleAccountTotals.roas)} />
       </div>
 
       {loading ? (
@@ -678,7 +719,16 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                   </TableRow>
                 ) : (
                   filteredAccounts.map((row, index) => {
-                    const hasSpend = (row.spend || 0) > 0;
+                    const spend = accountMetric(row, "spend");
+                    const impressions = accountMetric(row, "impressions");
+                    const clicks = accountMetric(row, "clicks");
+                    const ctr = accountMetric(row, "ctr");
+                    const cpc = accountMetric(row, "cpc");
+                    const cpm = accountMetric(row, "cpm");
+                    const purchases = accountMetric(row, "purchases");
+                    const cpa = accountMetric(row, "cpa");
+                    const roas = accountMetric(row, "roas");
+                    const hasSpend = (spend ?? 0) > 0;
                     const isUnboundWithSpend = !row.isBound && hasSpend;
                     return (
                       <TableRow 
@@ -717,7 +767,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                           <div className="text-[10px] text-slate-400 truncate" title={row.timezone}>{row.timezone || "America/Los_Angeles"}</div>
                         </TableCell>
                         <TableCell className="text-center">
-                          {(row.spend || 0) > 0 || row.activityStatus === 1 ? (
+                          {row.hasPerformanceFacts === true && ((spend ?? 0) > 0 || row.activityStatus === 1) ? (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] font-semibold border border-emerald-100">
                               活跃
                             </span>
@@ -728,17 +778,17 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                           )}
                         </TableCell>
                         <TableCell className={cn("text-right font-bold font-mono", hasSpend ? "text-slate-900" : "text-slate-400")}>
-                          ${(row.spend || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {displayMoney(spend)}
                         </TableCell>
-                        <TableCell className="text-right text-slate-500 font-mono">{(row.impressions || 0).toLocaleString()}</TableCell>
-                        <TableCell className="text-right text-slate-500 font-mono">{(row.clicks || 0).toLocaleString()}</TableCell>
-                        <TableCell className="text-right text-slate-650 font-mono">{(row.ctr || 0).toFixed(2)}%</TableCell>
-                        <TableCell className="text-right text-slate-650 font-mono">${(row.cpc || 0).toFixed(2)}</TableCell>
-                        <TableCell className="text-right text-slate-650 font-mono">${(row.cpm || 0).toFixed(2)}</TableCell>
-                        <TableCell className="text-right text-slate-950 font-mono font-bold">{(row.purchases || 0).toLocaleString()}</TableCell>
-                        <TableCell className="text-right text-slate-650 font-mono">${(row.cpa || 0).toFixed(2)}</TableCell>
-                        <TableCell className={cn("text-right font-mono font-bold", (row.roas || 0) > 0 ? "text-rose-600" : "text-slate-400")}>
-                          {(row.roas || 0).toFixed(2)}
+                        <TableCell className="text-right text-slate-500 font-mono">{displayNumber(impressions)}</TableCell>
+                        <TableCell className="text-right text-slate-500 font-mono">{displayNumber(clicks)}</TableCell>
+                        <TableCell className="text-right text-slate-650 font-mono">{displayFixed(ctr, 2, "%")}</TableCell>
+                        <TableCell className="text-right text-slate-650 font-mono">{displayMoney(cpc)}</TableCell>
+                        <TableCell className="text-right text-slate-650 font-mono">{displayMoney(cpm)}</TableCell>
+                        <TableCell className="text-right text-slate-950 font-mono font-bold">{displayNumber(purchases)}</TableCell>
+                        <TableCell className="text-right text-slate-650 font-mono">{displayMoney(cpa)}</TableCell>
+                        <TableCell className={cn("text-right font-mono font-bold", (roas ?? 0) > 0 ? "text-rose-600" : "text-slate-400")}>
+                          {displayFixed(roas)}
                         </TableCell>
                         <TableCell className="text-center whitespace-nowrap">
                           <div className="flex items-center justify-center gap-1.5">
@@ -750,6 +800,7 @@ export function DataDetailsDashboard({ startDate, endDate }: DataDetailsDashboar
                             </button>
                             <button
                               onClick={() => handleAskAI(row)}
+                              disabled={row.hasPerformanceFacts !== true}
                               className="px-2 py-1 text-white bg-blue-650 bg-blue-600 rounded hover:bg-blue-700 transition-all text-[11px] font-semibold shadow-sm"
                             >
                               问 AI

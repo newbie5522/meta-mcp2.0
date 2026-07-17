@@ -87,10 +87,30 @@ export function responseDateRangeMatches(payload: any, startDate: string, endDat
     payload?.health?.dateRange?.endDate ||
     payload?.endDate;
 
-  if (!responseStart || !responseEnd) return true;
+  if (!responseStart || !responseEnd) return false;
   return String(responseStart) === startDate && String(responseEnd) === endDate;
 }
 
 export function isDateRangeMismatch(payload: any, startDate: string, endDate: string) {
   return !responseDateRangeMatches(payload, startDate, endDate);
+}
+
+export function isCanceledRequest(error: any) {
+  return Boolean(
+    error?.name === "CanceledError" ||
+    error?.code === "ERR_CANCELED" ||
+    error?.message === "canceled"
+  );
+}
+
+export function shouldApplyLatestRequest(input: {
+  requestId: number;
+  latestRequestId: number;
+  sourceRequestKey: string;
+  latestRequestKey: string;
+}) {
+  return (
+    input.requestId === input.latestRequestId &&
+    input.sourceRequestKey === input.latestRequestKey
+  );
 }

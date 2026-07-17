@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { format } from "date-fns";
 import { AlertTriangle, Globe } from "lucide-react";
@@ -7,8 +7,10 @@ import {
   CURRENT_RANGE_NOT_READY_MESSAGE,
   DATE_RANGE_MISMATCH_MESSAGE,
   getSafeLastGoodData,
+  isCanceledRequest,
   isDateRangeMismatch,
   makeLastGoodData,
+  shouldApplyLatestRequest,
   shouldPreserveLastGoodData
 } from "@/lib/data-view-state";
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
@@ -31,6 +33,7 @@ interface CountryAnalyticsRecord {
   metaPurchases: number | null;
   metaPurchaseValue: number | null;
   metaRoas: number | null;
+  hasMetaFacts: boolean;
 }
 
 interface CountryAnalyticsData {
@@ -83,17 +86,26 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
     includeUnmapped,
     includeZeroSpend: true
   });
+  const countryRequestIdRef = useRef(0);
+  const countryRequestKeyRef = useRef(currentRequestKey);
+  const countryAbortRef = useRef<AbortController | null>(null);
+  const storesRequestIdRef = useRef(0);
+  const storesAbortRef = useRef<AbortController | null>(null);
+  countryRequestKeyRef.current = currentRequestKey;
 
   useEffect(() => {
-    let active = true;
+    storesAbortRef.current?.abort();
+    const controller = new AbortController();
+    storesAbortRef.current = controller;
+    const requestId = ++storesRequestIdRef.current;
     axios.get("/api/data-center/detail", {
+      signal: controller.signal,
       params: { startDate: startStrKey, endDate: endStrKey }
     }).then(response => {
-      if (active) setStores(response.data?.filters?.stores || []);
-    }).catch(() => {
-      if (active) setStores([]);
+      if (requestId === storesRequestIdRef.current) setStores(response.data?.filters?.stores || []);
+    }).catch((error) => {
+      if (!isCanceledRequest(error) && requestId === storesRequestIdRef.current) setStores([]);
     });
-    return () => { active = false; };
   }, [startStrKey, endStrKey]);
 
   useEffect(() => {
@@ -102,10 +114,27 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
   }, [currentRequestKey]);
 
   const fetchCountryData = async () => {
+    countryAbortRef.current?.abort();
+    const controller = new AbortController();
+    countryAbortRef.current = controller;
+    const requestId = ++countryRequestIdRef.current;
+    const sourceRequestKey = currentRequestKey;
+    const isCurrent = () => shouldApplyLatestRequest({
+      requestId,
+      latestRequestId: countryRequestIdRef.current,
+      sourceRequestKey,
+      latestRequestKey: countryRequestKeyRef.current
+    });
     setLoading(true);
     setError(null);
+    setData(null);
+    setStoreCoverage(null);
+    setMetaCoverage(null);
+    setResponseDateRange(null);
+    setViewNotice(null);
     try {
       const response = await axios.get("/api/data-center/countries", {
+        signal: controller.signal,
         params: {
           startDate: startStrKey,
           endDate: endStrKey,
@@ -113,34 +142,42 @@ export function CountryAnalyticsDashboard({ startDate, endDate }: { startDate: D
           includeUnmappedSpend: includeUnmapped ? "true" : "false"
         }
       });
+      if (!isCurrent()) return;
       const rows = response.data?.rows || [];
-      setStoreCoverage(response.data?.storeCoverage || response.data?.coverage || null);
-      setMetaCoverage(response.data?.metaCoverage || null);
-      setResponseDateRange(response.data?.dateRange || response.data?.appliedFilters || null);
       if (isDateRangeMismatch(response.data, startStrKey, endStrKey)) {
         setData(null);
         setViewNotice(DATE_RANGE_MISMATCH_MESSAGE);
         return;
       }
+      const nextStoreCoverage = response.data?.storeCoverage || response.data?.coverage || null;
+      const nextMetaCoverage = response.data?.metaCoverage || null;
+      const nextResponseDateRange = response.data?.dateRange || response.data?.appliedFilters || null;
       if (shouldPreserveLastGoodData(response.data, rows, lastGoodData, currentRequestKey)) {
         const safeData = getSafeLastGoodData(lastGoodData, currentRequestKey);
         if (safeData) {
           setData(safeData.data || null);
+          setStoreCoverage(nextStoreCoverage);
+          setMetaCoverage(nextMetaCoverage);
+          setResponseDateRange(nextResponseDateRange);
           setViewNotice(CURRENT_RANGE_NOT_READY_MESSAGE);
           return;
         }
       }
       setData(response.data);
+      setStoreCoverage(nextStoreCoverage);
+      setMetaCoverage(nextMetaCoverage);
+      setResponseDateRange(nextResponseDateRange);
       setLastGoodData(makeLastGoodData(currentRequestKey, response.data));
       setViewNotice(null);
     } catch (requestError: any) {
+      if (!isCurrent() || isCanceledRequest(requestError)) return;
       setData(null);
       setStoreCoverage({ status: "ERROR" });
       setMetaCoverage({ status: "ERROR" });
       setViewNotice("当前国家筛选周期请求失败，未展示旧数据。");
       setError(requestError.response?.data?.details || requestError.message || "国家订单分析加载失败");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   };
 

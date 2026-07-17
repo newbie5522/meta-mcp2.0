@@ -24,6 +24,7 @@ beforeEach(() => {
   prismaMock.dataCenterRefreshRun.create.mockResolvedValue({ id: "run-1" });
   prismaMock.dataCenterRefreshRun.update.mockResolvedValue({});
   prismaMock.store.findMany.mockResolvedValue([{ id: 1, name: "Store 1" }]);
+  prismaMock.store.findUnique.mockResolvedValue({ id: 1, name: "Store 1", mode: "production", domain: "live.example.com" });
   refreshMeta.mockResolvedValue({ recordsFetched: 1, recordsSaved: 1, recordsUpdated: 0, failedAccounts: [] });
   refreshStore.mockResolvedValue({ snapshots: [{ orderCount: 1 }] });
   executeView.mockImplementation(async ({ taskType }: any) => ({
@@ -108,6 +109,58 @@ describe("data center refresh scheduling", () => {
       where: expect.objectContaining({ scope: "store:1", status: "running" })
     }));
     expect(executeView).not.toHaveBeenCalled();
+  });
+
+  it("SYNC-07 all-store excludes sandbox", async () => {
+    await ensureDataCenterFreshness({
+      force: true,
+      mode: "blocking",
+      requestedStartDate: "2026-07-01",
+      requestedEndDate: "2026-07-03"
+    });
+
+    expect(prismaMock.store.findMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        NOT: expect.arrayContaining([
+          { mode: "sandbox" }
+        ])
+      })
+    });
+  });
+
+  it("SYNC-08 interval not due is SKIPPED", async () => {
+    prismaMock.dataCenterRefreshRun.findFirst.mockResolvedValueOnce({ id: "recent" });
+
+    const result = await ensureDataCenterViewFreshness({
+      requestedStartDate: "2026-07-01",
+      requestedEndDate: "2026-07-03"
+    });
+
+    expect(result).toMatchObject({
+      skipped: true,
+      status: "SKIPPED",
+      reason: "AUTO_VIEW_REFRESH_INTERVAL_NOT_DUE"
+    });
+  });
+
+  it("SYNC-09 light refresh store/date scoped lock", async () => {
+    prismaMock.dataCenterRefreshRun.findFirst.mockResolvedValueOnce({ id: "running-light" });
+
+    await ensureDataCenterFreshness({
+      mode: "background",
+      storeId: 1,
+      requestedStartDate: "2026-07-01",
+      requestedEndDate: "2026-07-03"
+    });
+
+    expect(prismaMock.dataCenterRefreshRun.findFirst).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        type: "auto_light_refresh",
+        scope: "store:1",
+        startDate: "2026-07-01",
+        endDate: "2026-07-03"
+      })
+    });
   });
 
   it("checks blocking_if_missing by store and requested date range", async () => {
