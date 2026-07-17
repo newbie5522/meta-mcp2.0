@@ -51,7 +51,8 @@ describe("account details canonical hierarchy routing", () => {
       coverage: { status: "READY" },
       sourceCoverage: { status: "READY" },
       dataHealth: { status: "READY" },
-      dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" }
+      dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" },
+      appliedFilters: { accountId: "act_1", campaignId: "all", adsetId: "all", adId: "all" }
     });
     mapCanonicalHierarchyToAccountDetails = vi.fn((_level, rows) => rows.map((row: any) => ({
       id: row.id,
@@ -77,7 +78,8 @@ describe("account details canonical hierarchy routing", () => {
       startDate: "2026-07-01",
       endDate: "2026-07-07"
     }));
-    expect(response.body).toMatchObject({ isFallbackCached: false, coverage: { status: "READY" } });
+    expect(response.body).toMatchObject({ coverage: { status: "READY" } });
+    expect(response.body).not.toHaveProperty("isFallbackCached");
   });
 
   it("normalizes numeric accounts before calling canonical service", async () => {
@@ -101,6 +103,27 @@ describe("account details canonical hierarchy routing", () => {
     }));
   });
 
+  it("passes single campaignId, adsetId, and adId filters to canonical service", async () => {
+    await invoke(handler, { accountId: "act_1" }, { level: "campaigns", campaignId: "camp-1" });
+    await invoke(handler, { accountId: "act_1" }, { level: "adsets", adsetId: "set-1" });
+    await invoke(handler, { accountId: "act_1" }, { level: "ads", adId: "ad-1" });
+
+    expect(getCanonicalAdHierarchy).toHaveBeenNthCalledWith(1, expect.objectContaining({ campaignId: "camp-1" }));
+    expect(getCanonicalAdHierarchy).toHaveBeenNthCalledWith(2, expect.objectContaining({ adsetId: "set-1" }));
+    expect(getCanonicalAdHierarchy).toHaveBeenNthCalledWith(3, expect.objectContaining({ adId: "ad-1" }));
+  });
+
+  it("rejects comma-separated or array parent filters with MULTI_PARENT_FILTER_UNSUPPORTED", async () => {
+    const comma = await invoke(handler, { accountId: "act_1" }, { level: "campaigns", campaignId: "camp-1,camp-2" });
+    const array = await invoke(handler, { accountId: "act_1" }, { level: "adsets", adsetId: ["set-1", "set-2"] });
+
+    expect(comma.statusCode).toBe(400);
+    expect(array.statusCode).toBe(400);
+    expect(comma.body.error).toBe("MULTI_PARENT_FILTER_UNSUPPORTED");
+    expect(array.body.error).toBe("MULTI_PARENT_FILTER_UNSUPPORTED");
+    expect(getCanonicalAdHierarchy).not.toHaveBeenCalled();
+  });
+
   it("returns 400 for unknown level and 500 for true service errors", async () => {
     const badLevel = await invoke(handler, { accountId: "act_1" }, { level: "nope" });
     expect(badLevel.statusCode).toBe(400);
@@ -120,8 +143,10 @@ describe("account details canonical hierarchy routing", () => {
       coverage: { status: "READY" },
       sourceCoverage: { status: "READY" },
       dataHealth: { status: "READY" },
-      dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" }
+      dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" },
+      appliedFilters: { accountId: "act_1", campaignId: "all", adsetId: "all", adId: "all" }
     });
+    expect(response.body).not.toHaveProperty("isFallbackCached");
   });
 
   it("does not use route-local Prisma hierarchy aggregation", async () => {

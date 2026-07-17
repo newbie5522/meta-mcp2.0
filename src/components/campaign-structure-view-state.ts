@@ -62,6 +62,49 @@ export function buildHierarchyPerformanceTotals(rows: any[]) {
   };
 }
 
+export function buildCampaignStructureServerRequestKey(input: {
+  startDate: string;
+  endDate: string;
+  viewLevel: string;
+  selectedAccount?: string;
+  selectedCampaignId?: string;
+  selectedAdSetId?: string;
+  includeZeroSpend?: boolean;
+}) {
+  return [
+    "page=ad-hierarchy",
+    `startDate=${input.startDate}`,
+    `endDate=${input.endDate}`,
+    `level=${input.viewLevel}`,
+    `accountId=${input.selectedAccount || "all"}`,
+    `campaignId=${input.selectedCampaignId || "all"}`,
+    `adsetId=${input.selectedAdSetId || "all"}`,
+    `includeZeroSpend=${Boolean(input.includeZeroSpend)}`
+  ].join("|");
+}
+
+export function shouldApplyCampaignStructureResult(input: {
+  requestId: number;
+  currentRequestId: number;
+  sourceRequestKey: string;
+  currentRequestKey: string;
+}) {
+  return (
+    input.requestId === input.currentRequestId &&
+    input.sourceRequestKey === input.currentRequestKey
+  );
+}
+
+export function getHierarchyStatusClass(status: unknown) {
+  const normalized = String(status || "UNKNOWN").toUpperCase();
+  if (normalized === "ACTIVE") return "bg-emerald-100 text-emerald-700";
+  if (normalized === "ERROR") return "bg-red-100 text-red-700";
+  if (normalized === "PAUSED" || normalized === "ARCHIVED" || normalized.includes("PAUSED")) {
+    return "bg-amber-100 text-amber-700";
+  }
+  return "bg-slate-100 text-slate-600";
+}
+
 function calculatedCpc(row: any) {
   return Number(row?.clicks || 0) > 0 && row?.spend !== null && row?.spend !== undefined
     ? Number(row.spend) / Number(row.clicks)
@@ -163,9 +206,25 @@ export function resolveCampaignStructureResponseState(input: {
   startStr: string;
   endStr: string;
   requestKey: string;
+  sourceRequestKey?: string;
+  currentRequestKey?: string;
   lastGoodData: any;
 }) {
   const { payload, rows, startStr, endStr, requestKey, lastGoodData } = input;
+  const sourceRequestKey = input.sourceRequestKey || requestKey;
+  const currentRequestKey = input.currentRequestKey || requestKey;
+  if (sourceRequestKey !== currentRequestKey) {
+    return {
+      ignored: true,
+      reason: "STALE_RESPONSE",
+      data: [],
+      structureSummary: null,
+      dataHealth: null,
+      viewNotice: null,
+      responseDateRange: null,
+      nextLastGoodData: lastGoodData
+    };
+  }
   const responseDateRange = payload?.dateRange || payload?.appliedFilters || null;
 
   if (isDateRangeMismatch(payload, startStr, endStr)) {

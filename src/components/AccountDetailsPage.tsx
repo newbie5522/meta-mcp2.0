@@ -44,6 +44,17 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { HierarchyFilter } from "@/components/HierarchyFilter";
 import { MetaAccountDisplay, metaAccountSearchText } from "./common/MetaAccountDisplay";
+import { DataCoverageBanner } from "./common/DataCoverageBanner";
+import {
+  buildAccountDetailsPerformanceTotals,
+  buildAccountDetailsServerRequestKey,
+  compareAccountDetailsSortValues,
+  getAccountDetailsCoverageMode,
+  getAccountDetailsMetric,
+  resolveAccountDetailsResponseState,
+  shouldApplyAccountDetailsResult,
+  shouldApplyAccountHierarchyResult
+} from "./account-details-view-state";
 
 interface AccountDetailsPageProps {
   onLogout: () => void;
@@ -113,9 +124,26 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   const [accountSearch, setAccountSearch] = useState("");
   const [tableSearch, setTableSearch] = useState("");
   const [accountSelectorOpen, setAccountSelectorOpen] = useState(false);
-  const dataCache = useRef<Record<string, { data: any[]; timestamp: number }>>(
-    {},
-  );
+  const [coverage, setCoverage] = useState<any>(null);
+  const [dataHealth, setDataHealth] = useState<any>(null);
+  const [responseDateRange, setResponseDateRange] = useState<any>(null);
+  const [viewNotice, setViewNotice] = useState<string | null>(null);
+  const startStrKey = format(startDate, "yyyy-MM-dd");
+  const endStrKey = format(endDate, "yyyy-MM-dd");
+  const detailsServerRequestKey = buildAccountDetailsServerRequestKey({
+    accountId,
+    level,
+    startDate: startStrKey,
+    endDate: endStrKey
+  });
+  const currentDetailsRequestKeyRef = useRef(detailsServerRequestKey);
+  const detailsRequestSequenceRef = useRef(0);
+  const detailsAbortControllerRef = useRef<AbortController | null>(null);
+  const currentHierarchyAccountRef = useRef(accountId);
+  const hierarchyRequestSequenceRef = useRef(0);
+  const hierarchyAbortControllerRef = useRef<AbortController | null>(null);
+  currentDetailsRequestKeyRef.current = detailsServerRequestKey;
+  currentHierarchyAccountRef.current = accountId;
 
   // Hierarchy Filters State
   const [hierarchy, setHierarchy] = useState<{
@@ -215,55 +243,64 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
 
   const fetchData = async () => {
     if (!accountId) return;
-
-    const startStr = format(startDate, "yyyy-MM-dd");
-    const endStr = format(endDate, "yyyy-MM-dd");
-    const cacheKey = [
-      accountId,
-      level,
-      startStr,
-      endStr,
-      [...selectedCampaignIds].sort().join(","),
-      [...selectedAdSetIds].sort().join(","),
-      [...selectedAdIds].sort().join(",")
-    ].join("|");
-    const now = Date.now();
-    const CACHE_TTL = 3 * 60 * 1000; // 3 minutes frontend cache
-
-    if (
-      dataCache.current[cacheKey] &&
-      now - dataCache.current[cacheKey].timestamp < CACHE_TTL
-    ) {
-      setData(dataCache.current[cacheKey].data);
-      return;
-    }
-
+    detailsAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    detailsAbortControllerRef.current = controller;
+    const requestId = ++detailsRequestSequenceRef.current;
+    const capturedRequestKey = detailsServerRequestKey;
+    const isCurrentRequest = () => shouldApplyAccountDetailsResult({
+      requestId,
+      currentRequestId: detailsRequestSequenceRef.current,
+      sourceRequestKey: capturedRequestKey,
+      currentRequestKey: currentDetailsRequestKeyRef.current
+    });
     setLoading(true);
     setData([]);
+    setCoverage(null);
+    setDataHealth(null);
+    setResponseDateRange(null);
+    setViewNotice(null);
     try {
       const response = await axios.get(`/api/accounts/${accountId}/details`, {
+        signal: controller.signal,
         params: {
-          startDate: startStr,
-          endDate: endStr,
-          level,
-          campaignId: selectedCampaignIds.join(",") || undefined,
-          adsetId: selectedAdSetIds.join(",") || undefined,
-          adId: selectedAdIds.join(",") || undefined,
+          startDate: startStrKey,
+          endDate: endStrKey,
+          level
         },
       });
-      const newData = response.data.data || [];
-      setData(newData);
-      dataCache.current[cacheKey] = { data: newData, timestamp: now };
+      if (!isCurrentRequest()) return;
+      const state = resolveAccountDetailsResponseState({
+        payload: response.data || {},
+        rows: response.data?.data || [],
+        startStr: startStrKey,
+        endStr: endStrKey,
+        sourceRequestKey: capturedRequestKey,
+        currentRequestKey: currentDetailsRequestKeyRef.current
+      });
+      if (state.ignored) return;
+      setData(state.data);
+      setCoverage(state.coverage);
+      setDataHealth(state.dataHealth);
+      setResponseDateRange(state.responseDateRange);
+      setViewNotice(state.viewNotice);
     } catch (error: any) {
+      if (!isCurrentRequest() || axios.isCancel?.(error) || error?.name === "CanceledError" || error?.code === "ERR_CANCELED") return;
       console.error("fetchData error:", error.response?.data || error);
       setData([]);
+      setCoverage({ status: "ERROR" });
+      setDataHealth({ status: "ERROR", message: "当前账户明细请求失败，未展示旧数据。" });
+      setResponseDateRange(null);
+      setViewNotice("当前账户明细请求失败，未展示旧数据。");
       toast.error(
         typeof error.response?.data?.error === "string"
           ? error.response.data.error
           : "数据加载失败",
       );
     } finally {
-      setLoading(false);
+      if (isCurrentRequest()) {
+        setLoading(false);
+      }
     }
   };
 
@@ -279,13 +316,28 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   useEffect(() => {
     setData([]);
     fetchData();
-  }, [accountId, startDate, endDate, level, selectedCampaignIds.join(","), selectedAdSetIds.join(","), selectedAdIds.join(",")]);
+  }, [accountId, startStrKey, endStrKey, level]);
 
   useEffect(() => {
     if (!accountId) return;
+    hierarchyAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    hierarchyAbortControllerRef.current = controller;
+    const requestId = ++hierarchyRequestSequenceRef.current;
+    const capturedAccountId = accountId;
+    setHierarchy({ campaigns: [], adSets: [], ads: [] });
+    setSelectedCampaignIds([]);
+    setSelectedAdSetIds([]);
+    setSelectedAdIds([]);
     axios
-      .get(`/api/accounts/${accountId}/hierarchy`)
+      .get(`/api/accounts/${accountId}/hierarchy`, { signal: controller.signal })
       .then((res) => {
+        if (!shouldApplyAccountHierarchyResult({
+          requestId,
+          currentRequestId: hierarchyRequestSequenceRef.current,
+          accountId: capturedAccountId,
+          currentAccountId: currentHierarchyAccountRef.current
+        })) return;
         if (res.data.success) {
           setHierarchy({
             campaigns: res.data.campaigns || [],
@@ -294,7 +346,16 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
           });
         }
       })
-      .catch((err) => console.error("hierarchy fetch error", err));
+      .catch((err) => {
+        if (axios.isCancel?.(err) || err?.name === "CanceledError" || err?.code === "ERR_CANCELED") return;
+        if (!shouldApplyAccountHierarchyResult({
+          requestId,
+          currentRequestId: hierarchyRequestSequenceRef.current,
+          accountId: capturedAccountId,
+          currentAccountId: currentHierarchyAccountRef.current
+        })) return;
+        console.error("hierarchy fetch error", err);
+      });
   }, [accountId]);
 
   const requestSort = (key: string) => {
@@ -310,76 +371,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   };
 
   // Helper to extract nested metrics
-  const getInsightValue = (item: any, key: string) => {
-    if (!item.insights?.data?.[0]) return null;
-    const insight = item.insights.data[0];
-
-    if (key === "spend") return parseFloat(insight.spend || 0);
-    if (key === "impressions") return parseInt(insight.impressions || 0, 10);
-    if (key === "reach") return insight.reachAvailable === false || insight.reach == null ? null : parseInt(insight.reach || 0, 10);
-    if (key === "frequency") return insight.frequencyAvailable === false || insight.frequency == null ? null : parseFloat(insight.frequency || 0);
-
-    if (key === "cpm") return parseFloat(insight.cpm || 0);
-    if (key === "clicks") return parseInt(insight.clicks || 0, 10);
-    if (key === "ctr") return parseFloat(insight.ctr || 0);
-    if (key === "cpc") return parseFloat(insight.cpc || 0);
-
-    if (key === "link_clicks")
-      return insight.inlineLinkClicksAvailable === false || insight.inline_link_clicks == null ? null : parseInt(insight.inline_link_clicks || 0, 10);
-    if (key === "link_ctr")
-      return insight.inlineLinkClicksAvailable === false || insight.inline_link_click_ctr == null ? null : parseFloat(insight.inline_link_click_ctr || 0);
-    if (key === "link_cpc")
-      return insight.inlineLinkClicksAvailable === false || insight.cost_per_inline_link_click == null ? null : parseFloat(insight.cost_per_inline_link_click || 0);
-
-    if (key === "add_to_cart") {
-      if (insight.addToCartAvailable === false) return null;
-      const atc = insight.actions?.find(
-        (a: any) =>
-          a.action_type === "add_to_cart" ||
-          a.action_type === "offsite_conversion.fb_pixel_add_to_cart",
-      );
-      return atc ? parseInt(atc.value, 10) : 0;
-    }
-
-    if (key === "results") {
-      // Look for purchase action
-      const purchase = insight.actions?.find(
-        (a: any) => a.action_type === "purchase",
-      );
-      if (purchase) return parseInt(purchase.value, 10);
-      return 0; // Fallback
-    }
-
-    if (key === "cpr") {
-      // Cost Per Result
-      const cpa = insight.cost_per_action_type?.find(
-        (a: any) => a.action_type === "purchase",
-      );
-      if (cpa) return parseFloat(cpa.value);
-      return 0;
-    }
-
-    if (key === "cpc") {
-      // cpc fallback
-      const cpc = insight.cost_per_action_type?.find(
-        (a: any) => a.action_type === "link_click",
-      );
-      if (cpc) return parseFloat(cpc.value);
-      return 0;
-    }
-
-    if (key === "ctr") {
-      const clicks = parseInt(
-        insight.actions?.find((a: any) => a.action_type === "link_click")
-          ?.value || 0,
-        10,
-      );
-      const impressions = parseInt(insight.impressions || 0, 10);
-      return impressions > 0 ? (clicks / impressions) * 100 : 0;
-    }
-
-    return 0;
-  };
+  const getInsightValue = getAccountDetailsMetric;
 
   const getBudgetValue = (item: any) => {
     if (item.budgetAvailable === false) return null;
@@ -419,7 +411,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
       }
       return true;
     });
-  }, [data, level, selectedCampaignIds, selectedAdSetIds]);
+  }, [data, level, selectedCampaignIds, selectedAdSetIds, tableSearch]);
 
   const sortedData = [...filteredData].sort((a, b) => {
     if (!sortConfig) return 0;
@@ -460,55 +452,38 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
         const s = (status || "").toUpperCase();
         if (s === "ACTIVE") return 2;
         if (s.includes("PAUSED")) return 1;
-        return 0; // deleted, archived, etc.
+        if (s === "UNKNOWN") return null;
+        return 0;
       };
       aVal = getStatusWeight(a[key]);
       bVal = getStatusWeight(b[key]);
     }
 
-    if (aVal < bVal) return direction === "asc" ? -1 : 1;
-    if (aVal > bVal) return direction === "asc" ? 1 : -1;
-    return 0;
+    return compareAccountDetailsSortValues(aVal, bVal, direction);
   });
 
   // Calculate totals - prioritize selected items if any exist at current level
   const displayedItems = sortedData.filter((i) => isSelected(i.id));
   const itemsToSum = displayedItems.length > 0 ? displayedItems : sortedData;
-
-  const sumMetric = (key: string) => itemsToSum.reduce(
-    (sum, item) => sum + Number(getInsightValue(item, key) ?? 0),
-    0,
-  );
-  const hasMetric = (key: string) => itemsToSum.some((item) => getInsightValue(item, key) !== null);
-
-  const totalSpend = sumMetric("spend");
-  const totalImpressions = sumMetric("impressions");
-  const totalReach = hasMetric("reach") ? sumMetric("reach") : null;
-
-  const linkClicks = hasMetric("link_clicks") ? sumMetric("link_clicks") : null;
-  const allClicks = sumMetric("clicks");
-  const totalPurchases = sumMetric("results");
-  const totalAddToCart = hasMetric("add_to_cart") ? sumMetric("add_to_cart") : null;
-
-  const totalPurchaseValue = itemsToSum.reduce((sum, item) => {
-    const valAction = item.insights?.data?.[0]?.action_values?.find(
-      (a: any) => a.action_type === "purchase",
-    );
-    return sum + (valAction ? parseFloat(valAction.value) : 0);
-  }, 0);
-
-  // Weighted averages
-  const avgCpm =
-    totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0;
-  const avgLinkCtr =
-    linkClicks !== null && totalImpressions > 0 ? (linkClicks / totalImpressions) * 100 : null;
-  const avgLinkCpc = linkClicks !== null && linkClicks > 0 ? totalSpend / linkClicks : null;
-  const avgAllCtr =
-    totalImpressions > 0 ? (allClicks / totalImpressions) * 100 : 0;
-  const avgAllCpc = allClicks > 0 ? totalSpend / allClicks : 0;
-  const avgCpr = totalPurchases > 0 ? totalSpend / totalPurchases : 0;
-  const avgFrequency = totalReach !== null && totalReach > 0 ? totalImpressions / totalReach : null;
-  const roi = totalSpend > 0 ? totalPurchaseValue / totalSpend : 0;
+  const totals = buildAccountDetailsPerformanceTotals(itemsToSum);
+  const coverageMode = getAccountDetailsCoverageMode(coverage, dataHealth);
+  const trueEmptyTotals = coverageMode === "TRUE_EMPTY" && totals.factRows.length === 0;
+  const totalSpend = trueEmptyTotals ? 0 : totals.spend;
+  const totalImpressions = trueEmptyTotals ? 0 : totals.impressions;
+  const totalReach = totals.reach;
+  const linkClicks = totals.linkClicks;
+  const allClicks = trueEmptyTotals ? 0 : totals.clicks;
+  const totalPurchases = trueEmptyTotals ? 0 : totals.purchases;
+  const totalAddToCart = totals.addToCart;
+  const totalPurchaseValue = trueEmptyTotals ? 0 : totals.purchaseValue;
+  const avgCpm = trueEmptyTotals ? 0 : totals.cpm;
+  const avgLinkCtr = totals.linkCtr;
+  const avgLinkCpc = totals.linkCpc;
+  const avgAllCtr = trueEmptyTotals ? 0 : totals.ctr;
+  const avgAllCpc = trueEmptyTotals ? 0 : totals.cpc;
+  const avgCpr = trueEmptyTotals ? 0 : totals.cpa;
+  const avgFrequency = totals.frequency;
+  const roi = trueEmptyTotals ? 0 : totals.roas;
 
   const displayNumber = (value: number | null | undefined) =>
     value === null || value === undefined ? "N/A" : value.toLocaleString();
@@ -536,6 +511,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
 
   const currentAccount = accounts.find((a) => a.accountId === accountId);
   const currentAccountName = currentAccount?.accountName || accountId;
+  const bannerCoverage = coverage || (dataHealth ? { status: dataHealth.status } : null);
 
   return (
     <div className="min-h-screen bg-[#f3f4f6]">
@@ -566,6 +542,12 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
       </nav>
 
       <main className="p-6 max-w-[1700px] mx-auto space-y-6 flex flex-col h-[calc(100vh-64px)] overflow-hidden">
+        <DataCoverageBanner coverage={bannerCoverage} />
+        {viewNotice && (
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700">
+            {viewNotice}
+          </div>
+        )}
         {/* Level Switcher, Filters & Action row */}
         <Card className="shadow-sm border border-gray-200 bg-white overflow-hidden flex flex-col flex-1">
           {/* Level Tabs Bar - FIXED */}
@@ -1175,7 +1157,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          ${avgCpr.toFixed(2)}
+                          {displayCurrency(avgCpr)}
                         </div>
                         <div className="text-[11px] text-gray-500">
                           每个 Meta 账户
@@ -1186,7 +1168,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 text-right leading-tight">
                         <div className="font-bold text-[13px]">
-                          ${totalSpend.toFixed(2)}
+                          {displayCurrency(totalSpend)}
                         </div>
                         <div className="text-[11px] text-gray-500">总花费</div>
                       </td>
@@ -1212,7 +1194,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          ${avgCpm.toFixed(2)}
+                          {displayCurrency(avgCpm)}
                         </div>
                         <div className="text-[11px] text-gray-500">
                           每 1000 次展示
@@ -1226,13 +1208,13 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {avgLinkCtr.toFixed(2)}%
+                          {avgLinkCtr === null ? "N/A" : `${displayFixed(avgLinkCtr)}%`}
                         </div>
                         <div className="text-[11px] text-gray-500">平均</div>
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          ${avgLinkCpc.toFixed(2)}
+                          {displayCurrency(avgLinkCpc)}
                         </div>
                         <div className="text-[11px] text-gray-500">平均</div>
                       </td>
@@ -1244,13 +1226,13 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {avgAllCtr.toFixed(2)}%
+                          {avgAllCtr === null ? "N/A" : `${displayFixed(avgAllCtr)}%`}
                         </div>
                         <div className="text-[11px] text-gray-500">平均</div>
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          ${avgAllCpc.toFixed(2)}
+                          {displayCurrency(avgAllCpc)}
                         </div>
                         <div className="text-[11px] text-gray-500">平均</div>
                       </td>

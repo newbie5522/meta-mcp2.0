@@ -1,13 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildCampaignStructureServerRequestKey,
   buildCampaignAiPayload,
   buildHierarchyPerformanceTotals,
   dispatchCampaignAiRequest,
   formatFixed,
   formatMoney,
   formatNumber,
+  getHierarchyStatusClass,
   hasPerformanceFacts,
-  resolveCampaignStructureResponseState
+  resolveCampaignStructureResponseState,
+  shouldApplyCampaignStructureResult
 } from "./campaign-structure-view-state";
 
 describe("Campaign structure behavior contract", () => {
@@ -182,5 +185,113 @@ describe("Campaign structure behavior contract", () => {
     expect(mismatch.dataHealth.status).toBe("DATE_RANGE_MISMATCH");
     expect(error.data).toEqual([]);
     expect(error.dataHealth.status).toBe("ERROR");
+  });
+
+  it("builds server request keys without local search or sort state", () => {
+    const base = buildCampaignStructureServerRequestKey({
+      startDate: "2026-07-01",
+      endDate: "2026-07-07",
+      viewLevel: "campaigns",
+      selectedAccount: "act_1",
+      selectedCampaignId: "camp-1",
+      selectedAdSetId: "",
+      includeZeroSpend: false
+    });
+    const sameWhenSearchOrSortWouldChange = buildCampaignStructureServerRequestKey({
+      startDate: "2026-07-01",
+      endDate: "2026-07-07",
+      viewLevel: "campaigns",
+      selectedAccount: "act_1",
+      selectedCampaignId: "camp-1",
+      selectedAdSetId: "",
+      includeZeroSpend: false
+    });
+    expect(base).toBe(sameWhenSearchOrSortWouldChange);
+    expect(base).not.toContain("search");
+    expect(base).not.toContain("sort");
+  });
+
+  it("changes server request key for date, account, level, and parent filter changes", () => {
+    const base = {
+      startDate: "2026-07-01",
+      endDate: "2026-07-07",
+      viewLevel: "campaigns",
+      selectedAccount: "act_1",
+      selectedCampaignId: "camp-1",
+      selectedAdSetId: "set-1",
+      includeZeroSpend: false
+    };
+    const key = buildCampaignStructureServerRequestKey(base);
+    expect(buildCampaignStructureServerRequestKey({ ...base, startDate: "2026-07-02" })).not.toBe(key);
+    expect(buildCampaignStructureServerRequestKey({ ...base, selectedAccount: "act_2" })).not.toBe(key);
+    expect(buildCampaignStructureServerRequestKey({ ...base, viewLevel: "adsets" })).not.toBe(key);
+    expect(buildCampaignStructureServerRequestKey({ ...base, selectedCampaignId: "camp-2" })).not.toBe(key);
+    expect(buildCampaignStructureServerRequestKey({ ...base, selectedAdSetId: "set-2" })).not.toBe(key);
+  });
+
+  it("ignores stale success responses using request id and server request key", () => {
+    expect(shouldApplyCampaignStructureResult({
+      requestId: 1,
+      currentRequestId: 2,
+      sourceRequestKey: "A",
+      currentRequestKey: "B"
+    })).toBe(false);
+    const state = resolveCampaignStructureResponseState({
+      payload: { dataHealth: { status: "READY" } },
+      rows: [{ id: "old" }],
+      startStr: "2026-07-01",
+      endStr: "2026-07-07",
+      requestKey: "A",
+      sourceRequestKey: "A",
+      currentRequestKey: "B",
+      lastGoodData: { requestKey: "B", data: [{ id: "new" }] }
+    });
+    expect(state).toMatchObject({ ignored: true, reason: "STALE_RESPONSE", data: [] });
+  });
+
+  it("allows only same-key SYNC_RUNNING preservation of lastGoodData", () => {
+    const lastGoodData = { requestKey: "same", data: [{ id: "safe" }] };
+    const same = resolveCampaignStructureResponseState({
+      payload: { coverage: { status: "SYNC_RUNNING" }, dataHealth: { status: "SYNC_RUNNING" }, allowStaleWhileRunning: true },
+      rows: [],
+      startStr: "2026-07-01",
+      endStr: "2026-07-07",
+      requestKey: "same",
+      sourceRequestKey: "same",
+      currentRequestKey: "same",
+      lastGoodData
+    });
+    const changed = resolveCampaignStructureResponseState({
+      payload: { coverage: { status: "SYNC_RUNNING" }, dataHealth: { status: "SYNC_RUNNING" }, allowStaleWhileRunning: true },
+      rows: [],
+      startStr: "2026-07-01",
+      endStr: "2026-07-07",
+      requestKey: "changed",
+      sourceRequestKey: "changed",
+      currentRequestKey: "changed",
+      lastGoodData
+    });
+    expect(same.data).toEqual([{ id: "safe" }]);
+    expect(changed.data).toEqual([]);
+  });
+
+  it("keeps stale DATE_RANGE_MISMATCH from applying to the current view", () => {
+    const state = resolveCampaignStructureResponseState({
+      payload: { dateRange: { startDate: "2026-06-01", endDate: "2026-06-07" } },
+      rows: [{ id: "wrong" }],
+      startStr: "2026-07-01",
+      endStr: "2026-07-07",
+      requestKey: "old",
+      sourceRequestKey: "old",
+      currentRequestKey: "new",
+      lastGoodData: null
+    });
+    expect(state.ignored).toBe(true);
+  });
+
+  it("uses neutral status style for UNKNOWN and green only for ACTIVE", () => {
+    expect(getHierarchyStatusClass("UNKNOWN")).toContain("slate");
+    expect(getHierarchyStatusClass(null)).toContain("slate");
+    expect(getHierarchyStatusClass("ACTIVE")).toContain("emerald");
   });
 });

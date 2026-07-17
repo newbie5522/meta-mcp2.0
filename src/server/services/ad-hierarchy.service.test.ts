@@ -97,6 +97,73 @@ describe("canonical ad hierarchy service", () => {
     })]);
   });
 
+  it("maps structure-only canonical rows to null performance insights without actions", () => {
+    const [row] = mapCanonicalHierarchyToAccountDetails("campaign", [{
+      id: "camp-structure",
+      name: "Structure Only",
+      status: undefined,
+      accountId: "act_1",
+      hasPerformanceFacts: false,
+      spend: null,
+      impressions: null,
+      clicks: null,
+      purchases: null,
+      purchase_value: null
+    }]);
+    const insight = row.insights.data[0];
+    expect(row).toMatchObject({
+      status: "UNKNOWN",
+      accountId: "act_1",
+      hasPerformanceFacts: false
+    });
+    expect(insight).toMatchObject({
+      spend: null,
+      impressions: null,
+      clicks: null,
+      purchases: null,
+      purchaseValue: null,
+      ctr: null,
+      cpc: null,
+      cpm: null,
+      cpa: null,
+      roas: null,
+      reachAvailable: false,
+      frequencyAvailable: false,
+      inlineLinkClicksAvailable: false,
+      addToCartAvailable: false
+    });
+    expect(insight.actions).toEqual([]);
+    expect(insight.action_values).toEqual([]);
+  });
+
+  it("maps real zero facts as zero insights and purchase actions", () => {
+    const [row] = mapCanonicalHierarchyToAccountDetails("campaign", [{
+      id: "camp-zero",
+      name: "Zero",
+      status: "PAUSED",
+      accountId: "act_1",
+      hasPerformanceFacts: true,
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      purchases: 0,
+      purchase_value: 0
+    }]);
+    expect(row.insights.data[0]).toMatchObject({
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      purchases: 0,
+      purchaseValue: 0,
+      ctr: 0,
+      cpc: 0,
+      cpm: 0,
+      roas: 0,
+      actions: [{ action_type: "purchase", value: "0" }],
+      action_values: [{ action_type: "purchase", value: "0" }]
+    });
+  });
+
   it("keeps real zero-spend fact rows as performance facts when includeZeroSpend is true", async () => {
     prismaMock.factMetaPerformance.findMany.mockResolvedValue([
       {
@@ -248,5 +315,38 @@ describe("canonical ad hierarchy service", () => {
       campaignName: "Campaign 1",
       creativeId: "creative-1"
     });
+  });
+
+  it("supports ad level with exact adId filter in facts, structure, coverage, and applied filters", async () => {
+    prismaMock.ad.findMany.mockResolvedValue([
+      { id: "ad-1", name: "Ad 1", adsetId: "set-1", creativeId: "creative-1", adSet: { id: "set-1", name: "Set 1", campaign: { id: "camp-1", name: "Campaign 1", accountId: "act_1" } } }
+    ]);
+    prismaMock.factMetaPerformance.findMany.mockResolvedValue([
+      { level: "ad", account_id: "act_1", ad_id: "ad-1", entity_id: "ad-1", spend: 5, impressions: 50, clicks: 2, purchases: 0, purchase_value: 0 }
+    ]);
+
+    const result = await getCanonicalAdHierarchy({
+      level: "ad",
+      accountId: "act_1",
+      adId: "ad-1",
+      startDate: "2026-07-01",
+      endDate: "2026-07-03",
+      includeZeroSpend: true
+    });
+
+    expect(prismaMock.factMetaPerformance.findMany).toHaveBeenCalledWith({
+      where: {
+        level: "ad",
+        account_id: { in: ["act_1", "1"] },
+        ad_id: "ad-1",
+        date: { gte: "2026-07-01", lte: "2026-07-03" }
+      }
+    });
+    expect(prismaMock.ad.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "ad-1" }
+    }));
+    expect(coverageMock).toHaveBeenCalledWith(expect.objectContaining({ adId: "ad-1" }));
+    expect(result.appliedFilters.adId).toBe("ad-1");
+    expect(result.dataHealth.queryDebug.adId).toBe("ad-1");
   });
 });

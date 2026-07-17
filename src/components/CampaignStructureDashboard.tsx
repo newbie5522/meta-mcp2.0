@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { format } from "date-fns";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -29,15 +29,17 @@ import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel"
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
 import { DataCoverageBanner } from "./common/DataCoverageBanner";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
-import { buildDataViewRequestKey } from "@/lib/data-view-state";
 import {
+  buildCampaignStructureServerRequestKey,
   buildHierarchyPerformanceTotals,
   dispatchCampaignAiRequest,
   formatFixed,
   formatMoney,
   formatNumber,
+  getHierarchyStatusClass,
   hasPerformanceFacts,
-  resolveCampaignStructureResponseState
+  resolveCampaignStructureResponseState,
+  shouldApplyCampaignStructureResult
 } from "./campaign-structure-view-state";
 
 function getHierarchyEmptyMessage(dataHealth: any, includeZeroSpend: boolean) {
@@ -87,24 +89,29 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
   const [responseDateRange, setResponseDateRange] = useState<{ startDate: string; endDate: string; timezone?: string } | null>(null);
   const startStrKey = format(startDate, "yyyy-MM-dd");
   const endStrKey = format(endDate, "yyyy-MM-dd");
-  const currentRequestKey = buildDataViewRequestKey({
-    page: "ad-hierarchy",
+  const serverRequestKey = buildCampaignStructureServerRequestKey({
     startDate: startStrKey,
     endDate: endStrKey,
-    level: viewLevel,
-    accountId: selectedAccount || "all",
-    campaignId: selectedCampaignId || "all",
-    adsetId: selectedAdSetId || "all",
-    includeZeroSpend,
-    search: searchQuery,
-    sort: sortConfig ? `${sortConfig.key}:${sortConfig.direction}` : "none"
+    viewLevel,
+    selectedAccount,
+    selectedCampaignId,
+    selectedAdSetId,
+    includeZeroSpend
   });
+  const currentServerRequestKeyRef = useRef(serverRequestKey);
+  const campaignRequestSequenceRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  currentServerRequestKeyRef.current = serverRequestKey;
 
   useEffect(() => {
+    setData([]);
+    setCoverage(null);
+    setStructureSummary(null);
+    setDataHealth(null);
     setViewNotice(null);
     setResponseDateRange(null);
     setSyncStatus({ status: "idle" });
-  }, [currentRequestKey]);
+  }, [serverRequestKey]);
 
   // Manage initial load with URL parameters (deep linkage from Account Performance page or Creative Insights tab)
   useEffect(() => {
@@ -134,11 +141,22 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
   // Fetch performance and structures depending on current view Level
   const fetchData = async () => {
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const requestId = ++campaignRequestSequenceRef.current;
+    const capturedServerRequestKey = serverRequestKey;
+    const isCurrentRequest = () => shouldApplyCampaignStructureResult({
+      requestId,
+      currentRequestId: campaignRequestSequenceRef.current,
+      sourceRequestKey: capturedServerRequestKey,
+      currentRequestKey: currentServerRequestKeyRef.current
+    });
     setLoading(true);
     try {
       const startStr = startStrKey;
       const endStr = endStrKey;
-      const requestKey = currentRequestKey;
+      const requestKey = capturedServerRequestKey;
       const structureParams: any = {
         selectedAccount: selectedAccount || undefined,
         startDate: startStr,
@@ -148,6 +166,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
       if (viewLevel === "accounts") {
         const accountsRes = await axios.get("/api/data-center/ad-hierarchy/accounts", {
+          signal: controller.signal,
           params: {
             startDate: startStr,
             endDate: endStr,
@@ -155,10 +174,10 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
             _requestKey: requestKey
           }
         });
+        if (!isCurrentRequest()) return;
 
         const rows = accountsRes.data?.success ? (accountsRes.data.data || []) : [];
         const nextHealth = accountsRes.data?.dataHealth || null;
-        setCoverage(accountsRes.data?.coverage || accountsRes.data?.sourceCoverage || null);
         const statePayload = {
           ...(accountsRes.data || {}),
           health: nextHealth,
@@ -171,8 +190,12 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
           startStr,
           endStr,
           requestKey,
+          sourceRequestKey: requestKey,
+          currentRequestKey: currentServerRequestKeyRef.current,
           lastGoodData
         });
+        if (state.ignored) return;
+        setCoverage(accountsRes.data?.coverage || accountsRes.data?.sourceCoverage || null);
         setResponseDateRange(state.responseDateRange);
         setData(state.data);
         setStructureSummary(state.structureSummary);
@@ -197,18 +220,22 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
         adsetId: selectedAdSetId || undefined,
         _requestKey: requestKey
       };
-      const res = await axios.get(hierarchyEndpoint, { params: hierarchyParams });
+      const res = await axios.get(hierarchyEndpoint, { params: hierarchyParams, signal: controller.signal });
+      if (!isCurrentRequest()) return;
       const hierarchyPayload = res.data || {};
       let nextData: any[] = hierarchyPayload.data || [];
-      setCoverage(hierarchyPayload.coverage || hierarchyPayload.sourceCoverage || null);
       const state = resolveCampaignStructureResponseState({
         payload: hierarchyPayload,
         rows: nextData,
         startStr,
         endStr,
         requestKey,
+        sourceRequestKey: requestKey,
+        currentRequestKey: currentServerRequestKeyRef.current,
         lastGoodData
       });
+      if (state.ignored) return;
+      setCoverage(hierarchyPayload.coverage || hierarchyPayload.sourceCoverage || null);
       setResponseDateRange(state.responseDateRange);
       setData(state.data);
       setStructureSummary(state.structureSummary);
@@ -216,6 +243,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
       setLastGoodData(state.nextLastGoodData);
       setViewNotice(state.viewNotice);
     } catch (e: any) {
+      if (!isCurrentRequest() || axios.isCancel?.(e) || e?.name === "CanceledError" || e?.code === "ERR_CANCELED") return;
       console.error("Failed to fetch ad hierarchy details:", e);
       toast.error("获取层级数据失败: " + (e.response?.data?.error || e.message));
       setData([]);
@@ -229,7 +257,9 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
       });
       setViewNotice("当前筛选周期请求失败，未展示旧数据。");
     } finally {
-      setLoading(false);
+      if (isCurrentRequest()) {
+        setLoading(false);
+      }
     }
   };
 
@@ -884,7 +914,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                             <TableCell className="text-center">
                               <span className={cn(
                                 "px-1.5 py-0.5 rounded text-[10px] font-bold uppercase",
-                                row.status === "ACTIVE" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"
+                                getHierarchyStatusClass(row.status)
                               )}>
                                 {row.status}
                               </span>
@@ -941,7 +971,10 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                             <TableCell className="font-mono text-xs text-slate-400">{row.id}</TableCell>
                             <TableCell className="max-w-[150px] truncate text-slate-500 text-xs" title={row.campaignName}>{row.campaignName}</TableCell>
                             <TableCell className="text-center">
-                              <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px] font-bold">
+                              <span className={cn(
+                                "px-1.5 py-0.5 rounded text-[10px] font-bold uppercase",
+                                getHierarchyStatusClass(row.status)
+                              )}>
                                 {row.status}
                               </span>
                             </TableCell>

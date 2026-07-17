@@ -41,6 +41,19 @@ export function normalizeDetailsLevel(level: unknown): CanonicalAdHierarchyLevel
   return null;
 }
 
+export function parseSingleHierarchyFilter(value: unknown) {
+  if (Array.isArray(value)) {
+    return { error: "MULTI_PARENT_FILTER_UNSUPPORTED" as const };
+  }
+  if (value === undefined || value === null) return { value: undefined };
+  const str = String(value).trim();
+  if (!str || str === "all") return { value: undefined };
+  if (str.includes(",")) {
+    return { error: "MULTI_PARENT_FILTER_UNSUPPORTED" as const };
+  }
+  return { value: str };
+}
+
 // Endpoint dedicated to testing Meta Token validity and retrieving diagnostics
 router.get("/test-token", async (req, res) => {
   let token: string | null = null;
@@ -561,6 +574,14 @@ export function createAccountDetailsHandler(deps = {
           level
         });
       }
+      const campaignFilter = parseSingleHierarchyFilter(req.query.campaignId);
+      const adsetFilter = parseSingleHierarchyFilter(req.query.adsetId);
+      const adFilter = parseSingleHierarchyFilter(req.query.adId);
+      if (campaignFilter.error || adsetFilter.error || adFilter.error) {
+        return res.status(400).json({
+          error: "MULTI_PARENT_FILTER_UNSUPPORTED"
+        });
+      }
 
       const isAll = accountId === "all_active" || accountId === "all";
       const canonicalHierarchy = await deps.getCanonicalAdHierarchy({
@@ -569,16 +590,19 @@ export function createAccountDetailsHandler(deps = {
         scope: isAll ? "all_accounts" : "current_account",
         startDate: dateStart,
         endDate: dateEnd,
+        campaignId: campaignFilter.value,
+        adsetId: adsetFilter.value,
+        adId: adFilter.value,
         includeZeroSpend: includeZeroSpend === "true" || includeZeroSpend === true
       });
 
       return res.json({
         data: deps.mapCanonicalHierarchyToAccountDetails(canonicalLevel, canonicalHierarchy.data),
-        isFallbackCached: false,
         coverage: canonicalHierarchy.coverage,
         sourceCoverage: canonicalHierarchy.sourceCoverage,
         dataHealth: canonicalHierarchy.dataHealth,
-        dateRange: canonicalHierarchy.dateRange
+        dateRange: canonicalHierarchy.dateRange,
+        appliedFilters: canonicalHierarchy.appliedFilters
       });
     } catch (error: any) {
       console.error("Failed to load details for account:", accountId, error.message);
@@ -677,8 +701,7 @@ router.get("/:accountId/hierarchy", async (req, res) => {
       success: true,
       campaigns: campaigns.map(c => ({ id: c.id, name: c.name, status: c.status || "UNKNOWN" })),
       adSets: adSets.map(s => ({ id: s.id, campaignId: s.campaignId, name: s.name, status: "UNKNOWN" })),
-      ads: ads.map(a => ({ id: a.id, adsetId: a.adsetId, campaignId: a.campaignId, name: a.name, status: "UNKNOWN" })),
-      isFallbackCached: false
+      ads: ads.map(a => ({ id: a.id, adsetId: a.adsetId, campaignId: a.campaignId, name: a.name, status: "UNKNOWN" }))
     });
   } catch (error: any) {
     return res.status(500).json({ error: "Failed to fetch hierarchy", details: error.message });

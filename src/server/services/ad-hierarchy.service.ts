@@ -15,6 +15,7 @@ type CanonicalAdHierarchyInput = {
   endDate: string;
   campaignId?: string;
   adsetId?: string;
+  adId?: string;
   includeZeroSpend?: boolean;
 };
 
@@ -93,6 +94,7 @@ function buildAppliedFilters(input: CanonicalAdHierarchyInput, normAccountId: st
     accountId: scope === "all_accounts" ? "all" : normAccountId,
     campaignId: input.campaignId || "all",
     adsetId: input.adsetId || "all",
+    adId: input.adId || "all",
     includeZeroSpend: Boolean(input.includeZeroSpend)
   };
 }
@@ -104,6 +106,7 @@ function buildQueryDebug(input: {
   scope: CanonicalAdHierarchyScope;
   campaignId?: string;
   adsetId?: string;
+  adId?: string;
   includeZeroSpend?: boolean;
   factRows: number;
   structureRows: number;
@@ -120,7 +123,8 @@ function buildQueryDebug(input: {
     structureRows: input.structureRows,
     level: input.level,
     ...(input.campaignId ? { campaignId: input.campaignId } : {}),
-    ...(input.adsetId ? { adsetId: input.adsetId } : {})
+    ...(input.adsetId ? { adsetId: input.adsetId } : {}),
+    ...(input.adId ? { adId: input.adId } : {})
   };
 }
 
@@ -133,24 +137,66 @@ function buildDataSourceExplain(level: CanonicalAdHierarchyLevel) {
   };
 }
 
-function buildUnavailableActionInsight(input: {
-  spend: number;
-  impressions: number;
-  clicks: number;
-  revenue: number;
-  orders: number;
+function buildAccountDetailsInsight(input: {
+  hasPerformanceFacts: boolean;
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  purchases: number | null;
+  purchaseValue: number | null;
 }) {
-  const ctr = input.impressions > 0 ? Number(((input.clicks / input.impressions) * 100).toFixed(2)) : 0;
-  const cpc = input.clicks > 0 ? Number((input.spend / input.clicks).toFixed(2)) : 0;
-  const cpm = input.impressions > 0 ? Number(((input.spend / input.impressions) * 1000).toFixed(2)) : 0;
-  const cpa = input.orders > 0 ? Number((input.spend / input.orders).toFixed(2)) : null;
-
-  return {
-    spend: input.spend,
-    impressions: input.impressions,
+  const unavailable = {
+    spend: null,
+    impressions: null,
     reach: null,
     reachAvailable: false,
-    clicks: input.clicks,
+    clicks: null,
+    purchases: null,
+    purchaseValue: null,
+    purchase_value: null,
+    inline_link_clicks: null,
+    inlineLinkClicksAvailable: false,
+    inline_link_click_ctr: null,
+    cost_per_inline_link_click: null,
+    ctr: null,
+    cpc: null,
+    cpm: null,
+    cpa: null,
+    roas: null,
+    frequency: null,
+    frequencyAvailable: false,
+    addToCart: null,
+    addToCartAvailable: false,
+    initiateCheckout: null,
+    initiateCheckoutAvailable: false,
+    budgetAvailable: false,
+    actions: [],
+    action_values: [],
+    hasPerformanceFacts: false
+  };
+
+  if (!input.hasPerformanceFacts) return unavailable;
+
+  const spend = input.spend ?? 0;
+  const impressions = input.impressions ?? 0;
+  const clicks = input.clicks ?? 0;
+  const purchases = input.purchases ?? 0;
+  const purchaseValue = input.purchaseValue ?? 0;
+  const ctr = impressions > 0 ? Number(((clicks / impressions) * 100).toFixed(2)) : 0;
+  const cpc = clicks > 0 ? Number((spend / clicks).toFixed(2)) : 0;
+  const cpm = impressions > 0 ? Number(((spend / impressions) * 1000).toFixed(2)) : 0;
+  const cpa = purchases > 0 ? Number((spend / purchases).toFixed(2)) : null;
+  const roas = spend > 0 ? Number((purchaseValue / spend).toFixed(2)) : 0;
+
+  return {
+    spend,
+    impressions,
+    reach: null,
+    reachAvailable: false,
+    clicks,
+    purchases,
+    purchaseValue,
+    purchase_value: purchaseValue,
     inline_link_clicks: null,
     inlineLinkClicksAvailable: false,
     inline_link_click_ctr: null,
@@ -159,6 +205,7 @@ function buildUnavailableActionInsight(input: {
     cpc,
     cpm,
     cpa,
+    roas,
     frequency: null,
     frequencyAvailable: false,
     addToCart: null,
@@ -166,19 +213,22 @@ function buildUnavailableActionInsight(input: {
     initiateCheckout: null,
     initiateCheckoutAvailable: false,
     budgetAvailable: false,
-    actions: [{ action_type: "purchase", value: String(input.orders) }],
-    action_values: [{ action_type: "purchase", value: String(input.revenue) }]
+    actions: [{ action_type: "purchase", value: String(purchases) }],
+    action_values: [{ action_type: "purchase", value: String(purchaseValue) }],
+    hasPerformanceFacts: true
   };
 }
 
 export function mapCanonicalHierarchyToAccountDetails(level: CanonicalAdHierarchyLevel, rows: any[]) {
   return rows.map((row) => {
-    const insight = buildUnavailableActionInsight({
-      spend: Number(row.spend || 0),
-      impressions: Number(row.impressions || 0),
-      clicks: Number(row.clicks || 0),
-      revenue: Number(row.purchase_value || row.purchaseValue || 0),
-      orders: Number(row.purchases || 0)
+    const hasPerformanceFacts = row.hasPerformanceFacts === true;
+    const insight = buildAccountDetailsInsight({
+      hasPerformanceFacts,
+      spend: hasPerformanceFacts ? Number(row.spend ?? 0) : null,
+      impressions: hasPerformanceFacts ? Number(row.impressions ?? 0) : null,
+      clicks: hasPerformanceFacts ? Number(row.clicks ?? 0) : null,
+      purchaseValue: hasPerformanceFacts ? Number(row.purchase_value ?? row.purchaseValue ?? 0) : null,
+      purchases: hasPerformanceFacts ? Number(row.purchases ?? 0) : null
     });
 
     if (level === "campaign") {
@@ -188,7 +238,8 @@ export function mapCanonicalHierarchyToAccountDetails(level: CanonicalAdHierarch
         status: row.status || "UNKNOWN",
         daily_budget: row.budget ?? null,
         budgetAvailable: false,
-        hasPerformanceFacts: row.hasPerformanceFacts,
+        hasPerformanceFacts,
+        accountId: row.accountId,
         insights: { data: [insight] }
       };
     }
@@ -201,7 +252,8 @@ export function mapCanonicalHierarchyToAccountDetails(level: CanonicalAdHierarch
         status: row.status || "UNKNOWN",
         daily_budget: null,
         budgetAvailable: false,
-        hasPerformanceFacts: row.hasPerformanceFacts,
+        hasPerformanceFacts,
+        accountId: row.accountId,
         insights: { data: [insight] }
       };
     }
@@ -213,7 +265,8 @@ export function mapCanonicalHierarchyToAccountDetails(level: CanonicalAdHierarch
       name: row.name,
       creative_id: row.creativeId,
       status: row.status || "UNKNOWN",
-      hasPerformanceFacts: row.hasPerformanceFacts,
+      hasPerformanceFacts,
+      accountId: row.accountId,
       insights: { data: [insight] }
     };
   });
@@ -236,6 +289,7 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
   if (scope === "current_account") coverageArgs.accountId = normAccountId;
   if (input.campaignId) coverageArgs.campaignId = input.campaignId;
   if (input.adsetId) coverageArgs.adsetId = input.adsetId;
+  if (input.adId) coverageArgs.adId = input.adId;
 
   const hierarchyCoverage = await getDataSourceCoverage(coverageArgs);
 
@@ -248,6 +302,7 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
   }
   if (input.level === "adset" && input.campaignId) baseWhere.campaign_id = input.campaignId;
   if (input.level === "ad" && input.adsetId) baseWhere.adset_id = input.adsetId;
+  if (input.level === "ad" && input.adId) baseWhere.ad_id = input.adId;
 
   const performanceRows = await prisma.factMetaPerformance.findMany({ where: baseWhere });
 
@@ -275,7 +330,13 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
       });
     }
   } else {
-    if (input.adsetId) {
+    if (input.adId) {
+      structures = await prisma.ad.findMany({
+        where: { id: String(input.adId) },
+        include: { adSet: { include: { campaign: true } } }
+      });
+      parent = structures[0]?.adSet || null;
+    } else if (input.adsetId) {
       structures = await prisma.ad.findMany({
         where: { adsetId: String(input.adsetId) },
         include: { adSet: { include: { campaign: true } } }
@@ -430,6 +491,7 @@ export async function getCanonicalAdHierarchy(input: CanonicalAdHierarchyInput) 
         scope,
         campaignId: input.campaignId,
         adsetId: input.adsetId,
+        adId: input.adId,
         includeZeroSpend: showAll,
         factRows: performanceRows.length,
         structureRows: structures.length
