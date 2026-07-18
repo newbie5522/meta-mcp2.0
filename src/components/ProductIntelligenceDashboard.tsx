@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { format } from "date-fns";
 import { AlertTriangle, PackageSearch, RefreshCw } from "lucide-react";
@@ -9,8 +9,10 @@ import {
   CURRENT_RANGE_NOT_READY_MESSAGE,
   DATE_RANGE_MISMATCH_MESSAGE,
   getSafeLastGoodData,
+  isCanceledRequest,
   isDateRangeMismatch,
   makeLastGoodData,
+  shouldApplyLatestRequest,
   shouldPreserveLastGoodData
 } from "@/lib/data-view-state";
 import { DataViewTraceBar } from "./common/DataViewTraceBar";
@@ -152,6 +154,14 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
     scope: storeId === "all" ? "all_stores" : `store:${storeId}`,
     includeZeroSpend: true
   });
+  const productRequestIdRef = useRef(0);
+  const productRequestKeyRef = useRef(currentRequestKey);
+  const productAbortRef = useRef<AbortController | null>(null);
+  productRequestKeyRef.current = currentRequestKey;
+  const storesRequestIdRef = useRef(0);
+  const storesRequestKeyRef = useRef(`${startStrKey}:${endStrKey}`);
+  const storesAbortRef = useRef<AbortController | null>(null);
+  storesRequestKeyRef.current = `${startStrKey}:${endStrKey}`;
 
   function applyProductSnapshot(snapshot: ProductViewSnapshot) {
     setProducts(snapshot.products);
@@ -163,15 +173,29 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
   }
 
   useEffect(() => {
-    let active = true;
+    storesAbortRef.current?.abort();
+    const controller = new AbortController();
+    storesAbortRef.current = controller;
+    const requestId = ++storesRequestIdRef.current;
+    const sourceKey = `${startStrKey}:${endStrKey}`;
     axios.get("/api/data-center/detail", {
-      params: { startDate: startStrKey, endDate: endStrKey }
+      params: { startDate: startStrKey, endDate: endStrKey },
+      signal: controller.signal
     }).then(response => {
-      if (active) setStores(response.data?.filters?.stores || []);
-    }).catch(() => {
-      if (active) setStores([]);
+      if (
+        requestId !== storesRequestIdRef.current ||
+        sourceKey !== storesRequestKeyRef.current
+      ) return;
+      setStores(response.data?.filters?.stores || []);
+    }).catch(error => {
+      if (isCanceledRequest(error)) return;
+      if (
+        requestId !== storesRequestIdRef.current ||
+        sourceKey !== storesRequestKeyRef.current
+      ) return;
+      setStores([]);
     });
-    return () => { active = false; };
+    return () => controller.abort();
   }, [startStrKey, endStrKey]);
 
   useEffect(() => {
@@ -181,12 +205,27 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
   }, [currentRequestKey]);
 
   const fetchProducts = async () => {
+    productAbortRef.current?.abort();
+    const controller = new AbortController();
+    productAbortRef.current = controller;
+    const requestId = ++productRequestIdRef.current;
+    const sourceRequestKey = currentRequestKey;
+    const isCurrent = () => shouldApplyLatestRequest({
+      requestId,
+      latestRequestId: productRequestIdRef.current,
+      sourceRequestKey,
+      latestRequestKey: productRequestKeyRef.current
+    });
     setLoading(true);
     setError(null);
+    applyProductSnapshot(emptyProductSnapshot("LOADING"));
+    setViewNotice(null);
     try {
       const response = await axios.get("/api/data-center/products", {
-        params: { startDate: startStrKey, endDate: endStrKey, storeId }
+        params: { startDate: startStrKey, endDate: endStrKey, storeId },
+        signal: controller.signal
       });
+      if (!isCurrent()) return;
       const currentSnapshot = buildProductSnapshot(response.data);
       const decision = resolveProductSnapshot({
         payload: response.data,
@@ -202,17 +241,20 @@ export function ProductIntelligenceDashboard({ startDate, endDate }: { startDate
         setLastGoodData(makeLastGoodData(currentRequestKey, currentSnapshot));
       }
     } catch (requestError: any) {
+      if (!isCurrent() || isCanceledRequest(requestError)) return;
       applyProductSnapshot(emptyProductSnapshot("ERROR"));
       setViewNotice("当前商品筛选周期请求失败，未展示旧数据。");
       setError(requestError.response?.data?.details || requestError.message || "商品订单分析加载失败");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   };
 
   useEffect(() => {
     fetchProducts();
   }, [startStrKey, endStrKey, storeId]);
+
+  useEffect(() => () => productAbortRef.current?.abort(), []);
 
   const handleSyncProducts = async () => {
     setSyncing(true);

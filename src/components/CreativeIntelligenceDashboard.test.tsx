@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { resolveCreativePageState } from "./CreativeIntelligenceDashboard";
+import { shouldApplyLatestRequest } from "../lib/data-view-state";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 describe("Creative page state contract", () => {
   it("keeps structure-only creatives out of performance KPIs and buckets", () => {
@@ -56,5 +65,30 @@ describe("Creative page state contract", () => {
       pageRowCount: 25,
       filteredTotalCount: 80
     });
+  });
+
+  it("RC-02 ignores an older deferred creative response after a newer request wins", async () => {
+    const oldResponse = deferred<unknown>();
+    const newResponse = deferred<unknown>();
+    const latestRequestId = 2;
+    const latestRequestKey = "creative:new";
+
+    newResponse.resolve({ performanceRows: [{ id: "new" }] });
+    await newResponse.promise;
+    expect(shouldApplyLatestRequest({
+      requestId: 2,
+      latestRequestId,
+      sourceRequestKey: "creative:new",
+      latestRequestKey
+    })).toBe(true);
+
+    oldResponse.resolve({ performanceRows: [{ id: "old" }] });
+    await oldResponse.promise;
+    expect(shouldApplyLatestRequest({
+      requestId: 1,
+      latestRequestId,
+      sourceRequestKey: "creative:old",
+      latestRequestKey
+    })).toBe(false);
   });
 });

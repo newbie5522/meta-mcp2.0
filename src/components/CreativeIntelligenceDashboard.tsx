@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Table,
@@ -55,7 +55,9 @@ import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask, type SyncTa
 import {
   buildDataViewRequestKey,
   DATE_RANGE_MISMATCH_MESSAGE,
-  isDateRangeMismatch
+  isCanceledRequest,
+  isDateRangeMismatch,
+  shouldApplyLatestRequest
 } from "@/lib/data-view-state";
 import { cn } from "@/lib/utils";
 import { 
@@ -339,6 +341,26 @@ export function CreativeIntelligenceDashboard({
     { id: "inefficient_stop", label: "低效止损" }
   ] as const;
   const [activeOpsBucket, setActiveOpsBucket] = useState<string>("all");
+  const startStrKey = startDate ? format(startDate, "yyyy-MM-dd") : "";
+  const endStrKey = endDate ? format(endDate, "yyyy-MM-dd") : "";
+  const serverRequestKey = buildDataViewRequestKey({
+    page: "creative",
+    startDate: startStrKey,
+    endDate: endStrKey,
+    storeId: localStoreFilter,
+    accountId: selectedAccountFilter,
+    campaignId: selectedCampaignFilter,
+    type: selectedType,
+    opsBucket: activeOpsBucket,
+    search: searchTerm,
+    pageNumber: page,
+    pageSize,
+    includeZeroSpend: true
+  });
+  const creativeRequestIdRef = useRef(0);
+  const creativeRequestKeyRef = useRef(serverRequestKey);
+  const creativeAbortRef = useRef<AbortController | null>(null);
+  creativeRequestKeyRef.current = serverRequestKey;
 
   // Scroll Synchronization Refs & State
   const previewContainerRef = React.useRef<HTMLDivElement>(null);
@@ -428,13 +450,38 @@ export function CreativeIntelligenceDashboard({
   };
 
   const fetchCreatives = async () => {
+    creativeAbortRef.current?.abort();
+    const controller = new AbortController();
+    creativeAbortRef.current = controller;
+    const requestId = ++creativeRequestIdRef.current;
+    const sourceRequestKey = serverRequestKey;
+    const isCurrent = () => shouldApplyLatestRequest({
+      requestId,
+      latestRequestId: creativeRequestIdRef.current,
+      sourceRequestKey,
+      latestRequestKey: creativeRequestKeyRef.current
+    });
     try {
       setLoading(true);
-      const startStr = startDate ? format(startDate, "yyyy-MM-dd") : format(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), "yyyy-MM-dd");
-      const endStr = endDate ? format(endDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
+      setPerformanceRows([]);
+      setStructureOnlyRows([]);
+      setSummary(null);
+      setStructureSummary(null);
+      setBucketSummary({});
+      setCoverage(null);
+      setPagination(null);
+      setDiagnostics(null);
+      setResponseDateRange(null);
+      setViewNotice(null);
+      const startStr = startStrKey;
+      const endStr = endStrKey;
       let activeStoresList = storesList;
       if (localStoreFilter !== "all" && storesList.length === 0) {
-        const storesResponse = await axios.get("/api/stores").catch(() => ({ data: [] }));
+        const storesResponse = await axios.get("/api/stores", { signal: controller.signal }).catch((storeError) => {
+          if (isCanceledRequest(storeError)) throw storeError;
+          return { data: [] };
+        });
+        if (!isCurrent()) return;
         const storesPayload = storesResponse.data?.stores || storesResponse.data?.data || storesResponse.data || [];
         activeStoresList = Array.isArray(storesPayload) ? storesPayload : [];
         setStoresList(activeStoresList);
@@ -458,6 +505,7 @@ export function CreativeIntelligenceDashboard({
 
       const [resGrouped, resStores] = await Promise.all([
         axios.get("/api/data-center/creative-insights", {
+          signal: controller.signal,
           params: {
             startDate: startStr,
             endDate: endStr,
@@ -473,8 +521,12 @@ export function CreativeIntelligenceDashboard({
             includeZeroSpend: true
           }
         }),
-        axios.get("/api/stores").catch(() => ({ data: [] }))
+        axios.get("/api/stores", { signal: controller.signal }).catch((storeError) => {
+          if (isCanceledRequest(storeError)) throw storeError;
+          return { data: [] };
+        })
       ]);
+      if (!isCurrent()) return;
 
       const nextPageState = resolveCreativePageState(resGrouped.data);
       const formattedGrouped = nextPageState.performanceRows;
@@ -527,6 +579,7 @@ export function CreativeIntelligenceDashboard({
         setSelectedTrendCreativeIds([formattedGrouped[0].id]);
       }
     } catch (err: any) {
+      if (!isCurrent() || isCanceledRequest(err)) return;
       toast.error("加载素材分析数据失败");
       setPerformanceRows([]);
       setStructureOnlyRows([]);
@@ -544,26 +597,9 @@ export function CreativeIntelligenceDashboard({
       });
       setViewNotice("当前素材筛选周期请求失败，未展示旧数据。");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   };
-
-  const startStrKey = startDate ? format(startDate, "yyyy-MM-dd") : "";
-  const endStrKey = endDate ? format(endDate, "yyyy-MM-dd") : "";
-  const serverRequestKey = buildDataViewRequestKey({
-    page: "creative",
-    startDate: startStrKey,
-    endDate: endStrKey,
-    storeId: localStoreFilter,
-    accountId: selectedAccountFilter,
-    campaignId: selectedCampaignFilter,
-    type: selectedType,
-    opsBucket: activeOpsBucket,
-    search: searchTerm,
-    pageNumber: page,
-    pageSize,
-    includeZeroSpend: true
-  });
 
   useEffect(() => {
     setViewNotice(null);
@@ -578,6 +614,8 @@ export function CreativeIntelligenceDashboard({
   useEffect(() => {
     fetchCreatives();
   }, [startStrKey, endStrKey, localStoreFilter, selectedAccountFilter, selectedCampaignFilter, selectedType, activeOpsBucket, searchTerm, page, pageSize]);
+
+  useEffect(() => () => creativeAbortRef.current?.abort(), []);
 
   // Load cached or trigger canonical rule-based performance analysis report
   const handleTriggerAiAnalysis = async (creativeId: string) => {

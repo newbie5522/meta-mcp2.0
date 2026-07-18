@@ -40,15 +40,17 @@ describe("Meta configuration contract", () => {
   it("CONFIG-04 sync limit returns PARTIAL_SUCCESS", () => {
     const routes = source("src/server/routes/accounts.routes.ts");
 
-    expect(routes).toContain("const truncated = Boolean(nextUrl)");
-    expect(routes).toContain('status: truncated || rateLimited ? "PARTIAL_SUCCESS" : "SUCCESS"');
+    expect(routes).toContain("let truncatedByLimit = false");
+    expect(routes).toContain('const syncStatus = truncated || rateLimited ? "PARTIAL_SUCCESS" : "SUCCESS"');
+    expect(routes).toContain("status: syncStatus");
   });
 
   it("CONFIG-05 rate limit returns PARTIAL_SUCCESS", () => {
     const routes = source("src/server/routes/accounts.routes.ts");
 
     expect(routes).toContain("const rateLimited = Boolean(isRateLimited)");
-    expect(routes).toContain('status: truncated || rateLimited ? "PARTIAL_SUCCESS" : "SUCCESS"');
+    expect(routes).toContain('const syncStatus = truncated || rateLimited ? "PARTIAL_SUCCESS" : "SUCCESS"');
+    expect(routes).toContain("coverageComplete: !truncated && !rateLimited");
   });
 
   it("CONFIG-06 page uses POST endpoints", () => {

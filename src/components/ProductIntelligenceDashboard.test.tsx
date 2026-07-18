@@ -5,6 +5,15 @@ import {
   resolveProductSnapshot,
   type ProductViewSnapshot
 } from "./ProductIntelligenceDashboard";
+import { shouldApplyLatestRequest } from "../lib/data-view-state";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 function snapshot(label: string): ProductViewSnapshot {
   return {
@@ -142,5 +151,33 @@ describe("Product view snapshot contract", () => {
     expect(decision.snapshot).toEqual(current);
     expect(decision.snapshot.products).toEqual([]);
     expect(decision.snapshot.summary).toBeNull();
+  });
+
+  it("RC-01 ignores an older deferred product response after a newer request wins", async () => {
+    const oldResponse = deferred<ProductViewSnapshot>();
+    const newResponse = deferred<ProductViewSnapshot>();
+    let latestRequestId = 2;
+    let latestRequestKey = "products:new";
+
+    newResponse.resolve(snapshot("new"));
+    const appliedNew = await newResponse.promise;
+    expect(shouldApplyLatestRequest({
+      requestId: 2,
+      latestRequestId,
+      sourceRequestKey: "products:new",
+      latestRequestKey
+    })).toBe(true);
+    expect(appliedNew.dataHealthStatus).toBe("READY");
+
+    oldResponse.resolve(snapshot("old"));
+    latestRequestId = 2;
+    latestRequestKey = "products:new";
+    await oldResponse.promise;
+    expect(shouldApplyLatestRequest({
+      requestId: 1,
+      latestRequestId,
+      sourceRequestKey: "products:old",
+      latestRequestKey
+    })).toBe(false);
   });
 });

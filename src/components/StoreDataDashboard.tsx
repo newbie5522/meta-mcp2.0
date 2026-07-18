@@ -185,6 +185,9 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
   const latestRequestKeyRef = useRef(currentRequestKey);
   const requestAbortRef = useRef<AbortController | null>(null);
   latestRequestKeyRef.current = currentRequestKey;
+  const reconRequestIdRef = useRef(0);
+  const reconRequestKeyRef = useRef("");
+  const reconAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setViewNotice(null);
@@ -273,26 +276,67 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
 
   // 2. Load order reconciliation panel for specific store
   const loadReconciliation = async (store: StoreMetric) => {
+    const sourceRequestKey = buildDataViewRequestKey({
+      page: "store-reconciliation",
+      storeId: store.id,
+      startDate: formattedStartDate,
+      endDate: formattedEndDate
+    });
+    reconAbortRef.current?.abort();
+    const controller = new AbortController();
+    reconAbortRef.current = controller;
+    const requestId = ++reconRequestIdRef.current;
+    reconRequestKeyRef.current = sourceRequestKey;
+    const isCurrent = () => shouldApplyLatestRequest({
+      requestId,
+      latestRequestId: reconRequestIdRef.current,
+      sourceRequestKey,
+      latestRequestKey: reconRequestKeyRef.current
+    });
     setSelectedStoreForRecon(store);
+    setReconData(null);
     setReconLoading(true);
     try {
       const response = await axios.get(`/api/data-center/stores/${store.id}/reconciliation`, {
         params: {
           startDate: formattedStartDate,
           endDate: formattedEndDate
-        }
+        },
+        signal: controller.signal
       });
+      if (!isCurrent()) return;
+      const responseStoreId = response.data?.storeId ?? response.data?.store?.id;
+      const responseDateRange = response.data?.dateRange || response.data?.appliedFilters || {};
+      if (
+        String(responseStoreId) !== String(store.id)
+        || responseDateRange.startDate !== formattedStartDate
+        || responseDateRange.endDate !== formattedEndDate
+      ) {
+        setReconData(null);
+        toast.error("Reconciliation response does not match the selected store/date range");
+        return;
+      }
       setReconData(response.data);
 
       toast.success("只读校对完成，未执行同步或账目写入。");
     } catch (error: any) {
+      if (!isCurrent() || isCanceledRequest(error)) return;
       console.error("Failed to load store reconciliation details:", error);
       toast.error("未获取到校对明细: " + getApiErrorMessage(error));
       setReconData(null);
     } finally {
-      setReconLoading(false);
+      if (isCurrent()) setReconLoading(false);
     }
   };
+
+  useEffect(() => {
+    reconAbortRef.current?.abort();
+    reconRequestIdRef.current += 1;
+    reconRequestKeyRef.current = "";
+    setSelectedStoreForRecon(null);
+    setReconData(null);
+    setReconLoading(false);
+  }, [formattedStartDate, formattedEndDate]);
 
   // 6. Interactive AI Ask Component Analyst action
   const handleAskAIAnalytics = async (store: StoreMetric) => {

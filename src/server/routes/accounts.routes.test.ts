@@ -1,22 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { prismaMock } = vi.hoisted(() => ({
+const { prismaMock, axiosMock, getMetaTokenMock } = vi.hoisted(() => ({
   prismaMock: {
-    adAccount: { findMany: vi.fn() },
+    adAccount: { findMany: vi.fn(), findUnique: vi.fn(), upsert: vi.fn() },
+    accountMapping: { findFirst: vi.fn() },
     campaign: { findMany: vi.fn() },
     adSet: { findMany: vi.fn() },
     ad: { findMany: vi.fn() },
-    factMetaPerformance: { findMany: vi.fn() }
-  }
+    factMetaPerformance: { findMany: vi.fn() },
+    setting: { findUnique: vi.fn(), upsert: vi.fn() },
+    syncLog: { create: vi.fn() },
+    store: { findMany: vi.fn() }
+  },
+  axiosMock: { get: vi.fn() },
+  getMetaTokenMock: vi.fn()
 }));
 
 vi.mock("../../db/index.js", () => ({ default: prismaMock }));
+vi.mock("axios", () => ({ default: axiosMock }));
 vi.mock("../utils.js", () => ({
-  getMetaToken: vi.fn(),
+  getMetaToken: getMetaTokenMock,
   normalizeMetaAccountId: (value: string) => value.startsWith("act_") ? value : `act_${value}`
 }));
 
-import { createAccountDetailsHandler, createAccountListHandler, normalizeDetailsLevel } from "./accounts.routes";
+import router, { createAccountDetailsHandler, createAccountListHandler, normalizeDetailsLevel } from "./accounts.routes";
 
 function responseMock() {
   const response: any = {
@@ -38,6 +45,31 @@ async function invoke(handler: any, params: any, query: any = {}) {
   const response = responseMock();
   await handler({ params, query }, response);
   return response;
+}
+
+function routeHandler(method: string, path: string) {
+  const layer = (router as any).stack.find((item: any) => item.route?.path === path && item.route?.methods?.[method]);
+  return layer?.route?.stack?.[0]?.handle;
+}
+
+async function invokeRoute(handler: any) {
+  const response = responseMock();
+  await handler({ body: {}, query: {}, params: {} }, response);
+  return response;
+}
+
+function setupActiveListSync(limit = "2") {
+  getMetaTokenMock.mockResolvedValue("token");
+  prismaMock.setting.findUnique.mockImplementation(({ where }: any) => {
+    if (where.key === "META_AD_ACCOUNTS_SYNC_LIMIT") return Promise.resolve({ value: limit });
+    if (where.key === "META_AD_ACCOUNTS_ACTIVE_LAST_DAYS") return Promise.resolve({ value: "90" });
+    return Promise.resolve(null);
+  });
+  prismaMock.setting.upsert.mockResolvedValue({});
+  prismaMock.syncLog.create.mockResolvedValue({});
+  prismaMock.adAccount.findUnique.mockResolvedValue(null);
+  prismaMock.accountMapping.findFirst.mockResolvedValue(null);
+  prismaMock.adAccount.upsert.mockResolvedValue({});
 }
 
 describe("account details canonical hierarchy routing", () => {
@@ -202,5 +234,85 @@ describe("account details canonical hierarchy routing", () => {
     expect(response.body).toEqual([
       { accountId: "act_old", accountName: "Old", recentActivity90d: false }
     ]);
+  });
+
+  it("RC-07 marks PARTIAL_SUCCESS when fetched page overshoots sync limit", async () => {
+    setupActiveListSync("2");
+    axiosMock.get.mockImplementation((url: string) => {
+      if (String(url).includes("/me/adaccounts")) {
+        return Promise.resolve({ data: { data: [
+          { id: "act_1", name: "A", account_status: 1 },
+          { id: "act_2", name: "B", account_status: 1 },
+          { id: "act_3", name: "C", account_status: 1 }
+        ] } });
+      }
+      return Promise.resolve({ data: { data: [] } });
+    });
+
+    const response = await invokeRoute(routeHandler("post", "/active-list/sync"));
+
+    expect(response.body.status).toBe("PARTIAL_SUCCESS");
+    expect(response.body.truncated).toBe(true);
+    expect(response.body.recordsFetched).toBe(2);
+    expect(prismaMock.syncLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "PARTIAL_SUCCESS" })
+    }));
+  });
+
+  it("RC-07 marks PARTIAL_SUCCESS when next page exists at exact sync limit", async () => {
+    setupActiveListSync("2");
+    axiosMock.get.mockImplementation((url: string) => {
+      if (String(url).includes("/me/adaccounts")) {
+        return Promise.resolve({ data: { data: [
+          { id: "act_1", name: "A", account_status: 1 },
+          { id: "act_2", name: "B", account_status: 1 }
+        ], paging: { next: "https://graph.facebook.com/next-page" } } });
+      }
+      return Promise.resolve({ data: { data: [] } });
+    });
+
+    const response = await invokeRoute(routeHandler("post", "/active-list/sync"));
+
+    expect(response.body.status).toBe("PARTIAL_SUCCESS");
+    expect(response.body.truncated).toBe(true);
+  });
+
+  it("RC-07 keeps SUCCESS when result exactly equals sync limit with no next page", async () => {
+    setupActiveListSync("2");
+    axiosMock.get.mockImplementation((url: string) => {
+      if (String(url).includes("/me/adaccounts")) {
+        return Promise.resolve({ data: { data: [
+          { id: "act_1", name: "A", account_status: 1 },
+          { id: "act_2", name: "B", account_status: 1 }
+        ] } });
+      }
+      return Promise.resolve({ data: { data: [] } });
+    });
+
+    const response = await invokeRoute(routeHandler("post", "/active-list/sync"));
+
+    expect(response.body.status).toBe("SUCCESS");
+    expect(response.body.truncated).toBe(false);
+    expect(prismaMock.syncLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "SUCCESS" })
+    }));
+  });
+
+  it("RC-07 rate limit keeps response and SyncLog status in PARTIAL_SUCCESS", async () => {
+    setupActiveListSync("2");
+    axiosMock.get.mockImplementation((url: string) => {
+      if (String(url).includes("/me/adaccounts")) {
+        return Promise.resolve({ data: { data: [{ id: "act_1", name: "A", account_status: 1 }] } });
+      }
+      return Promise.reject({ response: { data: { error: { code: 17, message: "rate limit" } } } });
+    });
+
+    const response = await invokeRoute(routeHandler("post", "/active-list/sync"));
+
+    expect(response.body.status).toBe("PARTIAL_SUCCESS");
+    expect(response.body.rateLimited).toBe(true);
+    expect(prismaMock.syncLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: response.body.status })
+    }));
   });
 });

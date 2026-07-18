@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { DataCoverageBanner } from "./common/DataCoverageBanner";
-import { isCanceledRequest, shouldApplyLatestRequest } from "../lib/data-view-state";
+import { isCanceledRequest, isDateRangeMismatch, shouldApplyLatestRequest } from "../lib/data-view-state";
 
 export function buildOverviewRequestKey(startDate: Date, endDate: Date) {
   return JSON.stringify({
@@ -20,6 +20,27 @@ export function buildOverviewRequestKey(startDate: Date, endDate: Date) {
 
 export function overviewCoverageAvailable(status?: string) {
   return ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(String(status || ""));
+}
+
+export function resolveOverviewResponseState(payload: any, startDate: string, endDate: string) {
+  if (isDateRangeMismatch(payload, startDate, endDate)) {
+    return {
+      stale: true,
+      summary: null,
+      storeCoverage: null,
+      metaCoverage: null,
+      productCoverage: null,
+      notice: "Response date range mismatch"
+    };
+  }
+  return {
+    stale: false,
+    summary: payload?.data || null,
+    storeCoverage: payload?.storeCoverage || payload?.data?.storeCoverage || null,
+    metaCoverage: payload?.metaCoverage || payload?.data?.metaCoverage || null,
+    productCoverage: payload?.productCoverage || payload?.data?.productCoverage || null,
+    notice: payload?.freshness?.refreshing ? "Dashboard refresh is still running" : null
+  };
 }
 
 export const overviewCurrency = (val: number | null | undefined) =>
@@ -59,10 +80,12 @@ export function OverviewDashboard({ startDate, endDate }: { startDate: Date; end
     setViewNotice(null);
 
     try {
+      const startStr = format(startDate, "yyyy-MM-dd");
+      const endStr = format(endDate, "yyyy-MM-dd");
       const res = await axios.get("/api/dashboard", {
         params: {
-          since: format(startDate, "yyyy-MM-dd"),
-          until: format(endDate, "yyyy-MM-dd")
+          since: startStr,
+          until: endStr
         },
         signal: controller.signal
       });
@@ -74,10 +97,19 @@ export function OverviewDashboard({ startDate, endDate }: { startDate: Date; end
       })) {
         return;
       }
-      setSummary(res.data.data);
-      setStoreCoverage(res.data.storeCoverage || res.data.data?.storeCoverage || null);
-      setMetaCoverage(res.data.metaCoverage || res.data.data?.metaCoverage || null);
-      setProductCoverage(res.data.productCoverage || res.data.data?.productCoverage || null);
+      const nextState = resolveOverviewResponseState(res.data, startStr, endStr);
+      if (nextState.stale) {
+        setSummary(null);
+        setStoreCoverage(null);
+        setMetaCoverage(null);
+        setProductCoverage(null);
+        setViewNotice(nextState.notice);
+        return;
+      }
+      setSummary(nextState.summary);
+      setStoreCoverage(nextState.storeCoverage);
+      setMetaCoverage(nextState.metaCoverage);
+      setProductCoverage(nextState.productCoverage);
       if (res.data.freshness?.refreshing) {
         setViewNotice("后台刷新仍在运行中，本页仅展示当前已入库数据。");
       }
@@ -152,6 +184,7 @@ export function OverviewDashboard({ startDate, endDate }: { startDate: Date; end
   const overview = summary.overview || {};
   const storeMetricsAvailable = overviewCoverageAvailable(storeCoverage?.status);
   const metaMetricsAvailable = overviewCoverageAvailable(metaCoverage?.status);
+  const productMetricsAvailable = overviewCoverageAvailable(productCoverage?.status);
 
   return (
     <div className="space-y-6">
@@ -228,9 +261,9 @@ export function OverviewDashboard({ startDate, endDate }: { startDate: Date; end
         headers={["产品型号 (SKU)", "订单数", "销售数量", "总销售额"]}
         rows={(summary.products || []).map((product: any) => [
           product.sku || product.productName || product.productId,
-          productCoverage?.status === "NOT_SYNCED" ? "N/A" : integer(product.orderCount),
-          product.quantity === null || product.quantity === undefined ? "N/A" : integer(product.quantity),
-          productCoverage?.status === "NOT_SYNCED" ? "N/A" : currency(product.sales)
+          productMetricsAvailable ? integer(product.orderCount) : "N/A",
+          productMetricsAvailable ? (product.quantity === null || product.quantity === undefined ? "N/A" : integer(product.quantity)) : "N/A",
+          productMetricsAvailable ? currency(product.sales) : "N/A"
         ])}
         empty="暂无产品排行数据"
       />

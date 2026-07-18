@@ -47,18 +47,16 @@ export async function getDashboardSummary(options: { since?: Date; until?: Date 
   const [
     rawStores,
     adAccountCount,
-    mappedAdAccounts,
     adAccounts,
     recentLogs,
-    storeDailyLedgers,
-    metaDailyLedgers
+    allStoreDailyLedgers,
+    allMetaDailyLedgers
   ] = await Promise.all([
     prisma.store.findMany({
       where: productionStoreWhere,
       include: { accounts: true, accountMappings: true }
     }),
     prisma.adAccount.count({ where: { recentActivity90d: true } }),
-    prisma.accountMapping.count({ where: { storeId: { not: null } } }),
     prisma.adAccount.findMany({ 
       include: { store: true } 
     }),
@@ -78,7 +76,24 @@ export async function getDashboardSummary(options: { since?: Date; until?: Date 
     })
   ]);
 
-  const [canonicalProducts, coverageMap] = await Promise.all([
+  const productionStoreIds = new Set(rawStores.map(store => Number(store.id)));
+  const storeDailyLedgers = allStoreDailyLedgers.filter(row => productionStoreIds.has(Number(row.storeId)));
+  const metaDailyLedgers = allMetaDailyLedgers.filter(row => row.storeId == null || productionStoreIds.has(Number(row.storeId)));
+  const productionAdAccounts = adAccounts.filter(account => account.storeId == null || productionStoreIds.has(Number(account.storeId)));
+  const mappedAccountIds = new Set<string>();
+  for (const store of rawStores) {
+    for (const account of store.accounts || []) {
+      const normalized = normalizeMetaAccountId(account.fb_account_id || account.fbAccountId || account.accountId || account.id);
+      if (normalized) mappedAccountIds.add(normalized);
+    }
+    for (const mapping of store.accountMappings || []) {
+      const normalized = normalizeMetaAccountId(mapping.fbAccountId || mapping.fb_account_id || mapping.accountId);
+      if (normalized) mappedAccountIds.add(normalized);
+    }
+  }
+  const mappedAdAccountCount = mappedAccountIds.size;
+
+  const [allCanonicalProducts, coverageMap] = await Promise.all([
     getProductIntelligence(sinceStr, untilStr, "all"),
     getCoverageMap({
       storeCoverage: {
@@ -100,6 +115,9 @@ export async function getDashboardSummary(options: { since?: Date; until?: Date 
       }
     })
   ]);
+  const canonicalProducts = allCanonicalProducts.filter(product => (
+    product.storeId !== null && product.storeId !== undefined && productionStoreIds.has(Number(product.storeId))
+  ));
   const storeCount = rawStores.length;
   const activeStoreCount = rawStores.filter(
     store => String(store.status || "active").toLowerCase() === "active"
@@ -181,7 +199,7 @@ export async function getDashboardSummary(options: { since?: Date; until?: Date 
 
   // Assemble accounts list using computed ledger data
   const accountsMap = new Map<string, any>();
-  for (const a of adAccounts) {
+  for (const a of productionAdAccounts) {
     const normId = normalizeMetaAccountId(a.fb_account_id);
     accountsMap.set(normId, {
       id: String(a.id),
@@ -234,6 +252,14 @@ export async function getDashboardSummary(options: { since?: Date; until?: Date 
     .filter(a => a.hasPerformanceFacts === true)
     .sort((a, b) => Number(b.spend ?? 0) - Number(a.spend ?? 0));
 
+  const storeRowsOrderTotal = stores.reduce((total, store) => total + toNumber(store.orderCount), 0);
+  const storeRowsSalesTotal = stores.reduce((total, store) => total + toNumber(store.sales), 0);
+  const accountRowsSpendTotal = accounts.reduce((total, account) => total + toNumber(account.spend), 0);
+  const accountRowsPurchaseTotal = accounts.reduce((total, account) => total + toNumber(account.purchases), 0);
+  const accountRowsPurchaseValueTotal = accounts.reduce((total, account) => total + toNumber(account.purchaseValue), 0);
+  const accountRowsImpressionsTotal = accounts.reduce((total, account) => total + toNumber(account.impressions), 0);
+  const accountRowsClicksTotal = accounts.reduce((total, account) => total + toNumber(account.clicks), 0);
+
   const products = canonicalProducts.slice(0, 50).map(product => ({
     productId: product.productId,
     productName: product.productName,
@@ -281,21 +307,21 @@ export async function getDashboardSummary(options: { since?: Date; until?: Date 
     storeCount,
     activeStoreCount,
     adAccountCount,
-    mappedAdAccountCount: mappedAdAccounts || adAccounts.filter(a => a.storeId).length,
+    mappedAdAccountCount,
     overview: {
-      storeOrderCount: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.storeCoverage.status) ? storeOrderCount : null,
-      storeSales: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.storeCoverage.status) ? storeSales : null,
-      metaSpend: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? metaSpend : null,
+      storeOrderCount: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.storeCoverage.status) ? storeRowsOrderTotal : null,
+      storeSales: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.storeCoverage.status) ? storeRowsSalesTotal : null,
+      metaSpend: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? accountRowsSpendTotal : null,
       realRoas: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.storeCoverage.status) &&
         ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) &&
-        metaSpend > 0 ? safeRatio(storeSales, metaSpend) : null,
-      metaRoas: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? safeRatio(metaPurchaseValue, metaSpend) : null,
-      metaPurchases: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? metaPurchases : null,
-      metaPurchaseValue: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? metaPurchaseValue : null,
-      impressions: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? impressions : null,
-      clicks: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? clicks : null,
+        accountRowsSpendTotal > 0 ? safeRatio(storeRowsSalesTotal, accountRowsSpendTotal) : null,
+      metaRoas: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? safeRatio(accountRowsPurchaseValueTotal, accountRowsSpendTotal) : null,
+      metaPurchases: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? accountRowsPurchaseTotal : null,
+      metaPurchaseValue: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? accountRowsPurchaseValueTotal : null,
+      impressions: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? accountRowsImpressionsTotal : null,
+      clicks: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status) ? accountRowsClicksTotal : null,
       ctr: ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(coverageMap.metaCoverage.status)
-        ? (safeRatio(clicks, impressions) ? (clicks/impressions)*100 : 0)
+        ? (safeRatio(accountRowsClicksTotal, accountRowsImpressionsTotal) ? (accountRowsClicksTotal/accountRowsImpressionsTotal)*100 : 0)
         : null
     },
     stores,

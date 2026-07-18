@@ -46,10 +46,31 @@ export function buildCoverageScopeKey(input: Omit<DataCoverageQuery, "source" | 
     `store:${normalizeScopeValue(input.storeId)}`,
     `account:${accountIds}`,
     `dimension:${normalizeScopeValue(input.dimension)}`,
+    `level:${normalizeScopeValue(input.factLevel)}`,
     `campaign:${normalizeScopeValue(input.campaignId)}`,
     `adset:${normalizeScopeValue(input.adsetId)}`,
     `ad:${normalizeScopeValue(input.adId)}`
   ].join("|");
+}
+
+function metadataCoversFactLevel(metadata: Record<string, any>, factLevel?: DataCoverageQuery["factLevel"]) {
+  const requestedLevel = normalizeScopeValue(factLevel);
+  if (requestedLevel === "all") return true;
+  const directLevel = normalizeScopeValue(metadata.factLevel || metadata.level);
+  if (directLevel !== "all") return directLevel === requestedLevel;
+  if (typeof metadata.scopeKey === "string" && metadata.scopeKey.includes("|")) {
+    const logged = Object.fromEntries(metadata.scopeKey.split("|").map((part: string) => {
+      const separator = part.indexOf(":");
+      return separator > 0 ? [part.slice(0, separator), part.slice(separator + 1)] : [part, ""];
+    }));
+    if (logged.level && logged.level !== "all") return logged.level === requestedLevel;
+  }
+  if (Array.isArray(metadata.factLevels)) return metadata.factLevels.map(normalizeScopeValue).includes(requestedLevel);
+  if (Array.isArray(metadata.levels)) return metadata.levels.map(normalizeScopeValue).includes(requestedLevel);
+  if (metadata.levelCounts && typeof metadata.levelCounts === "object") {
+    return Number(metadata.levelCounts[requestedLevel] || 0) > 0;
+  }
+  return false;
 }
 
 function parseMetadata(value: unknown): Record<string, any> {
@@ -92,7 +113,12 @@ function matchesScope(log: any, metadata: Record<string, any>, query: DataCovera
       const separator = part.indexOf(":");
       return separator > 0 ? [part.slice(0, separator), part.slice(separator + 1)] : [part, ""];
     }));
-    for (const key of ["store", "account", "campaign", "adset", "ad"]) {
+    for (const key of ["store", "account", "level", "campaign", "adset", "ad"]) {
+      if (key === "level" && requested[key] !== "all") {
+        if (!logged[key]) return false;
+        if (logged[key] !== "all" && logged[key] !== requested[key]) return false;
+        continue;
+      }
       if (logged[key] && logged[key] !== "all" && logged[key] !== requested[key]) return false;
     }
     const dimensionCovered = !query.dimension || logged.dimension === "all" || logged.dimension === query.dimension ||
@@ -133,6 +159,7 @@ async function resolveSyncReceipt(query: DataCoverageQuery, scopeKey: string) {
     const range = readLogRange(log, metadata);
     const exactRange = range.start === query.requestedStartDate && range.end === query.requestedEndDate;
     if (!exactRange) continue;
+    if (!metadataCoversFactLevel(metadata, query.factLevel)) continue;
 
     if (log.status === "running") {
       const startedAt = log.startedAt instanceof Date ? log.startedAt : new Date(log.startedAt);

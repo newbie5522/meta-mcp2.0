@@ -302,14 +302,23 @@ router.post("/active-list/sync", async (req, res) => {
     const syncLimit = (syncLimitRaw?.value && parseInt(syncLimitRaw.value, 10)) ? parseInt(syncLimitRaw.value, 10) : 10000000;
 
     let fetchedMetaAccountsCount = 0;
+    let truncatedByLimit = false;
     try {
       while (nextUrl && fetchedMetaAccountsCount < syncLimit) {
         const response = await axios.get(nextUrl);
-        if (response.data && response.data.data) {
-          allAccounts = allAccounts.concat(response.data.data);
-          fetchedMetaAccountsCount += response.data.data.length;
+        const pageAccounts = Array.isArray(response.data?.data) ? response.data.data : [];
+        const pageNextUrl = response.data?.paging?.next || null;
+        if (pageAccounts.length) {
+          allAccounts = allAccounts.concat(pageAccounts);
+          fetchedMetaAccountsCount += pageAccounts.length;
         }
-        nextUrl = response.data.paging?.next || null;
+        if (allAccounts.length >= syncLimit) {
+          truncatedByLimit = allAccounts.length > syncLimit || Boolean(pageNextUrl);
+          allAccounts = allAccounts.slice(0, syncLimit);
+          nextUrl = null;
+          break;
+        }
+        nextUrl = pageNextUrl;
       }
     } catch (apiErr: any) {
       const fbError = apiErr.response?.data?.error || {};
@@ -347,6 +356,7 @@ return res.status(statusCode).json({
     }
 
     if (allAccounts.length > syncLimit) {
+      truncatedByLimit = true;
       allAccounts = allAccounts.slice(0, syncLimit);
     }
 
@@ -501,16 +511,23 @@ return res.status(statusCode).json({
       console.error("[Meta Sync DB Settings Update Error]:", se);
     });
 
+    const truncated = truncatedByLimit;
+    const rateLimited = Boolean(isRateLimited);
+    const syncStatus = truncated || rateLimited ? "PARTIAL_SUCCESS" : "SUCCESS";
+
     // Let's log successful sync
     await prisma.syncLog.create({
       data: {
         type: "META_ACCOUNTS_SYNC",
-        status: "SUCCESS",
+        status: syncStatus,
         recordsFetched: allAccounts.length,
         recordsSaved: uniqueAccountsSync.length,
         metadata: JSON.stringify({
           totalFetched: allAccounts.length,
-          active90d: uniqueAccountsSync.filter(a => a.isActive).length
+          active90d: uniqueAccountsSync.filter(a => a.isActive).length,
+          truncated,
+          rateLimited,
+          coverageComplete: !truncated && !rateLimited
         })
       }
     }).catch(() => {});
@@ -525,11 +542,9 @@ return res.status(statusCode).json({
       timezone: a.timezone
     })).sort((a, b) => a.name.localeCompare(b.name));
 
-    const truncated = Boolean(nextUrl);
-    const rateLimited = Boolean(isRateLimited);
     return res.json({
       success: true,
-      status: truncated || rateLimited ? "PARTIAL_SUCCESS" : "SUCCESS",
+      status: syncStatus,
       accounts: results,
       recordsFetched: allAccounts.length,
       recordsSaved: uniqueAccountsSync.length,

@@ -4,7 +4,6 @@ const { prismaMock, productsMock, coverageMock } = vi.hoisted(() => ({
   prismaMock: {
     store: { findMany: vi.fn() },
     adAccount: { count: vi.fn(), findMany: vi.fn() },
-    accountMapping: { count: vi.fn() },
     syncLog: { findMany: vi.fn() },
     dataCenterStoreDaily: { findMany: vi.fn() },
     dataCenterMetaAccountDaily: { findMany: vi.fn() },
@@ -34,15 +33,14 @@ beforeEach(() => {
     { id: 2, name: "Inactive", status: "inactive", platform: "shopline", domain: "inactive.example.com", accounts: [], accountMappings: [] }
   ]);
   prismaMock.adAccount.count.mockResolvedValue(1);
-  prismaMock.accountMapping.count.mockResolvedValue(1);
   prismaMock.adAccount.findMany.mockResolvedValue([
-    { id: 10, fb_account_id: "act_1", fb_account_name: "Account 1", activityStatus: "1", store: { name: "Live" } }
+    { id: 10, fb_account_id: "act_1", fb_account_name: "Account 1", activityStatus: "1", storeId: 1, store: { name: "Live" } }
   ]);
   prismaMock.syncLog.findMany.mockResolvedValue([]);
   prismaMock.dataCenterStoreDaily.findMany.mockResolvedValue([{ storeId: 1, grossSales: 100, orderCount: 2 }]);
-  prismaMock.dataCenterMetaAccountDaily.findMany.mockResolvedValue([{ accountId: "1", spend: 25, purchases: 1, purchaseValue: 50, impressions: 1000, clicks: 20 }]);
+  prismaMock.dataCenterMetaAccountDaily.findMany.mockResolvedValue([{ storeId: 1, accountId: "1", spend: 25, purchases: 1, purchaseValue: 50, impressions: 1000, clicks: 20 }]);
   prismaMock.aiActionSuggestion.count.mockResolvedValue(0);
-  productsMock.mockResolvedValue([{ productId: "p1", productName: "Product 1", sku: "SKU-1", orders: 2, revenue: 100 }]);
+  productsMock.mockResolvedValue([{ storeId: 1, productId: "p1", productName: "Product 1", sku: "SKU-1", orders: 2, revenue: 100 }]);
   coverageMock.mockResolvedValue(readyCoverage);
 });
 
@@ -118,5 +116,45 @@ describe("dashboard summary", () => {
 
     expect(summary.overview.metaSpend).toBe(0);
     expect(summary.overview.metaPurchases).toBe(0);
+  });
+
+  it("RC-05 excludes non-production store facts from overview and rows", async () => {
+    prismaMock.dataCenterStoreDaily.findMany.mockResolvedValue([
+      { storeId: 1, grossSales: 100, orderCount: 2 },
+      { storeId: 999, grossSales: 900, orderCount: 9 }
+    ]);
+    prismaMock.dataCenterMetaAccountDaily.findMany.mockResolvedValue([
+      { storeId: 1, accountId: "1", spend: 25, purchases: 1, purchaseValue: 50, impressions: 1000, clicks: 20 },
+      { storeId: 999, accountId: "999", spend: 900, purchases: 9, purchaseValue: 999, impressions: 9000, clicks: 900 }
+    ]);
+    productsMock.mockResolvedValue([
+      { storeId: 1, productId: "p1", productName: "Product 1", sku: "SKU-1", orders: 2, revenue: 100 },
+      { storeId: 999, productId: "p-demo", productName: "Demo Product", sku: "DEMO", orders: 9, revenue: 900 }
+    ]);
+
+    const summary = await getDashboardSummary({ since: new Date("2026-07-01"), until: new Date("2026-07-07") });
+
+    expect(summary.overview.storeSales).toBe(100);
+    expect(summary.overview.storeOrderCount).toBe(2);
+    expect(summary.overview.metaSpend).toBe(25);
+    expect(summary.products.map((product: any) => product.productId)).toEqual(["p1"]);
+    expect(summary.accounts.map((account: any) => account.metaAccountId)).toEqual(["act_1"]);
+  });
+
+  it("RC-05 overview totals equal returned store and account rows", async () => {
+    prismaMock.dataCenterStoreDaily.findMany.mockResolvedValue([
+      { storeId: 1, grossSales: 100, orderCount: 2 },
+      { storeId: 2, grossSales: 50, orderCount: 1 }
+    ]);
+    prismaMock.dataCenterMetaAccountDaily.findMany.mockResolvedValue([
+      { storeId: 1, accountId: "1", spend: 25, purchases: 1, purchaseValue: 50, impressions: 1000, clicks: 20 },
+      { storeId: 2, accountId: "2", spend: 5, purchases: 0, purchaseValue: 0, impressions: 100, clicks: 2 }
+    ]);
+
+    const summary = await getDashboardSummary({ since: new Date("2026-07-01"), until: new Date("2026-07-07") });
+
+    expect(summary.overview.storeSales).toBe(summary.stores.reduce((sum: number, store: any) => sum + Number(store.sales || 0), 0));
+    expect(summary.overview.storeOrderCount).toBe(summary.stores.reduce((sum: number, store: any) => sum + Number(store.orderCount || 0), 0));
+    expect(summary.overview.metaSpend).toBe(summary.accounts.reduce((sum: number, account: any) => sum + Number(account.spend || 0), 0));
   });
 });
