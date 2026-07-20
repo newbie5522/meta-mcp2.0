@@ -3,7 +3,10 @@ import {
   buildCreativeAiPrompt,
   buildCreativeAnalysisRequest,
   buildCreativeDashboardRequestKey,
+  buildCreativeSelectionScopeKey,
+  compareNullable,
   isCreativeAiAllowed,
+  resolveCreativeFilterCascade,
   resolveCreativeDashboardResponse
 } from "./creative-dashboard-orchestrator";
 import type { CreativeIntelligenceRow } from "../shared/creative-intelligence-contract";
@@ -143,5 +146,53 @@ describe("creative dashboard orchestrator", () => {
     expect(key).toContain("adsetId:set-1");
     expect(key).not.toContain("modal");
     expect(key).not.toContain("preview");
+  });
+
+  it("PAGE-09~12 selection scope key changes only for business scope inputs", () => {
+    const base = {
+      startDate: "2026-07-01",
+      endDate: "2026-07-07",
+      storeId: "all",
+      accountId: "act_1",
+      campaignId: "camp-1",
+      adsetId: "set-1",
+      type: "IMAGE",
+      bucket: "watching",
+      search: "hook"
+    };
+    const key = buildCreativeSelectionScopeKey(base);
+    expect(buildCreativeSelectionScopeKey({ ...base, storeId: 2 })).not.toBe(key);
+    expect(buildCreativeSelectionScopeKey({ ...base, campaignId: "camp-2" })).not.toBe(key);
+    expect(buildCreativeSelectionScopeKey({ ...base, adsetId: "set-2" })).not.toBe(key);
+    expect(key).not.toContain("pageNumber");
+    expect(key).not.toContain("sortBy");
+  });
+
+  it("PAGE-13 filter cascade clears downstream selections", () => {
+    expect(resolveCreativeFilterCascade({ changed: "store", nextValue: "2" })).toMatchObject({
+      storeId: "2",
+      accountId: "all",
+      campaignId: "all",
+      adsetId: "all",
+      page: 1
+    });
+    expect(resolveCreativeFilterCascade({ changed: "account", nextValue: "act_2" })).toMatchObject({
+      accountId: "act_2",
+      campaignId: "all",
+      adsetId: "all",
+      page: 1
+    });
+    expect(resolveCreativeFilterCascade({ changed: "campaign", nextValue: "camp-2" })).toMatchObject({
+      campaignId: "camp-2",
+      adsetId: "all",
+      page: 1
+    });
+  });
+
+  it("PAGE-14 nullable sort keeps null last and treats zero as a real value", () => {
+    expect(compareNullable(null, 0, "desc")).toBe(1);
+    expect(compareNullable(0, null, "desc")).toBe(-1);
+    expect(compareNullable(0, 2, "desc")).toBeGreaterThan(0);
+    expect(compareNullable(0, 2, "asc")).toBeLessThan(0);
   });
 });

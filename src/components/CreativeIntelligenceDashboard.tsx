@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Table,
@@ -63,6 +63,7 @@ import {
   buildCreativeAiRequestKey,
   buildCreativeAnalysisRequest,
   buildCreativeDashboardRequestKey,
+  buildCreativeSelectionScopeKey,
   compareNullable,
   formatCreativeAnalysisDataBasis,
   isCreativeAiAllowed,
@@ -70,17 +71,6 @@ import {
   resolveCreativeAnalysisResponse,
   resolveCreativeDashboardResponse
 } from "./creative-dashboard-orchestrator";
-import { 
-  ResponsiveContainer, 
-  LineChart, 
-  Line, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip as RechartsTooltip, 
-  Legend
-} from "recharts";
-
 type CreativeData = CreativeIntelligenceRow & {
   storeId: number | null;
   creativeName: string | null;
@@ -160,6 +150,168 @@ function formatNullableMetric(value: number | null | undefined, digits: number, 
   return typeof value === "number" && Number.isFinite(value)
     ? `${prefix}${value.toFixed(digits)}${suffix}`
     : "N/A";
+}
+
+function formatCreativeRiskScore(value: number | null | undefined) {
+  return value === null || value === undefined ? "N/A" : `${value} / 100 分`;
+}
+
+export function formatCreativeAiConfidence(confidence: string | null | undefined) {
+  if (confidence === "partial") return "\u90e8\u5206\u8986\u76d6";
+  if (confidence === "full") return "\u5b8c\u6574\u8986\u76d6";
+  return "\u672a\u77e5";
+}
+
+export function normalizeAiReportList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value.split("\n").map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+export function getCreativePreviewSources(row: Pick<CreativeData, "imageUrl" | "previewUrl">) {
+  return Array.from(new Set([row.imageUrl, row.previewUrl].filter(Boolean))) as string[];
+}
+
+export function CreativePreviewMedia({
+  row,
+  compact = false
+}: {
+  row: Pick<CreativeData, "creativeId" | "creativeName" | "type" | "imageUrl" | "previewUrl">;
+  compact?: boolean;
+}) {
+  const [sourceIndex, setSourceIndex] = useState(0);
+  const sources = useMemo(() => getCreativePreviewSources(row), [row.imageUrl, row.previewUrl]);
+
+  useEffect(() => {
+    setSourceIndex(0);
+  }, [row.creativeId, row.imageUrl, row.previewUrl]);
+
+  const source = sources[sourceIndex] || null;
+  const isDirectVideo = Boolean(source) && /\.(mp4|webm|ogg)(\?|#|$)/i.test(String(source));
+
+  if (row.type === "VIDEO" && source && isDirectVideo) {
+    return (
+      <video
+        data-testid="creative-video-preview"
+        src={source}
+        controls={!compact}
+        preload="metadata"
+        className="h-full w-full object-cover"
+        onError={() => setSourceIndex((current) => current + 1)}
+      />
+    );
+  }
+
+  if (source) {
+    return (
+      <img
+        data-testid="creative-image-preview"
+        src={source}
+        alt={row.creativeName || "creative preview"}
+        className="h-full w-full object-cover"
+        referrerPolicy="no-referrer"
+        onError={() => setSourceIndex((current) => current + 1)}
+      />
+    );
+  }
+
+  return (
+    <div
+      data-testid="creative-preview-unavailable"
+      className="flex h-full min-h-24 w-full items-center justify-center rounded bg-slate-50 text-xs text-slate-500"
+    >
+      Creative preview unavailable
+    </div>
+  );
+}
+
+export function CreativeAiReportPanel({ aiReport }: { aiReport: any }) {
+  const facts = normalizeAiReportList(aiReport?.facts);
+  const riskPoints = normalizeAiReportList(aiReport?.riskPoints);
+  const recommendedActions = normalizeAiReportList(aiReport?.recommendedActions);
+  const warnings = normalizeAiReportList(aiReport?.warnings);
+  const basis = aiReport ? formatCreativeAnalysisDataBasis(aiReport) : [];
+
+  return (
+    <div className="space-y-4 text-xs">
+      <section data-testid="creative-ai-conclusion" className="space-y-1 bg-white p-3 rounded-lg border border-indigo-50 leading-relaxed text-slate-700">
+        <p className="text-[10px] font-bold text-indigo-600">Conclusion</p>
+        <p className="text-xs text-slate-800">{aiReport.conclusion}</p>
+      </section>
+
+      <section data-testid="creative-ai-facts" className="space-y-1 bg-white p-3 rounded-lg border border-slate-100 leading-relaxed text-slate-600">
+        <p className="text-[10px] font-bold text-slate-600">Facts</p>
+        {facts.length === 0 ? (
+          <p className="text-xs text-slate-500">No fact items are available for this report.</p>
+        ) : (
+          <ul className="list-disc pl-4 text-xs text-slate-600">
+            {facts.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="space-y-1 bg-white p-3 rounded-lg border border-slate-100 leading-relaxed text-slate-600">
+        <p className="text-[10px] font-bold text-slate-600">Data basis</p>
+        <ul className="list-disc pl-4 text-xs text-slate-600">
+          {basis.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="space-y-1.5 bg-red-50/50 p-3 rounded-lg border border-red-100/50 leading-relaxed text-slate-700">
+        <p className="text-[10px] font-bold text-red-600 flex items-center gap-1">
+          <AlertTriangle className="w-3.5 h-3.5" />
+          Risk points
+        </p>
+        {riskPoints.length === 0 ? (
+          <p className="text-xs text-slate-500">No clear high-risk item was detected by the current rules.</p>
+        ) : (
+          <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-600">
+            {riskPoints.map((item) => (
+              <li key={item} className="font-medium">{item}</li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="space-y-1.5 bg-emerald-50/50 p-3 rounded-lg border border-emerald-100/50 leading-relaxed text-slate-700">
+        <p className="text-[10px] font-bold text-emerald-700 flex items-center gap-1">
+          <Zap className="w-3.5 h-3.5" />
+          Recommended actions
+        </p>
+        {recommendedActions.length === 0 ? (
+          <p className="text-xs text-slate-500">No additional recommended action is available.</p>
+        ) : (
+          <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-600">
+            {recommendedActions.map((item) => (
+              <li key={item} className="font-medium">{item}</li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section data-testid="creative-ai-coverage" className="space-y-2 bg-white p-3 rounded-lg border border-slate-100 leading-relaxed text-slate-600">
+        <div className="flex gap-2 flex-wrap">
+          <span>Coverage: {aiReport.coverageStatus || "UNKNOWN"}</span>
+          <span>Confidence: {formatCreativeAiConfidence(aiReport.confidence)}</span>
+        </div>
+        {warnings.length > 0 && (
+          <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+            {warnings.map((item) => (
+              <p key={item}>{item}</p>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
 }
 
 export function CreativeIntelligenceDashboard({ 
@@ -310,10 +462,6 @@ export function CreativeIntelligenceDashboard({
   // Format Filter
   const [selectedType, setSelectedType] = useState<string>("ALL");
 
-  // Trend plot configuration state
-  const [selectedTrendCreativeIds, setSelectedTrendCreativeIds] = useState<string[]>([]);
-  const [trendMetric, setTrendMetric] = useState<"spend" | "roas" | "ctr" | "cpm">("roas");
-
   // Preview Modal state
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [selectedPreviewCreative, setSelectedPreviewCreative] = useState<CreativeData | null>(null);
@@ -360,11 +508,46 @@ export function CreativeIntelligenceDashboard({
   const aiRequestIdRef = useRef(0);
   const aiRequestKeyRef = useRef("");
   const aiAbortRef = useRef<AbortController | null>(null);
+  const creativeSelectionScopeKey = useMemo(
+    () =>
+      buildCreativeSelectionScopeKey({
+        startDate: startStrKey,
+        endDate: endStrKey,
+        storeId: localStoreFilter,
+        accountId: selectedAccountFilter,
+        campaignId: selectedCampaignFilter,
+        adsetId: selectedAdsetFilter,
+        type: selectedType,
+        bucket: activeOpsBucket,
+        search: searchTerm
+      }),
+    [
+      startStrKey,
+      endStrKey,
+      localStoreFilter,
+      selectedAccountFilter,
+      selectedCampaignFilter,
+      selectedAdsetFilter,
+      selectedType,
+      activeOpsBucket,
+      searchTerm
+    ]
+  );
   const creativeAiRequestKey = useMemo(() => buildCreativeAiRequestKey(selectedPreviewCreative, {
     startDate: startStrKey,
     endDate: endStrKey,
     coverageStatus: String(coverage?.status || "")
   }), [selectedPreviewCreative, startStrKey, endStrKey, coverage?.status]);
+
+  useEffect(() => {
+    aiAbortRef.current?.abort();
+    aiRequestIdRef.current += 1;
+    aiRequestKeyRef.current = "";
+    setAiReport(null);
+    setAiLoading(false);
+    setPreviewModalOpen(false);
+    setSelectedPreviewCreative(null);
+  }, [creativeSelectionScopeKey]);
 
   // Scroll Synchronization Refs & State
   const previewContainerRef = React.useRef<HTMLDivElement>(null);
@@ -544,10 +727,6 @@ export function CreativeIntelligenceDashboard({
       setCreativeDataHealth(resGrouped.data?.dataHealth || null);
       setViewNotice(nextPageState.notice);
 
-      // Autofill default trends options
-      if (formattedGrouped.length > 0) {
-        setSelectedTrendCreativeIds([formattedGrouped[0].id]);
-      }
     } catch (err: any) {
       if (!isCurrent() || isCanceledRequest(err)) return;
       toast.error("加载素材分析数据失败");
@@ -991,23 +1170,16 @@ export function CreativeIntelligenceDashboard({
     }
   };
 
-  const CreativePreviewMedia = ({
+  const CreativeMetaLinkPanel = ({
     creativeId,
-    type,
-    imageUrl
+    type
   }: {
     creativeId: string;
     type: string;
-    imageUrl?: string | null;
   }) => {
     const directUrl = `https://business.facebook.com/adsmanager/manage/ads?act=all&selected_creative_ids=${creativeId}`;
     return (
       <div className="w-full rounded-lg bg-slate-50 border border-slate-200 p-4 transition-all hover:border-meta-blue hover:bg-slate-100 flex flex-col justify-between gap-3 text-slate-800 shadow-sm relative group cursor-pointer">
-        {imageUrl && (
-          <div className="h-36 rounded-md overflow-hidden border border-slate-200 bg-white">
-            <img src={imageUrl} alt="Creative preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
-          </div>
-        )}
         <div className="flex justify-between items-start gap-2 border-b border-slate-200 pb-2">
           <span className="inline-flex items-center gap-1 rounded bg-slate-200/80 px-2 py-0.5 text-[10px] font-bold text-slate-700 tracking-wider">
             {type === "VIDEO" ? <Video className="w-3.5 h-3.5 text-blue-500 shrink-0" /> : <ImageIcon className="w-3.5 h-3.5 text-emerald-500 shrink-0" />} {type} 格式
@@ -1018,7 +1190,7 @@ export function CreativeIntelligenceDashboard({
         </div>
         
         <div className="space-y-1">
-          <p className="text-[10px] text-slate-500 leading-tight font-medium">在 Meta 广告管理工具中查看素材：</p>
+          <p className="text-[10px] text-slate-500 leading-tight font-medium">在 Meta 广告管理工具中查看素材</p>
           <a
             href={directUrl}
             target="_blank"
@@ -1032,9 +1204,6 @@ export function CreativeIntelligenceDashboard({
           </a>
         </div>
         
-        <div className="text-[10px] text-gray-400 mt-1 border-t border-dashed border-gray-200 pt-2 leading-relaxed font-mono">
-          未同步缩略图时保留官方素材入口；不会缓存或改写外部素材文件。
-        </div>
       </div>
     );
   };
@@ -1051,14 +1220,13 @@ export function CreativeIntelligenceDashboard({
 
   // Curated leaderboards from current coupled dataset
   const getLeaderboards = () => {
-    const sortedByROAS = [...filteredCreatives].sort((a, b) => b.roas - a.roas);
-    const sortedByCTR = [...filteredCreatives].sort((a, b) => b.ctr - a.ctr);
+    const sortedByROAS = [...filteredCreatives].sort((left, right) => compareNullable(left.roas, right.roas, "desc"));
+    const sortedByCTR = [...filteredCreatives].sort((left, right) => compareNullable(left.ctr, right.ctr, "desc"));
     
     // Inefficient: Spend > $100 and ROAS < 1.1 (money wasted)
     const sortedByWaste = [...filteredCreatives]
-      .filter(c => c.spend > 100)
-      .sort((a, b) => b.spend - a.spend)
-      .filter(c => c.roas < 1.1);
+      .filter(creative => creative.spend > 100 && creative.roas !== null && creative.roas < 1.1)
+      .sort((left, right) => compareNullable(left.spend, right.spend, "desc"));
 
     // Dynamic Video Hook Rate Ranking 
     const sortedByHook = [...filteredCreatives]
@@ -1071,12 +1239,6 @@ export function CreativeIntelligenceDashboard({
       topWaste: sortedByWaste.slice(0, 5),
       topHook: sortedByHook.slice(0, 5)
     };
-  };
-
-  // Historical charting metrics aggregation
-    // Historical charting metrics aggregation
-  const getTrendChartData = () => {
-    return [];
   };
 
   return (
@@ -1477,26 +1639,7 @@ export function CreativeIntelligenceDashboard({
                                 }}
                                 title="点击查看详细诊断"
                               >
-                                {c.type === "VIDEO" ? (
-                                  <div className="w-full h-full flex flex-col items-center justify-center text-blue-500 bg-blue-50 relative">
-                                    <Video className="w-5 h-5" />
-                                    <span className="text-[8px] font-bold absolute bottom-0.5 bg-blue-600 text-white px-1 py-0.2 rounded-sm scale-90">VIDEO</span>
-                                  </div>
-                                ) : c.type === "CAROUSEL" ? (
-                                  <div className="w-full h-full flex flex-col items-center justify-center text-purple-500 bg-purple-50 relative">
-                                    <Layers className="w-5 h-5" />
-                                    <span className="text-[8px] font-bold absolute bottom-0.5 bg-purple-600 text-white px-1 py-0.2 rounded-sm scale-90 text-[7px]">CAROUSEL</span>
-                                  </div>
-                                ) : (
-                                  <div className="w-full h-full flex flex-col items-center justify-center text-emerald-500 bg-emerald-50 relative">
-                                    {c.imageUrl ? (
-                                      <img src={c.imageUrl} alt="preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                    ) : (
-                                      <ImageIcon className="w-5 h-5" />
-                                    )}
-                                    <span className="text-[8px] font-bold absolute bottom-0.5 bg-emerald-600 text-white px-1 rounded-sm scale-90">IMAGE</span>
-                                  </div>
-                                )}
+                                <CreativePreviewMedia row={c} compact />
                               </div>
                             </TableCell>
                             <TableCell className="py-3">
@@ -1510,7 +1653,6 @@ export function CreativeIntelligenceDashboard({
                                 >
                                   {c.creativeName}
                                 </div>
-                                <div className="text-[10px] font-mono text-slate-400">ID: {c.id}</div>
                               </div>
                             </TableCell>
                             <TableCell className="py-3">{getTypeBadge(c.type)}</TableCell>
@@ -1633,7 +1775,7 @@ export function CreativeIntelligenceDashboard({
               <div className="flex items-center gap-3 text-xs leading-relaxed">
                 <Info className="w-4 h-4 text-meta-blue shrink-0 animate-pulse" />
                 <p className="text-slate-600">
-                  此报表实时呈递全级别对准关联，包括 <b>广告账户</b>、<b>广告组 ID</b>、<b>广告 ID</b> 及 <b>素材 ID (Creative ID)</b> 和转化数据。全表支持横向滑动。
+                  此报表展示当前筛选范围内的素材成效、转化与可用诊断字段。全表支持横向滑动。
                 </p>
               </div>
               <div className="text-xs font-semibold text-slate-500">
@@ -1838,158 +1980,21 @@ export function CreativeIntelligenceDashboard({
           </div>
         )}
 
-        {/* TAB 3: 素材趋势图表 (Trend Charts) */}
+        {/* TAB 3: 素材趋势 */}
         {activeSubTab === "trends" && (
-          <div className="space-y-4">
-            <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-2">1. 挑选参与对比分析的素材 (最多 4 个):</label>
-                <div className="max-h-36 overflow-y-auto border border-slate-200 rounded-lg p-2.5 space-y-1.5 bg-slate-50/30">
-                  {filteredCreatives.map(c => {
-                    const isChecked = selectedTrendCreativeIds.includes(c.id);
-                    return (
-                      <label key={c.id} className="flex items-center gap-2 text-xs cursor-pointer select-none py-0.5 font-medium hover:text-slate-950">
-                        <input 
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => {
-                            if (isChecked) {
-                              setSelectedTrendCreativeIds(selectedTrendCreativeIds.filter(id => id !== c.id));
-                            } else {
-                              if (selectedTrendCreativeIds.length >= 4) {
-                                toast.error("最多同时对比 4 个素材的走势情况");
-                                return;
-                              }
-                              setSelectedTrendCreativeIds([...selectedTrendCreativeIds, c.id]);
-                            }
-                          }}
-                          className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 cursor-pointer"
-                        />
-                        <span className="truncate max-w-[250px] inline-block font-bold text-slate-800" title={c.creativeName}>{c.creativeName}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-2">2. 选择走势折线监控的指标 Core Metric:</label>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <button 
-                    type="button"
-                    onClick={() => setTrendMetric("roas")}
-                    className={`h-9 px-3 rounded-lg border text-left font-bold transition-all cursor-pointer ${trendMetric === "roas" ? 'bg-slate-900 border-slate-900 text-white font-extrabold' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                  >
-                    🌟 回报率 ROAS (x)
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => setTrendMetric("spend")}
-                    className={`h-9 px-3 rounded-lg border text-left font-bold transition-all cursor-pointer ${trendMetric === "spend" ? 'bg-slate-900 border-slate-900 text-white font-extrabold' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                  >
-                    💰 每日花费 Spend ($)
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => setTrendMetric("ctr")}
-                    className={`h-9 px-3 rounded-lg border text-left font-bold transition-all cursor-pointer ${trendMetric === "ctr" ? 'bg-slate-900 border-slate-900 text-white font-extrabold' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                  >
-                    📈 点击率 CTR (%)
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => setTrendMetric("cpm")}
-                    className={`h-9 px-3 rounded-lg border text-left font-bold transition-all cursor-pointer ${trendMetric === "cpm" ? 'bg-slate-900 border-slate-900 text-white font-extrabold' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                  >
-                    🎯 CPM 展现成本 ($)
-                  </button>
-                </div>
-              </div>
-
-              <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl text-xs space-y-2 flex flex-col justify-between">
-                <div>
-                  <h5 className="font-bold text-slate-800">趋势对比说明:</h5>
-                  <p className="text-slate-500 mt-1 leading-relaxed">
-                    折线图 dynamic ranges.
-                  </p>
-                </div>
-                <div className="text-[10px] text-slate-400 font-bold">
-                  当前对比素材数量: <b>{selectedTrendCreativeIds.length} / 4</b> 个
-                </div>
-              </div>
+          <Card className="border border-slate-100 rounded-xl bg-white p-8">
+            <div
+              data-testid="creative-trend-unavailable"
+              className="mx-auto max-w-xl rounded-lg border border-dashed border-slate-200 bg-slate-50 p-8 text-center"
+            >
+              <p className="text-sm font-semibold text-slate-700">
+                当前版本尚未建立素材日趋势事实
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                本页不展示推算曲线。当前素材判断以所选周期的真实汇总成效为准。
+              </p>
             </div>
-
-            {/* Chart Panel */}
-            <Card className="bg-white p-6 border border-slate-100 shadow-sm rounded-xl">
-              <div className="mb-4">
-                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  素材天级性能指标波动曲线（监测：
-                  {trendMetric === "roas" ? "投资回报率 ROAS" : 
-                   trendMetric === "spend" ? "广告消耗 Spend" : 
-                   trendMetric === "ctr" ? "页面点击率 CTR" : "千次曝光 CPM"}
-                  ）
-                </h4>
-              </div>
-
-              <div className="h-[400px] w-full mt-4 font-mono text-xs">
-                {selectedTrendCreativeIds.length === 0 ? (
-                  <div className="h-full flex items-center justify-center text-slate-400 border border-dashed border-slate-200 rounded-lg">
-                    请在上方区域先勾选至少 1 个对比素材
-                  </div>
-                ) : getTrendChartData().length === 0 ? (
-                  <div className="h-full flex items-center justify-center text-slate-400 border border-dashed border-slate-200 rounded-lg">
-                    该时间段内暂无这些选定素材的历史每日流水数据
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-                    <LineChart data={getTrendChartData()} margin={{ top: 10, right: 30, left: 10, bottom: 20 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis 
-                        dataKey="date" 
-                        stroke="#94a3b8" 
-                        fontSize={11}
-                        tickLine={false} 
-                        axisLine={false}
-                        dy={10} 
-                      />
-                      <YAxis 
-                        stroke="#94a3b8" 
-                        fontSize={11}
-                        tickLine={false} 
-                        axisLine={false}
-                        dx={-10}
-                      />
-                      <RechartsTooltip 
-                        contentStyle={{ backgroundColor: "#1e293b", borderColor: "#334155", color: "#f8fafc", borderRadius: "8px" }}
-                        labelStyle={{ color: "#94a3b8", fontWeight: "bold" }}
-                      />
-                      <Legend verticalAlign="top" height={36} iconType="circle" />
-                      
-                      {selectedTrendCreativeIds.map((id, index) => {
-                        const creativeObj = creatives.find(c => c.id === id);
-                        const name = creativeObj ? creativeObj.creativeName : `素材 ${id}`;
-                        
-                        const colors = ["#2563eb", "#10b981", "#ef4444", "#8b5cf6"];
-                        const lineColor = colors[index % colors.length];
-
-                        return (
-                          <Line 
-                            key={id}
-                            type="monotone" 
-                            dataKey={name} 
-                            stroke={lineColor} 
-                            strokeWidth={2.5}
-                            dot={{ r: 3, strokeWidth: 1 }}
-                            activeDot={{ r: 5 }}
-                          />
-                        );
-                      })}
-                    </LineChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-            </Card>
-          </div>
+          </Card>
         )}
       </div>
 
@@ -2011,7 +2016,6 @@ export function CreativeIntelligenceDashboard({
                   <h3 className="text-xs font-extrabold text-slate-950 truncate max-w-[280px]" title={selectedPreviewCreative.creativeName}>
                     {selectedPreviewCreative.creativeName}
                   </h3>
-                  <span className="text-[10px] text-slate-400 font-mono">分析实体: {selectedPreviewCreative.analysisEntityId || selectedPreviewCreative.id}</span>
                 </div>
               </div>
               
@@ -2035,11 +2039,17 @@ export function CreativeIntelligenceDashboard({
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1">
                   <Maximize2 className="w-3.5 h-3.5 text-slate-500" /> 格式直达规格
                 </p>
-                <CreativePreviewMedia
-                  creativeId={selectedPreviewCreative.creativeId || selectedPreviewCreative.id}
-                  type={selectedPreviewCreative.type}
-                  imageUrl={selectedPreviewCreative.imageUrl}
-                />
+                <div className="h-56 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                  <CreativePreviewMedia row={selectedPreviewCreative} />
+                </div>
+                {selectedPreviewCreative.creativeId && (
+                  <div className="mt-3">
+                    <CreativeMetaLinkPanel
+                      creativeId={selectedPreviewCreative.creativeId}
+                      type={selectedPreviewCreative.type}
+                    />
+                  </div>
+                )}
                 
                 <div className="grid grid-cols-2 gap-2 text-center text-xs mt-3 bg-slate-50 p-2.5 rounded-lg border border-slate-150 font-mono">
                   <div>
@@ -2158,8 +2168,11 @@ export function CreativeIntelligenceDashboard({
                     素材规则风险复核
                   </span>
                   {aiReport && (
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                      置信度: {Math.round(Number(aiReport.confidence || 0) * 100)}%
+                    <span
+                      data-testid="creative-ai-confidence"
+                      className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700"
+                    >
+                      置信度：{formatCreativeAiConfidence(aiReport.confidence)}
                     </span>
                   )}
                 </div>
@@ -2172,51 +2185,7 @@ export function CreativeIntelligenceDashboard({
                   </div>
                 ) : aiReport ? (
                   <div className="space-y-4 text-xs">
-                    {/* Conclusion */}
-                    <div className="space-y-1 bg-white p-3 rounded-lg border border-indigo-50 leading-relaxed text-slate-700">
-                      <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">🌟 离线诊断结论 CONCLUSION</p>
-                      <p className="font-medium text-[11.5px] text-slate-800">{aiReport.conclusion}</p>
-                    </div>
-
-                    {/* Data basis */}
-                    <div className="space-y-1 bg-white p-3 rounded-lg border border-slate-100 leading-relaxed text-slate-600">
-                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">📊 核心诊断指标 BASIS & METRICS</p>
-                      <ul className="list-disc pl-4 space-y-1 text-[11px] leading-relaxed">
-                        {formatCreativeAnalysisDataBasis(aiReport).map((basisItem) => (
-                          <li key={basisItem}>{basisItem}</li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    {/* Risk points */}
-                    <div className="space-y-1.5 bg-red-50/50 p-3 rounded-lg border border-red-100/50 leading-relaxed text-slate-700" id="ai-report-risk-points-container">
-                      <p className="text-[10px] font-bold text-red-600 uppercase tracking-wider flex items-center gap-1">
-                        <AlertTriangle className="w-3.5 h-3.5" />
-                        风险点与改进红线 RETAIL RISKS
-                      </p>
-                      <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-600" id="ai-report-risk-points-list">
-                        {(() => {
-                          return normalizeAiReportList(aiReport.riskPoints);
-                        })().map((pt, pIdx) => (
-                          <li key={pIdx} className="font-medium" id={`risk-point-${pIdx}`}>{pt}</li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    {/* Recommended actions */}
-                    <div className="space-y-1.5 bg-emerald-50/50 p-3 rounded-lg border border-emerald-100/50 leading-relaxed text-slate-700">
-                      <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider flex items-center gap-1">
-                        <Zap className="w-3.5 h-3.5" />
-                        建议动作 RECOMMENDED ACTIONS
-                      </p>
-                      <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-600">
-                        {normalizeAiReportList(aiReport.recommendedActions).map((action, actionIdx) => (
-                          <li key={actionIdx} className="font-medium">{action}</li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    {/* Re-analyze Button */}
+                    <CreativeAiReportPanel aiReport={aiReport} />
                     <Button
                       onClick={() => handleTriggerAiAnalysisForRow(selectedPreviewCreative)}
                       className="w-full h-8 bg-slate-100 text-slate-700 hover:bg-slate-200 text-[10px] font-bold rounded-lg border border-slate-200 transition-all"
@@ -2258,7 +2227,9 @@ export function CreativeIntelligenceDashboard({
                     <div className="space-y-4">
                       <div className="flex justify-between text-xs font-mono">
                         <span className="text-slate-400">风险评分:</span>
-                        <span className="font-bold text-white">{fatigue.fatigueScore} / 100 分</span>
+                        <span data-testid="creative-risk-score" className="font-bold text-white">
+                          {formatCreativeRiskScore(fatigue.fatigueScore)}
+                        </span>
                       </div>
                       
                       <div className="space-y-1.5 pt-2 border-t border-slate-800">

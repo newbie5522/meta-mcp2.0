@@ -76,6 +76,31 @@ export function buildCreativeDashboardRequestKey(input: {
   });
 }
 
+export function buildCreativeSelectionScopeKey(input: {
+  startDate: string;
+  endDate: string;
+  storeId: string | number | null;
+  accountId: string | null;
+  campaignId: string | null;
+  adsetId: string | null;
+  type: string | null;
+  bucket: string | null;
+  search: string | null;
+}) {
+  return buildDataViewRequestKey({
+    page: "creative-selection-scope",
+    startDate: input.startDate,
+    endDate: input.endDate,
+    storeId: input.storeId || "all",
+    accountId: input.accountId || "all",
+    campaignId: input.campaignId || "all",
+    adsetId: input.adsetId || "all",
+    type: input.type || "ALL",
+    bucket: input.bucket || "all",
+    search: input.search || ""
+  });
+}
+
 export function resolveCreativeDashboardResponse(payload: any, startDate: string, endDate: string) {
   if (!startDate || !endDate || isDateRangeMismatch(payload, startDate, endDate)) {
     return {
