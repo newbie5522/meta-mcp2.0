@@ -34,7 +34,7 @@ beforeEach(() => {
   ]);
   prismaMock.adAccount.count.mockResolvedValue(1);
   prismaMock.adAccount.findMany.mockResolvedValue([
-    { id: 10, fb_account_id: "act_1", fb_account_name: "Account 1", activityStatus: "1", storeId: 1, store: { name: "Live" } }
+    { id: 10, fb_account_id: "act_1", fb_account_name: "Account 1", activityStatus: "1", recentActivity90d: true, storeId: 1, store: { name: "Live" } }
   ]);
   prismaMock.syncLog.findMany.mockResolvedValue([]);
   prismaMock.dataCenterStoreDaily.findMany.mockResolvedValue([{ storeId: 1, grossSales: 100, orderCount: 2 }]);
@@ -156,5 +156,23 @@ describe("dashboard summary", () => {
     expect(summary.overview.storeSales).toBe(summary.stores.reduce((sum: number, store: any) => sum + Number(store.sales || 0), 0));
     expect(summary.overview.storeOrderCount).toBe(summary.stores.reduce((sum: number, store: any) => sum + Number(store.orderCount || 0), 0));
     expect(summary.overview.metaSpend).toBe(summary.accounts.reduce((sum: number, account: any) => sum + Number(account.spend || 0), 0));
+  });
+
+  it("CARRY-OV-01~05 counts only production or unbound recent active ad accounts", async () => {
+    prismaMock.store.findMany.mockResolvedValue([
+      { id: 1, name: "Live", status: "active", platform: "shopline", domain: "live.example.com", accounts: [], accountMappings: [] }
+    ]);
+    prismaMock.adAccount.findMany.mockResolvedValue([
+      { id: 10, fb_account_id: "act_prod", fb_account_name: "Production active", activityStatus: "1", recentActivity90d: true, storeId: 1, store: { name: "Live" } },
+      { id: 11, fb_account_id: "act_unbound", fb_account_name: "Unbound active", activityStatus: "1", recentActivity90d: true, storeId: null, store: null },
+      { id: 12, fb_account_id: "act_sandbox", fb_account_name: "Sandbox active", activityStatus: "1", recentActivity90d: true, storeId: 3, store: { name: "Sandbox" } },
+      { id: 13, fb_account_id: "act_demo", fb_account_name: "Demo active", activityStatus: "1", recentActivity90d: true, storeId: 2, store: { name: "Shopline Fashion Store" } },
+      { id: 14, fb_account_id: "act_inactive", fb_account_name: "Inactive", activityStatus: "1", recentActivity90d: false, storeId: 1, store: { name: "Live" } }
+    ]);
+    prismaMock.dataCenterMetaAccountDaily.findMany.mockResolvedValue([]);
+
+    const summary = await getDashboardSummary({ since: new Date("2026-07-01"), until: new Date("2026-07-07") });
+
+    expect(summary.adAccountCount).toBe(2);
   });
 });

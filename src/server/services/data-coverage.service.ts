@@ -68,7 +68,10 @@ function metadataCoversFactLevel(metadata: Record<string, any>, factLevel?: Data
   if (Array.isArray(metadata.factLevels)) return metadata.factLevels.map(normalizeScopeValue).includes(requestedLevel);
   if (Array.isArray(metadata.levels)) return metadata.levels.map(normalizeScopeValue).includes(requestedLevel);
   if (metadata.levelCounts && typeof metadata.levelCounts === "object") {
-    return Number(metadata.levelCounts[requestedLevel] || 0) > 0;
+    return Object.prototype.hasOwnProperty.call(
+      metadata.levelCounts,
+      requestedLevel
+    );
   }
   return false;
 }

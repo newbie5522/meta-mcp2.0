@@ -60,7 +60,12 @@ describe("Creative insight fact and structure separation", () => {
     });
     expect(result.summary.performanceCount).toBe(0);
     expect(result.bucketSummary).toEqual({});
-    expect(result.structureSummary).toEqual({ totalStructureCount: 2, structureOnlyCount: 2 });
+    expect(result.structureSummary).toEqual({
+      totalStructureCount: 2,
+      structureOnlyCount: 2,
+      structureOnlyTotalCount: 2,
+      structureOnlyTruncated: false
+    });
   });
 
   it("uses the complete filtered fact set for weighted summary before pagination", async () => {
@@ -200,8 +205,8 @@ describe("Creative insight fact and structure separation", () => {
       { accountId: "act_1", accountName: "Account 1" }
     ]);
     expect(result.filterOptions.campaignOptions).toEqual(expect.arrayContaining([
-      { campaignId: "camp-1" },
-      { campaignId: "camp-2" }
+      expect.objectContaining({ campaignId: "camp-1" }),
+      expect.objectContaining({ campaignId: "camp-2" })
     ]));
   });
 });

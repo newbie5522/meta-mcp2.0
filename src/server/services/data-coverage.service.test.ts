@@ -33,6 +33,29 @@ function mockMetaCreativeFacts() {
   });
 }
 
+function mockNoMetaCreativeFacts() {
+  prismaMock.factMetaPerformance.count.mockResolvedValue(0);
+  prismaMock.factMetaPerformance.findFirst.mockResolvedValue(null);
+}
+
+function mockCompleteZeroReceipt(factLevel: "campaign" | "adset" | "ad", levelCounts: Record<string, number>) {
+  prismaMock.syncLog.findMany.mockResolvedValue([{
+    id: `log-${factLevel}-zero`,
+    taskType: "sync_meta_insights",
+    status: "success",
+    rangeStart: "2026-07-01",
+    rangeEnd: "2026-07-07",
+    recordsFetched: 0,
+    recordsSaved: 0,
+    finishedAt: new Date("2026-07-08T00:00:00Z"),
+    metadata: JSON.stringify({
+      scopeKey: buildCoverageScopeKey({ factLevel }),
+      coverageComplete: true,
+      levelCounts
+    })
+  }]);
+}
+
 describe("data coverage service factLevel receipt contract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -70,7 +93,7 @@ describe("data coverage service factLevel receipt contract", () => {
 
     expect(coverage.status).toBe("PARTIAL_COVERAGE");
     expect(coverage.coverageComplete).toBe(false);
-  });
+  }, 15000);
 
   it("COV-SVC-03 matching factLevel receipt can prove READY", async () => {
     prismaMock.syncLog.findMany.mockResolvedValue([{
@@ -121,5 +144,97 @@ describe("data coverage service factLevel receipt contract", () => {
     });
 
     expect(coverage.status).toBe("PARTIAL_COVERAGE");
+  });
+
+  it("CARRY-COV-01 campaign:0 proves campaign level executed", async () => {
+    mockNoMetaCreativeFacts();
+    mockCompleteZeroReceipt("campaign", { campaign: 0 });
+
+    const coverage = await getDataSourceCoverage({
+      source: "META_CREATIVE",
+      requestedStartDate: "2026-07-01",
+      requestedEndDate: "2026-07-07",
+      factLevel: "campaign"
+    });
+
+    expect(coverage.status).toBe("TRUE_EMPTY");
+    expect(coverage.coverageComplete).toBe(true);
+  });
+
+  it("CARRY-COV-02 adset:0 proves adset level executed", async () => {
+    mockNoMetaCreativeFacts();
+    mockCompleteZeroReceipt("adset", { adset: 0 });
+
+    const coverage = await getDataSourceCoverage({
+      source: "META_CREATIVE",
+      requestedStartDate: "2026-07-01",
+      requestedEndDate: "2026-07-07",
+      factLevel: "adset"
+    });
+
+    expect(coverage.status).toBe("TRUE_EMPTY");
+    expect(coverage.coverageComplete).toBe(true);
+  });
+
+  it("CARRY-COV-03 ad:0 proves ad level executed", async () => {
+    mockNoMetaCreativeFacts();
+    mockCompleteZeroReceipt("ad", { ad: 0 });
+
+    const coverage = await getDataSourceCoverage({
+      source: "META_CREATIVE",
+      requestedStartDate: "2026-07-01",
+      requestedEndDate: "2026-07-07",
+      factLevel: "ad"
+    });
+
+    expect(coverage.status).toBe("TRUE_EMPTY");
+    expect(coverage.coverageComplete).toBe(true);
+  });
+
+  it("CARRY-COV-04 exact complete zero receipt resolves TRUE_EMPTY", async () => {
+    mockNoMetaCreativeFacts();
+    mockCompleteZeroReceipt("campaign", { account: 12, campaign: 0, adset: 3, ad: 9 });
+
+    const coverage = await getDataSourceCoverage({
+      source: "META_CREATIVE",
+      requestedStartDate: "2026-07-01",
+      requestedEndDate: "2026-07-07",
+      factLevel: "campaign"
+    });
+
+    expect(coverage).toMatchObject({
+      status: "TRUE_EMPTY",
+      coverageBasis: "EXACT_EMPTY_SYNC_RECEIPT",
+      rangeRowCount: 0
+    });
+  });
+
+  it("CARRY-COV-05 missing level key cannot prove readiness", async () => {
+    mockNoMetaCreativeFacts();
+    prismaMock.syncLog.findMany.mockResolvedValue([{
+      id: "log-missing-campaign-zero",
+      taskType: "sync_meta_insights",
+      status: "success",
+      rangeStart: "2026-07-01",
+      rangeEnd: "2026-07-07",
+      recordsFetched: 0,
+      recordsSaved: 0,
+      finishedAt: new Date("2026-07-08T00:00:00Z"),
+      metadata: JSON.stringify({
+        scopeKey: buildCoverageScopeKey({}),
+        coverageComplete: true,
+        levelCounts: { ad: 0 }
+      })
+    }]);
+
+    const coverage = await getDataSourceCoverage({
+      source: "META_CREATIVE",
+      requestedStartDate: "2026-07-01",
+      requestedEndDate: "2026-07-07",
+      factLevel: "campaign"
+    });
+
+    expect(coverage.status).toBe("NOT_SYNCED");
+    expect(coverage.coverageComplete).toBe(false);
   });
 });

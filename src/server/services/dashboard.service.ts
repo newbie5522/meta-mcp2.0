@@ -46,7 +46,6 @@ export async function getDashboardSummary(options: { since?: Date; until?: Date 
 
   const [
     rawStores,
-    adAccountCount,
     adAccounts,
     recentLogs,
     allStoreDailyLedgers,
@@ -56,7 +55,6 @@ export async function getDashboardSummary(options: { since?: Date; until?: Date 
       where: productionStoreWhere,
       include: { accounts: true, accountMappings: true }
     }),
-    prisma.adAccount.count({ where: { recentActivity90d: true } }),
     prisma.adAccount.findMany({ 
       include: { store: true } 
     }),
@@ -80,6 +78,7 @@ export async function getDashboardSummary(options: { since?: Date; until?: Date 
   const storeDailyLedgers = allStoreDailyLedgers.filter(row => productionStoreIds.has(Number(row.storeId)));
   const metaDailyLedgers = allMetaDailyLedgers.filter(row => row.storeId == null || productionStoreIds.has(Number(row.storeId)));
   const productionAdAccounts = adAccounts.filter(account => account.storeId == null || productionStoreIds.has(Number(account.storeId)));
+  const adAccountCount = productionAdAccounts.filter(account => account.recentActivity90d === true).length;
   const mappedAccountIds = new Set<string>();
   for (const store of rawStores) {
     for (const account of store.accounts || []) {

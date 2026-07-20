@@ -6,6 +6,7 @@ import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import { getProductIntelligence } from "../services/product-intelligence.service.js";
 import { getAggregatedCreativeInsights } from "../services/creative-insights.service.js";
+import { analyzeCreativeScope } from "../services/creative-analysis.service.js";
 import { normalizeMetaAccountId } from "../utils.js";
 import { getCountryAnalytics } from "../services/country-analytics.service.js";
 import { getStoreOrderFacts, getStoreOrderSummary } from "../services/order-fact.service.js";
@@ -1458,9 +1459,72 @@ router.get("/products", async (req, res) => {
  * POST /api/data-center/creatives/:creativeId/analyze
  * Generates deterministic rule diagnostics from canonical FactMetaPerformance ad-level facts.
  */
+export function createCreativeAnalyzeHandler(deps = { analyzeCreativeScope }) {
+  return async (req: any, res: any) => {
+    const { creativeId } = req.params;
+    const { startDate, endDate, onlyCached } = req.body || {};
+
+    try {
+      const body = req.body || {};
+      const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
+      const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+      const result = await deps.analyzeCreativeScope({
+        analysisEntityId: String(body.analysisEntityId || creativeId),
+        creativeId,
+        creativeIds: Array.isArray(body.creativeIds) ? body.creativeIds : [creativeId],
+        adIds: Array.isArray(body.adIds) ? body.adIds : [],
+        campaignIds: Array.isArray(body.campaignIds) ? body.campaignIds : [],
+        adsetIds: Array.isArray(body.adsetIds) ? body.adsetIds : [],
+        accountId: String(body.accountId || ""),
+        storeId: body.storeId === null || body.storeId === undefined || body.storeId === "all" ? null : Number(body.storeId),
+        startDate: startStr,
+        endDate: endStr,
+        onlyCached: onlyCached === true || onlyCached === "true",
+        forceRefresh: body.forceRefresh === true || body.forceRefresh === "true"
+      });
+      return res.json(result);
+    } catch (error: any) {
+      console.error("[Data Center API] Creative rule diagnosis error:", error);
+      return res.status(error?.statusCode || 500).json({
+        error: error?.code || "Creative rule diagnosis failed",
+        details: error.message
+      });
+    }
+  };
+}
+
 router.post("/creatives/:creativeId/analyze", async (req, res) => {
   const { creativeId } = req.params;
   const { startDate, endDate, onlyCached } = req.body;
+
+  try {
+    const body = req.body || {};
+    const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
+    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const result = await analyzeCreativeScope({
+      analysisEntityId: String(body.analysisEntityId || creativeId),
+      creativeId,
+      creativeIds: Array.isArray(body.creativeIds) ? body.creativeIds : [creativeId],
+      adIds: Array.isArray(body.adIds) ? body.adIds : [],
+      campaignIds: Array.isArray(body.campaignIds) ? body.campaignIds : [],
+      adsetIds: Array.isArray(body.adsetIds) ? body.adsetIds : [],
+      accountId: String(body.accountId || ""),
+      storeId: body.storeId === null || body.storeId === undefined || body.storeId === "all" ? null : Number(body.storeId),
+      startDate: startStr,
+      endDate: endStr,
+      onlyCached: onlyCached === true || onlyCached === "true",
+      forceRefresh: body.forceRefresh === true || body.forceRefresh === "true"
+    });
+    return res.json(result);
+  } catch (error: any) {
+    console.error("[Data Center API] Creative rule diagnosis error:", error);
+    return res.status(error?.statusCode || 500).json({
+      error: error?.code || "Creative rule diagnosis failed",
+      details: error.message
+    });
+  }
+
+  /*
 
   try {
     const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
@@ -1584,6 +1648,7 @@ router.post("/creatives/:creativeId/analyze", async (req, res) => {
       details: error.message
     });
   }
+  */
 });
 
 /**
@@ -2988,7 +3053,8 @@ router.get("/creative-insights", async (req, res) => {
       requestedStartDate: startStr,
       requestedEndDate: endStr,
       storeId: isSpecificFilter(storeId || storeFilter) ? Number(storeId || storeFilter) : undefined,
-      accountId: isSpecificFilter(accountId) ? String(accountId) : undefined
+      accountId: isSpecificFilter(accountId) ? String(accountId) : undefined,
+      factLevel: "ad"
     });
     const responseSummary = Object.fromEntries(
       Object.entries(result.summary || {}).map(([key, value]) => [key, coverageMetric(creativeCoverage, value)])

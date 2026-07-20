@@ -12,7 +12,7 @@ const { prismaMock } = vi.hoisted(() => ({
 vi.mock("../../db/index.js", () => ({ default: prismaMock }));
 vi.mock("../utils.js", () => ({ normalizeMetaAccountId: (value: string) => value }));
 
-import { createDataCenterHierarchyHandler } from "./data-center.routes";
+import { createCreativeAnalyzeHandler, createDataCenterHierarchyHandler } from "./data-center.routes";
 
 function responseMock() {
   const response: any = {
@@ -123,5 +123,91 @@ describe("Data Center canonical hierarchy handlers", () => {
     expect(prismaMock.adSet.findMany).not.toHaveBeenCalled();
     expect(prismaMock.ad.findMany).not.toHaveBeenCalled();
     expect(prismaMock.factMetaPerformance.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("Data Center creative analyze handler", () => {
+  async function invokeAnalyze(handler: any, body: any, params = { creativeId: "creative-1" }) {
+    const response = responseMock();
+    await handler({ params, body }, response);
+    return response;
+  }
+
+  it("CR-ROUTE-06 analyze delegates service with exact scope", async () => {
+    const analyzeCreativeScope = vi.fn().mockResolvedValue({
+      success: true,
+      confidence: "full",
+      warnings: []
+    });
+
+    const response = await invokeAnalyze(createCreativeAnalyzeHandler({ analyzeCreativeScope }), {
+      analysisEntityId: "act_1::asset-a",
+      creativeIds: ["creative-1"],
+      adIds: ["ad-1"],
+      campaignIds: ["camp-1"],
+      adsetIds: ["set-1"],
+      accountId: "act_1",
+      storeId: 1,
+      startDate: "2026-07-01",
+      endDate: "2026-07-07",
+      onlyCached: "true"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(analyzeCreativeScope).toHaveBeenCalledWith({
+      analysisEntityId: "act_1::asset-a",
+      creativeId: "creative-1",
+      creativeIds: ["creative-1"],
+      adIds: ["ad-1"],
+      campaignIds: ["camp-1"],
+      adsetIds: ["set-1"],
+      accountId: "act_1",
+      storeId: 1,
+      startDate: "2026-07-01",
+      endDate: "2026-07-07",
+      onlyCached: true,
+      forceRefresh: false
+    });
+    expect(response.body).toEqual({ success: true, confidence: "full", warnings: [] });
+  });
+
+  it.each([
+    ["CR-ROUTE-07 scope error 400", "INVALID_CREATIVE_ANALYSIS_SCOPE", 400],
+    ["CR-ROUTE-08 not synced 409", "CREATIVE_ANALYSIS_NOT_SYNCED", 409],
+    ["CR-ROUTE-09 no facts 404", "NO_CANONICAL_CREATIVE_FACTS", 404]
+  ])("%s", async (_name, code, statusCode) => {
+    const error: any = new Error(code);
+    error.code = code;
+    error.statusCode = statusCode;
+    const analyzeCreativeScope = vi.fn().mockRejectedValue(error);
+
+    const response = await invokeAnalyze(createCreativeAnalyzeHandler({ analyzeCreativeScope }), {
+      accountId: "act_1",
+      startDate: "2026-07-01",
+      endDate: "2026-07-07"
+    });
+
+    expect(response.statusCode).toBe(statusCode);
+    expect(response.body.error).toBe(code);
+  });
+
+  it("CR-ROUTE-10 partial report warning is returned unchanged", async () => {
+    const analyzeCreativeScope = vi.fn().mockResolvedValue({
+      success: true,
+      confidence: "partial",
+      warnings: ["当前为部分覆盖，报告按已入库事实降级判断。"]
+    });
+
+    const response = await invokeAnalyze(createCreativeAnalyzeHandler({ analyzeCreativeScope }), {
+      analysisEntityId: "act_1::asset-a",
+      accountId: "act_1",
+      startDate: "2026-07-01",
+      endDate: "2026-07-07"
+    });
+
+    expect(response.body).toMatchObject({
+      confidence: "partial",
+      warnings: ["当前为部分覆盖，报告按已入库事实降级判断。"]
+    });
   });
 });
