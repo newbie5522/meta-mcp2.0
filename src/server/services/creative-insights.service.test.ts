@@ -63,6 +63,7 @@ describe("Creative insight fact and structure separation", () => {
     expect(result.structureSummary).toEqual({
       totalStructureCount: 2,
       structureOnlyCount: 2,
+      structureOnlyVisibleCount: 2,
       structureOnlyTotalCount: 2,
       structureOnlyTruncated: false
     });
@@ -202,7 +203,7 @@ describe("Creative insight fact and structure separation", () => {
       inefficient_stop: 1
     });
     expect(result.filterOptions.accountOptions).toEqual([
-      { accountId: "act_1", accountName: "Account 1" }
+      { accountId: "act_1", accountName: "Account 1", storeId: 1 }
     ]);
     expect(result.filterOptions.campaignOptions).toEqual(expect.arrayContaining([
       expect.objectContaining({ campaignId: "camp-1" }),

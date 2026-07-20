@@ -4,9 +4,24 @@ import {
   isDateRangeMismatch
 } from "@/lib/data-view-state";
 import type {
+  CreativeAnalysisReport,
   CreativeAnalysisRequest,
   CreativeIntelligenceRow
 } from "../shared/creative-intelligence-contract";
+
+const TRUE_EMPTY_SUMMARY = {
+  performanceCount: 0,
+  spend: 0,
+  impressions: 0,
+  clicks: 0,
+  purchases: 0,
+  purchaseValue: 0,
+  ctr: null,
+  cpc: null,
+  cpm: null,
+  cpa: null,
+  roas: null
+};
 
 const EMPTY_SNAPSHOT = {
   performanceRows: [],
@@ -15,6 +30,7 @@ const EMPTY_SNAPSHOT = {
   structureSummary: null,
   bucketSummary: {},
   filterOptions: {
+    storeOptions: [],
     accountOptions: [],
     campaignOptions: [],
     adsetOptions: [],
@@ -90,6 +106,20 @@ export function resolveCreativeDashboardResponse(payload: any, startDate: string
       notice: status === "SYNC_RUNNING" ? "Creative sync is still running." : "Creative facts are not synced."
     };
   }
+  if (status === "TRUE_EMPTY") {
+    return {
+      ...EMPTY_SNAPSHOT,
+      structureOnlyRows: payload?.structureOnlyRows || [],
+      summary: TRUE_EMPTY_SUMMARY,
+      structureSummary: payload?.structureSummary || null,
+      filterOptions: payload?.filterOptions || EMPTY_SNAPSHOT.filterOptions,
+      coverage,
+      pagination: payload?.pagination || null,
+      diagnostics: payload?.diagnostics || null,
+      dateRange: payload?.dateRange || payload?.appliedFilters || null,
+      notice: "当前周期已完整同步，素材成效为空。"
+    };
+  }
   return {
     performanceRows: payload?.performanceRows || payload?.data || [],
     structureOnlyRows: payload?.structureOnlyRows || [],
@@ -103,6 +133,73 @@ export function resolveCreativeDashboardResponse(payload: any, startDate: string
     dateRange: payload?.dateRange || payload?.appliedFilters || null,
     notice: status === "PARTIAL_COVERAGE" ? "Partial coverage: AI confidence is downgraded." : null
   };
+}
+
+export function buildCreativeAiRequestKey(row: CreativeIntelligenceRow | null, input: {
+  startDate: string;
+  endDate: string;
+  coverageStatus: string;
+}) {
+  if (!row) return "";
+  return buildDataViewRequestKey({
+    analysisEntityId: row.analysisEntityId,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    coverageStatus: input.coverageStatus,
+    storeId: row.storeId ?? "all",
+    accountId: row.accountId,
+    creativeIds: [...(row.creativeIds || [])].sort(),
+    adIds: [...(row.adIds || [])].sort(),
+    campaignIds: [...(row.campaignIds || [])].sort(),
+    adsetIds: [...(row.adsetIds || [])].sort()
+  });
+}
+
+export function resolveCreativeFilterCascade(input: {
+  changed: "store" | "account" | "campaign";
+  nextValue: string;
+}) {
+  if (input.changed === "store") {
+    return { storeId: input.nextValue, accountId: "all", campaignId: "all", adsetId: "all", page: 1 };
+  }
+  if (input.changed === "account") {
+    return { accountId: input.nextValue, campaignId: "all", adsetId: "all", page: 1 };
+  }
+  return { campaignId: input.nextValue, adsetId: "all", page: 1 };
+}
+
+export function compareNullable(
+  left: number | string | null | undefined,
+  right: number | string | null | undefined,
+  direction: "asc" | "desc"
+) {
+  const leftMissing = left === null || left === undefined;
+  const rightMissing = right === null || right === undefined;
+  if (leftMissing && rightMissing) return 0;
+  if (leftMissing) return 1;
+  if (rightMissing) return -1;
+  if (typeof left === "string" && typeof right === "string") {
+    return direction === "asc" ? left.localeCompare(right) : right.localeCompare(left);
+  }
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  return direction === "asc" ? leftNumber - rightNumber : rightNumber - leftNumber;
+}
+
+export function formatCreativeAnalysisDataBasis(report: CreativeAnalysisReport) {
+  return [
+    `来源：${report.dataBasis.source}`,
+    `事实层级：${report.dataBasis.factLevel}`,
+    `事实行数：${report.dataBasis.factRows}`,
+    `账户：${report.dataBasis.accountId}`,
+    `店铺：${report.dataBasis.storeId ?? "未绑定"}`,
+    `素材版本：${report.dataBasis.creativeIds.length}`,
+    `关联广告：${report.dataBasis.adIds.length}`,
+    `广告系列：${report.dataBasis.campaignIds.length}`,
+    `广告组：${report.dataBasis.adsetIds.length}`,
+    `最新成效日期：${report.dataBasis.latestPerformanceDate || "N/A"}`,
+    `最新同步时间：${report.dataBasis.latestSyncedAt || "N/A"}`
+  ];
 }
 
 export function isCreativeAiAllowed(row: Partial<CreativeIntelligenceRow> | null | undefined, coverage: any, dateRangeMismatch = false) {

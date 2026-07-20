@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Table,
@@ -60,9 +60,13 @@ import { cn } from "@/lib/utils";
 import type { CreativeIntelligenceRow } from "../shared/creative-intelligence-contract";
 import {
   buildCreativeAiPrompt,
+  buildCreativeAiRequestKey,
   buildCreativeAnalysisRequest,
   buildCreativeDashboardRequestKey,
+  compareNullable,
+  formatCreativeAnalysisDataBasis,
   isCreativeAiAllowed,
+  resolveCreativeFilterCascade,
   resolveCreativeAnalysisResponse,
   resolveCreativeDashboardResponse
 } from "./creative-dashboard-orchestrator";
@@ -202,15 +206,16 @@ export function CreativeIntelligenceDashboard({
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [creativeDataHealth, setCreativeDataHealth] = useState<any>(null);
   const [filterOptions, setFilterOptions] = useState<any>({
+    storeOptions: [],
     accountOptions: [],
     campaignOptions: [],
     adsetOptions: [],
     creativeTypeOptions: []
   });
 
-  function resolveSelectedStoreId(list: any[] = storesList) {
+  function resolveSelectedStoreId() {
     if (localStoreFilter === "all") return "all";
-    return list.find(store => store.name === localStoreFilter || String(store.id) === localStoreFilter)?.id || null;
+    return /^\d+$/.test(localStoreFilter) ? Number(localStoreFilter) : null;
   }
 
   const handleSyncCreatives = async () => {
@@ -327,7 +332,7 @@ export function CreativeIntelligenceDashboard({
     { id: "scale_candidate", label: "扩量候选" },
     { id: "high_ctr_test", label: "高点击测试" },
     { id: "watching", label: "观察中" },
-    { id: "fatigue_warning", label: "疲劳预警" },
+    { id: "fatigue_warning", label: "低回报风险" },
     { id: "inefficient_stop", label: "低效止损" }
   ] as const;
   const [activeOpsBucket, setActiveOpsBucket] = useState<string>("all");
@@ -345,6 +350,7 @@ export function CreativeIntelligenceDashboard({
     search: searchTerm,
     page,
     pageSize,
+    sortBy: `${metricsSortField} ${metricsSortOrder.toUpperCase()}`,
     includeZeroSpend: true
   });
   const creativeRequestIdRef = useRef(0);
@@ -354,6 +360,11 @@ export function CreativeIntelligenceDashboard({
   const aiRequestIdRef = useRef(0);
   const aiRequestKeyRef = useRef("");
   const aiAbortRef = useRef<AbortController | null>(null);
+  const creativeAiRequestKey = useMemo(() => buildCreativeAiRequestKey(selectedPreviewCreative, {
+    startDate: startStrKey,
+    endDate: endStrKey,
+    coverageStatus: String(coverage?.status || "")
+  }), [selectedPreviewCreative, startStrKey, endStrKey, coverage?.status]);
 
   // Scroll Synchronization Refs & State
   const previewContainerRef = React.useRef<HTMLDivElement>(null);
@@ -464,38 +475,14 @@ export function CreativeIntelligenceDashboard({
       setCoverage(null);
       setPagination(null);
       setDiagnostics(null);
-      setFilterOptions({ accountOptions: [], campaignOptions: [], adsetOptions: [], creativeTypeOptions: [] });
+      setFilterOptions({ storeOptions: [], accountOptions: [], campaignOptions: [], adsetOptions: [], creativeTypeOptions: [] });
       setResponseDateRange(null);
       setViewNotice(null);
       const startStr = startStrKey;
       const endStr = endStrKey;
-      let activeStoresList = storesList;
-      if (localStoreFilter !== "all" && storesList.length === 0) {
-        const storesResponse = await axios.get("/api/stores", { signal: controller.signal }).catch((storeError) => {
-          if (isCanceledRequest(storeError)) throw storeError;
-          return { data: [] };
-        });
-        if (!isCurrent()) return;
-        const storesPayload = storesResponse.data?.stores || storesResponse.data?.data || storesResponse.data || [];
-        activeStoresList = Array.isArray(storesPayload) ? storesPayload : [];
-        setStoresList(activeStoresList);
-      }
       const selectedStoreId = localStoreFilter === "all"
         ? "all"
-        : (activeStoresList.find(store => store.name === localStoreFilter || String(store.id) === localStoreFilter)?.id || null);
-      if (localStoreFilter !== "all" && selectedStoreId === null) {
-        setPerformanceRows([]);
-        setStructureOnlyRows([]);
-        setSummary(null);
-        setStructureSummary(null);
-        setBucketSummary({});
-        setCoverage(null);
-        setPagination(null);
-        setDiagnostics(null);
-        setCreativeDataHealth({ status: "STORE_FILTER_UNRESOLVED", message: "店铺筛选尚未解析，未查询全部店铺素材数据。" });
-        setViewNotice("店铺筛选尚未解析，未查询全部店铺素材数据。");
-        return;
-      }
+        : localStoreFilter;
 
       const [resGrouped, resStores] = await Promise.all([
         axios.get("/api/data-center/creative-insights", {
@@ -505,7 +492,6 @@ export function CreativeIntelligenceDashboard({
             endDate: endStr,
             accountId: selectedAccountFilter,
             storeId: selectedStoreId,
-            storeFilter: localStoreFilter,
             campaignId: selectedCampaignFilter,
             adsetId: selectedAdsetFilter,
             creativeType: selectedType,
@@ -513,6 +499,7 @@ export function CreativeIntelligenceDashboard({
             search: searchTerm,
             page,
             pageSize,
+            sortBy: `${metricsSortField} ${metricsSortOrder.toUpperCase()}`,
             includeZeroSpend: true
           }
         }),
@@ -572,7 +559,7 @@ export function CreativeIntelligenceDashboard({
       setCoverage({ status: "ERROR" });
       setPagination(null);
       setDiagnostics(null);
-      setFilterOptions({ accountOptions: [], campaignOptions: [], adsetOptions: [], creativeTypeOptions: [] });
+      setFilterOptions({ storeOptions: [], accountOptions: [], campaignOptions: [], adsetOptions: [], creativeTypeOptions: [] });
       setCreativeDataHealth({
         status: "ERROR",
         reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
@@ -597,7 +584,7 @@ export function CreativeIntelligenceDashboard({
 
   useEffect(() => {
     fetchCreatives();
-  }, [startStrKey, endStrKey, localStoreFilter, selectedAccountFilter, selectedCampaignFilter, selectedAdsetFilter, selectedType, activeOpsBucket, searchTerm, page, pageSize]);
+  }, [startStrKey, endStrKey, localStoreFilter, selectedAccountFilter, selectedCampaignFilter, selectedAdsetFilter, selectedType, activeOpsBucket, searchTerm, page, pageSize, metricsSortField, metricsSortOrder]);
 
   useEffect(() => () => creativeAbortRef.current?.abort(), []);
 
@@ -612,17 +599,10 @@ export function CreativeIntelligenceDashboard({
       onlyCached,
       forceRefresh: !onlyCached
     });
-    const aiKey = JSON.stringify({
-      analysisEntityId: requestPayload.analysisEntityId,
-      startDate: requestPayload.startDate,
-      endDate: requestPayload.endDate,
-      accountId: requestPayload.accountId,
-      storeId: requestPayload.storeId,
-      creativeIds: requestPayload.creativeIds,
-      adIds: requestPayload.adIds,
-      campaignIds: requestPayload.campaignIds,
-      adsetIds: requestPayload.adsetIds,
-      coverage: coverage?.status
+    const aiKey = buildCreativeAiRequestKey(creative, {
+      startDate: startStrKey,
+      endDate: endStrKey,
+      coverageStatus: String(coverage?.status || "")
     });
     aiRequestKeyRef.current = aiKey;
     const isCurrentAi = () => requestId === aiRequestIdRef.current && aiRequestKeyRef.current === aiKey;
@@ -677,70 +657,6 @@ export function CreativeIntelligenceDashboard({
       }
     }));
     toast.success(aiAvailability.warning || "已打开 AI 上下文。");
-    return;
-    /*
-    if (creative.hasPerformanceFacts !== true) {
-      toast.info("当前素材在所选周期没有可用成效事实，未生成 AI 提示词。");
-      return;
-    }
-    const accountName = getCreativeAccountName(creative);
-    const prompt = `请分析这个 Meta 素材在当前筛选周期内的表现，并给出下一步投放动作。
-
-素材名称：${creative.creativeName}
-素材 ID：${creative.id}
-广告账户：${accountName || creative.accountId || "未知账户"}
-账户 ID：${creative.accountId || "N/A"}
-广告 ID：${creative.adId || "N/A"}
-广告组 ID：${creative.adsetId || "N/A"}
-广告系列 ID：${creative.campaignId || "N/A"}
-花费：${creative.spend}
-曝光：${creative.impressions}
-点击率：${creative.ctr}
-购买：${creative.purchases}
-ROAS：${creative.roas}
-CPM：${creative.cpm}
-运营分组：${creative.opsBucketLabel || creative.opsBucket || "数据不足"}
-建议动作：${creative.recommendedAction || "暂无"}
-诊断依据：${creative.diagnosisReason || "当前数据不足以做扩量或止损判断。"}
-日期范围：${startStrKey} ~ ${endStrKey}`;
-
-    window.dispatchEvent(new CustomEvent("open-ai-context", {
-      detail: {
-        source: "creative_intelligence",
-        title: `分析素材：${creative.creativeName || creative.id}`,
-        prompt,
-        context: {
-          creativeId: creative.id,
-          creativeName: creative.creativeName,
-          accountId: creative.accountId,
-          accountName,
-          campaignId: creative.campaignId,
-          adsetId: creative.adsetId,
-          adId: creative.adId,
-          spend: creative.spend,
-          impressions: creative.impressions,
-          clicks: (creative as any).clicks,
-          purchases: creative.purchases,
-          roas: creative.roas,
-          ctr: creative.ctr,
-          cpc: creative.cpc,
-          cpm: creative.cpm,
-          opsBucket: creative.opsBucket,
-          opsBucketLabel: creative.opsBucketLabel,
-          opsScore: creative.opsScore,
-          recommendedAction: creative.recommendedAction,
-          diagnosisReason: creative.diagnosisReason,
-          dateRange: {
-            startDate: startStrKey,
-            endDate: endStrKey
-          }
-        }
-      }
-    }));
-
-    // Explicit copy is handled by copyCreativeAiPrompt; never auto-copy on Ask AI.
-    toast.success("已打开 AI 上下文，并已复制该素材分析提示词。");
-    */
   };
 
   const copyCreativeAiPrompt = async (creative: CreativeData) => {
@@ -759,67 +675,21 @@ CPM：${creative.cpm}
     toast.success("分析数据已复制。");
   };
 
-  // Reset or pre-load cached reporting on material change selection
   useEffect(() => {
-    if (selectedPreviewCreative) {
-      setAiReport(null);
+    aiAbortRef.current?.abort();
+    aiRequestIdRef.current += 1;
+    aiRequestKeyRef.current = creativeAiRequestKey;
+    setAiReport(null);
+    setAiLoading(false);
+    if (selectedPreviewCreative && creativeAiRequestKey) {
       void handleTriggerAiAnalysisForRow(selectedPreviewCreative, true);
-    } else {
-      setAiReport(null);
     }
-  }, [
-    selectedPreviewCreative?.analysisEntityId,
-    selectedPreviewCreative?.creativeId,
-    startStrKey,
-    endStrKey,
-    coverage?.status
-  ]);
+  }, [creativeAiRequestKey]);
 
 
-  // Calculate ad spend per store ID inside this date range
-  const storeSpends = React.useMemo(() => {
-    const map: Record<string, number> = {};
-    creatives.forEach(c => {
-      const sId = c.storeId ? c.storeId.toString() : "";
-      if (sId) {
-        map[sId] = (map[sId] || 0) + (c.spend || 0);
-      }
-    });
-    return map;
-  }, [creatives]);
-
-  // Stores that have positive ad spend
-  const spendStores = React.useMemo(() => {
-    return storesList.filter(s => {
-      const sId = s.id.toString();
-      return (storeSpends[sId] || 0) > 0;
-    });
-  }, [storesList, storeSpends]);
-
-  // Resolve stores matching parent active filters plus local dropdown selections
-  const activeStores = React.useMemo(() => {
-    const matchedNames = new Set<string>();
-    const safeData = Array.isArray(data) ? data : [];
-    safeData.forEach(item => {
-      const matchProject = projectFilter === "all" || item.project === projectFilter;
-      const matchStore = localStoreFilter === "all" || item.store === localStoreFilter;
-      const matchOwner = ownerFilter === "all" || item.owner === ownerFilter;
-      if (matchProject && matchStore && matchOwner && item.store) {
-        matchedNames.add(item.store.toLowerCase());
-      }
-    });
-    
-    // Fallback: If no matched names, check if localStoreFilter specifically matches something
-    if (matchedNames.size === 0 && localStoreFilter !== "all") {
-      matchedNames.add(localStoreFilter.toLowerCase());
-    }
-    
-    return spendStores.filter(s => matchedNames.has(s.name.toLowerCase()));
-  }, [data, projectFilter, localStoreFilter, ownerFilter, spendStores]);
-
-  const activeStoreIds = React.useMemo(() => {
-    return activeStores.map(s => s.id);
-  }, [activeStores]);
+  const availableStores = React.useMemo(() => {
+    return filterOptions.storeOptions || [];
+  }, [filterOptions]);
 
   const availableAccounts = React.useMemo(() => {
     return filterOptions.accountOptions || [];
@@ -832,6 +702,30 @@ CPM：${creative.cpm}
   const availableAdsets = React.useMemo(() => {
     return filterOptions.adsetOptions || [];
   }, [filterOptions]);
+
+  const handleStoreFilterChange = (nextStoreId: string) => {
+    const next = resolveCreativeFilterCascade({ changed: "store", nextValue: nextStoreId });
+    setLocalStoreFilter(next.storeId);
+    setSelectedAccountFilter(next.accountId);
+    setSelectedCampaignFilter(next.campaignId);
+    setSelectedAdsetFilter(next.adsetId);
+    setPage(next.page);
+  };
+
+  const handleAccountFilterChange = (nextAccountId: string) => {
+    const next = resolveCreativeFilterCascade({ changed: "account", nextValue: nextAccountId });
+    setSelectedAccountFilter(next.accountId);
+    setSelectedCampaignFilter(next.campaignId);
+    setSelectedAdsetFilter(next.adsetId);
+    setPage(next.page);
+  };
+
+  const handleCampaignFilterChange = (nextCampaignId: string) => {
+    const next = resolveCreativeFilterCascade({ changed: "campaign", nextValue: nextCampaignId });
+    setSelectedCampaignFilter(next.campaignId);
+    setSelectedAdsetFilter(next.adsetId);
+    setPage(next.page);
+  };
 
   // Server applies every business filter before summary, buckets and pagination.
   const filteredCreatives = React.useMemo(() => {
@@ -885,17 +779,17 @@ CPM：${creative.cpm}
       let valB: any = "";
 
       if (previewSortField === "opsScore") {
-        valA = a.opsScore || 0;
-        valB = b.opsScore || 0;
+        valA = a.opsScore;
+        valB = b.opsScore;
       } else if (previewSortField === "spend") {
-        valA = a.spend || 0;
-        valB = b.spend || 0;
+        valA = a.spend;
+        valB = b.spend;
       } else if (previewSortField === "purchases") {
-        valA = a.purchases || 0;
-        valB = b.purchases || 0;
+        valA = a.purchases;
+        valB = b.purchases;
       } else if (previewSortField === "revenue") {
-        valA = a.revenue || 0;
-        valB = b.revenue || 0;
+        valA = a.revenue;
+        valB = b.revenue;
       } else if (previewSortField === "name") {
         valA = a.creativeName || "";
         valB = b.creativeName || "";
@@ -903,20 +797,14 @@ CPM：${creative.cpm}
         valA = a.type || "";
         valB = b.type || "";
       } else if (previewSortField === "fatigue") {
-        valA = evaluateSingleFatigue(a.id, a.creativeName, a.type).fatigueScore ?? -1;
-        valB = evaluateSingleFatigue(b.id, b.creativeName, b.type).fatigueScore ?? -1;
+        valA = evaluateSingleFatigue(a.id, a.creativeName, a.type).fatigueScore;
+        valB = evaluateSingleFatigue(b.id, b.creativeName, b.type).fatigueScore;
       } else {
-        valA = a.spend || 0;
-        valB = b.spend || 0;
+        valA = a.spend;
+        valB = b.spend;
       }
 
-      if (typeof valA === "string") {
-        return previewSortOrder === "asc"
-          ? valA.localeCompare(valB)
-          : valB.localeCompare(valA);
-      } else {
-        return previewSortOrder === "asc" ? valA - valB : valB - valA;
-      }
+      return compareNullable(valA, valB, previewSortOrder);
     });
     return list;
   }, [filteredCreatives, previewSortField, previewSortOrder, fatigueMap]);
@@ -929,29 +817,29 @@ CPM：${creative.cpm}
       let valB: any = "";
 
       if (metricsSortField === "spend") {
-        valA = a.spend || 0;
-        valB = b.spend || 0;
+        valA = a.spend;
+        valB = b.spend;
       } else if (metricsSortField === "purchases") {
-        valA = a.purchases || 0;
-        valB = b.purchases || 0;
+        valA = a.purchases;
+        valB = b.purchases;
       } else if (metricsSortField === "revenue") {
-        valA = a.revenue || 0;
-        valB = b.revenue || 0;
+        valA = a.revenue;
+        valB = b.revenue;
       } else if (metricsSortField === "cpc") {
-        valA = a.cpc || 0;
-        valB = b.cpc || 0;
+        valA = a.cpc;
+        valB = b.cpc;
       } else if (metricsSortField === "impressions") {
-        valA = a.impressions || 0;
-        valB = b.impressions || 0;
+        valA = a.impressions;
+        valB = b.impressions;
       } else if (metricsSortField === "reach") {
-        valA = a.reachAvailable ? a.reach : -1;
-        valB = b.reachAvailable ? b.reach : -1;
+        valA = a.reachAvailable ? a.reach : null;
+        valB = b.reachAvailable ? b.reach : null;
       } else if (metricsSortField === "ctr") {
-        valA = a.ctr || 0;
-        valB = b.ctr || 0;
+        valA = a.ctr;
+        valB = b.ctr;
       } else if (metricsSortField === "addToCart") {
-        valA = a.addToCartAvailable ? a.addToCart : -1;
-        valB = b.addToCartAvailable ? b.addToCart : -1;
+        valA = a.addToCartAvailable ? a.addToCart : null;
+        valB = b.addToCartAvailable ? b.addToCart : null;
       } else if (metricsSortField === "accountId") {
         valA = a.accountId || "";
         valB = b.accountId || "";
@@ -968,17 +856,11 @@ CPM：${creative.cpm}
         valA = a.type || "";
         valB = b.type || "";
       } else {
-        valA = a.spend || 0;
-        valB = b.spend || 0;
+        valA = a.spend;
+        valB = b.spend;
       }
 
-      if (typeof valA === "string") {
-        return metricsSortOrder === "asc"
-          ? valA.localeCompare(valB)
-          : valB.localeCompare(valA);
-      } else {
-        return metricsSortOrder === "asc" ? valA - valB : valB - valA;
-      }
+      return compareNullable(valA, valB, metricsSortOrder);
     });
     return list;
   }, [filteredCreatives, metricsSortField, metricsSortOrder]);
@@ -1021,40 +903,58 @@ CPM：${creative.cpm}
           accountId: selectedAccountFilter,
           storeId: selectedStoreId,
           campaignId: selectedCampaignFilter,
+          adsetId: selectedAdsetFilter,
           creativeType: selectedType,
           opsBucket: activeOpsBucket,
           search: searchTerm,
           includeZeroSpend: true,
+          sortBy: `${metricsSortField} ${metricsSortOrder.toUpperCase()}`,
           export: true
         }
       });
       const exportRows: CreativeData[] = response.data?.performanceRows || response.data?.data || [];
-      const exportData = exportRows.map(c => {
-        const fatigue = evaluateSingleFatigue(c.id, c.creativeName, c.type);
-      return {
-        '素材ID': c.id,
-        '店铺ID': c.storeId,
-        '素材名称': c.creativeName,
-        '素材类型': c.type === "IMAGE" ? "单图素材" : c.type === "VIDEO" ? "视频素材" : "轮播素材",
-        '支出花费 ($)': c.spend,
-        'Meta购买数': c.purchases,
-        '追踪转化金额 ($)': c.revenue,
-        '转化ROAS': c.roas,
-        '点击率 CTR (%)': c.ctr,
-        '单次点击成本 CPC ($)': c.cpc,
-        '千次展示成本 CPM ($)': c.cpm,
-        '频次 Frequency': c.frequencyAvailable ? c.frequency : "N/A",
-        '3秒视频留存 (%)': c.hookRateAvailable ? c.hookRate : "N/A",
-        '疲劳评分': fatigue.fatigueScore ?? "N/A",
-        '风险等级': fatigue.riskLevel,
-        '诊断指标': fatigue.rulesTriggered.join("; ")
-      };
-      });
+      const exportData = exportRows.map(row => ({
+        "素材名称": row.creativeName || "名称未同步",
+        "素材类型": row.type,
+        "店铺": row.storeName || "未绑定店铺",
+        "广告账户": row.accountName || "账户名称未同步",
+        "广告系列数": row.campaignCount,
+        "广告组数": row.adsetCount,
+        "广告数": row.adCount,
+        "Meta花费": row.spend,
+        "展示": row.impressions,
+        "点击": row.clicks,
+        "CTR": row.ctr ?? "N/A",
+        "CPC": row.cpc ?? "N/A",
+        "CPM": row.cpm ?? "N/A",
+        "Meta购买": row.purchases,
+        "CPA": row.cpa ?? "N/A",
+        "Meta转化价值": row.purchaseValue,
+        "MetaROAS": row.roas ?? "N/A",
+        "加购": row.availability?.addToCart ? row.addToCart : "N/A",
+        "Reach": row.availability?.reach ? row.reach : "N/A",
+        "运营分组": row.opsBucketLabel,
+        "规则风险": row.riskLevel,
+        "建议动作": row.recommendedAction || "N/A",
+        "数据日期": row.latestPerformanceDate || "N/A",
+        "同步时间": row.performanceSyncedAt || "N/A",
+        "analysisEntityId": row.analysisEntityId,
+        "creativeIds": row.creativeIds.join(","),
+        "adIds": row.adIds.join(","),
+        "campaignIds": row.campaignIds.join(","),
+        "adsetIds": row.adsetIds.join(","),
+        "accountId": row.accountId,
+        "storeId": row.storeId ?? "N/A"
+      }));
       const ws = XLSX.utils.json_to_sheet(exportData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "素材诊断数据报表");
-      XLSX.writeFile(wb, `Creative_Bi_Diagnostic_${format(new Date(), "yyyyMMdd")}.xlsx`);
-      if (response.data?.export?.truncated) toast.warning("导出已达到安全上限，文件包含前 5000 条。");
+      const safeStore = localStoreFilter === "all" ? "all-stores" : `store-${localStoreFilter}`;
+      const safeAccount = selectedAccountFilter === "all" ? "all-accounts" : selectedAccountFilter.replace(/[^a-zA-Z0-9_-]/g, "_");
+      XLSX.writeFile(wb, `Creative_Intelligence_${startStrKey}_${endStrKey}_${safeStore}_${safeAccount}.xlsx`);
+      if (response.data?.export?.truncated) {
+        toast.warning(response.data.export.message || `共匹配 ${response.data.export.totalMatched} 条，本次导出前 ${response.data.export.limit} 条。`);
+      }
       else toast.success("素材诊断数据报表导出成功！");
     } catch {
       toast.error("导出素材报表失败");
@@ -1091,10 +991,23 @@ CPM：${creative.cpm}
     }
   };
 
-  const generateDirectThumbnail = (creativeId: string, type: string) => {
+  const CreativePreviewMedia = ({
+    creativeId,
+    type,
+    imageUrl
+  }: {
+    creativeId: string;
+    type: string;
+    imageUrl?: string | null;
+  }) => {
     const directUrl = `https://business.facebook.com/adsmanager/manage/ads?act=all&selected_creative_ids=${creativeId}`;
     return (
       <div className="w-full rounded-lg bg-slate-50 border border-slate-200 p-4 transition-all hover:border-meta-blue hover:bg-slate-100 flex flex-col justify-between gap-3 text-slate-800 shadow-sm relative group cursor-pointer">
+        {imageUrl && (
+          <div className="h-36 rounded-md overflow-hidden border border-slate-200 bg-white">
+            <img src={imageUrl} alt="Creative preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+          </div>
+        )}
         <div className="flex justify-between items-start gap-2 border-b border-slate-200 pb-2">
           <span className="inline-flex items-center gap-1 rounded bg-slate-200/80 px-2 py-0.5 text-[10px] font-bold text-slate-700 tracking-wider">
             {type === "VIDEO" ? <Video className="w-3.5 h-3.5 text-blue-500 shrink-0" /> : <ImageIcon className="w-3.5 h-3.5 text-emerald-500 shrink-0" />} {type} 格式
@@ -1105,7 +1018,7 @@ CPM：${creative.cpm}
         </div>
         
         <div className="space-y-1">
-          <p className="text-[10px] text-slate-500 leading-tight font-medium">外部素材源直达链接：</p>
+          <p className="text-[10px] text-slate-500 leading-tight font-medium">在 Meta 广告管理工具中查看素材：</p>
           <a
             href={directUrl}
             target="_blank"
@@ -1120,10 +1033,20 @@ CPM：${creative.cpm}
         </div>
         
         <div className="text-[10px] text-gray-400 mt-1 border-t border-dashed border-gray-200 pt-2 leading-relaxed font-mono">
-          ⚡ 物理零文件缓存机制直达外源链接，彻底防宿主卡死。
+          未同步缩略图时保留官方素材入口；不会缓存或改写外部素材文件。
         </div>
       </div>
     );
+  };
+
+  const normalizeAiReportList = (value: unknown): string[] => {
+    if (Array.isArray(value)) {
+      return value.map((item) => String(item || "").trim()).filter(Boolean);
+    }
+    if (typeof value === "string") {
+      return value.split("\n").map((item) => item.trim()).filter(Boolean);
+    }
+    return [];
   };
 
   // Curated leaderboards from current coupled dataset
@@ -1187,11 +1110,11 @@ CPM：${creative.cpm}
             <select
               className="h-7 text-xs bg-transparent border-none outline-none font-extrabold text-slate-800 pr-2 cursor-pointer"
               value={localStoreFilter}
-              onChange={(e) => setLocalStoreFilter(e.target.value)}
+              onChange={(e) => handleStoreFilterChange(e.target.value)}
             >
               <option value="all">全部店铺</option>
-              {spendStores.map(s => (
-                <option key={s.id} value={s.name}>{s.name}</option>
+              {availableStores.map((option: any) => (
+                <option key={option.storeId} value={String(option.storeId)}>{option.storeName}</option>
               ))}
             </select>
           </div>
@@ -1460,7 +1383,7 @@ CPM：${creative.cpm}
                   <select
                     className="h-9 text-xs bg-white border border-slate-200 rounded-lg px-2 outline-none focus:ring-1 focus:ring-slate-900 font-medium cursor-pointer text-slate-700 max-w-[125px]"
                     value={selectedAccountFilter}
-                    onChange={(e) => setSelectedAccountFilter(e.target.value)}
+                    onChange={(e) => handleAccountFilterChange(e.target.value)}
                   >
                     <option value="all">所有账户</option>
                     {availableAccounts.map((option: any) => (
@@ -1474,7 +1397,7 @@ CPM：${creative.cpm}
                   <select
                     className="h-9 text-xs bg-white border border-slate-200 rounded-lg px-2 outline-none focus:ring-1 focus:ring-slate-900 font-medium cursor-pointer text-slate-700 max-w-[125px]"
                     value={selectedCampaignFilter}
-                    onChange={(e) => setSelectedCampaignFilter(e.target.value)}
+                    onChange={(e) => handleCampaignFilterChange(e.target.value)}
                   >
                     <option value="all">所有系列</option>
                     {availableCampaigns.map((option: any) => (
@@ -1487,7 +1410,7 @@ CPM：${creative.cpm}
                   <select
                     className="h-9 text-xs bg-white border border-slate-200 rounded-lg px-2 outline-none focus:ring-1 focus:ring-slate-900 font-medium cursor-pointer text-slate-700 max-w-[125px]"
                     value={selectedAdsetFilter}
-                    onChange={(e) => setSelectedAdsetFilter(e.target.value)}
+                    onChange={(e) => { setSelectedAdsetFilter(e.target.value); setPage(1); }}
                   >
                     <option value="all">所有广告组</option>
                     {availableAdsets.map((option: any) => (
@@ -1534,7 +1457,7 @@ CPM：${creative.cpm}
                           onClick={() => handlePreviewSort("fatigue")}
                           className="text-xs font-bold text-slate-700 h-11 w-[140px] cursor-pointer hover:bg-slate-100 select-none transition-all"
                         >
-                          诊断疲劳评分 {renderSortIcon("fatigue", previewSortField, previewSortOrder)}
+                          风险评分 {renderSortIcon("fatigue", previewSortField, previewSortOrder)}
                         </TableHead>
                         <TableHead className="text-xs font-bold text-slate-700 h-11">商品落地页链接</TableHead>
                         <TableHead className="text-xs font-bold text-slate-700 h-11 w-[120px] text-right">操作</TableHead>
@@ -2112,7 +2035,11 @@ CPM：${creative.cpm}
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1">
                   <Maximize2 className="w-3.5 h-3.5 text-slate-500" /> 格式直达规格
                 </p>
-                {generateDirectThumbnail(selectedPreviewCreative.creativeId || selectedPreviewCreative.id, selectedPreviewCreative.type)}
+                <CreativePreviewMedia
+                  creativeId={selectedPreviewCreative.creativeId || selectedPreviewCreative.id}
+                  type={selectedPreviewCreative.type}
+                  imageUrl={selectedPreviewCreative.imageUrl}
+                />
                 
                 <div className="grid grid-cols-2 gap-2 text-center text-xs mt-3 bg-slate-50 p-2.5 rounded-lg border border-slate-150 font-mono">
                   <div>
@@ -2123,7 +2050,7 @@ CPM：${creative.cpm}
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-400 block pb-0.5">底层数据关联</span>
-                    <span className="font-bold text-meta-blue">Meta SDK</span>
+                    <span className="font-bold text-meta-blue">生产数据链路</span>
                   </div>
                 </div>
               </div>
@@ -2231,11 +2158,8 @@ CPM：${creative.cpm}
                     素材规则风险复核
                   </span>
                   {aiReport && (
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                      aiReport.priority === "HIGH" ? "bg-red-100 text-red-800" :
-                      aiReport.priority === "MEDIUM" ? "bg-slate-100 text-slate-700" : "bg-slate-100 text-slate-600"
-                    }`}>
-                      优先级: {aiReport.priority === "HIGH" ? "重要诊断" : aiReport.priority === "MEDIUM" ? "普通诊断" : "常规诊断"}
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
+                      置信度: {Math.round(Number(aiReport.confidence || 0) * 100)}%
                     </span>
                   )}
                 </div>
@@ -2244,7 +2168,7 @@ CPM：${creative.cpm}
                   <div className="py-6 flex flex-col items-center justify-center text-center">
                     <RefreshCw className="w-6 h-6 animate-spin text-indigo-600 mb-2" />
                     <p className="text-xs font-semibold text-slate-600">正在评估底层成效与属性特征，进行离线规则审计...</p>
-                    <p className="text-[10px] text-slate-400 mt-1">耗时大约需要 3-5 秒，请稍候...</p>
+                    <p className="text-[10px] text-slate-400 mt-1">正在基于当前生产范围与事实覆盖重新计算。</p>
                   </div>
                 ) : aiReport ? (
                   <div className="space-y-4 text-xs">
@@ -2257,7 +2181,11 @@ CPM：${creative.cpm}
                     {/* Data basis */}
                     <div className="space-y-1 bg-white p-3 rounded-lg border border-slate-100 leading-relaxed text-slate-600">
                       <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">📊 核心诊断指标 BASIS & METRICS</p>
-                      <p className="text-[11px] leading-relaxed">{aiReport.dataBasis}</p>
+                      <ul className="list-disc pl-4 space-y-1 text-[11px] leading-relaxed">
+                        {formatCreativeAnalysisDataBasis(aiReport).map((basisItem) => (
+                          <li key={basisItem}>{basisItem}</li>
+                        ))}
+                      </ul>
                     </div>
 
                     {/* Risk points */}
@@ -2268,22 +2196,22 @@ CPM：${creative.cpm}
                       </p>
                       <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-600" id="ai-report-risk-points-list">
                         {(() => {
-                          const rp = aiReport.riskPoints;
-                          if (!rp) return [];
-                          if (Array.isArray(rp)) return rp;
-                          if (typeof rp === "string") {
-                            const trimmed = rp.trim();
-                            if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-                              try {
-                                const parsed = JSON.parse(trimmed);
-                                if (Array.isArray(parsed)) return parsed;
-                              } catch (e) {}
-                            }
-                            return trimmed.split("\n").map(s => s.trim()).filter(Boolean);
-                          }
-                          return [];
+                          return normalizeAiReportList(aiReport.riskPoints);
                         })().map((pt, pIdx) => (
                           <li key={pIdx} className="font-medium" id={`risk-point-${pIdx}`}>{pt}</li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    {/* Recommended actions */}
+                    <div className="space-y-1.5 bg-emerald-50/50 p-3 rounded-lg border border-emerald-100/50 leading-relaxed text-slate-700">
+                      <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider flex items-center gap-1">
+                        <Zap className="w-3.5 h-3.5" />
+                        建议动作 RECOMMENDED ACTIONS
+                      </p>
+                      <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-600">
+                        {normalizeAiReportList(aiReport.recommendedActions).map((action, actionIdx) => (
+                          <li key={actionIdx} className="font-medium">{action}</li>
                         ))}
                       </ul>
                     </div>
@@ -2320,7 +2248,7 @@ CPM：${creative.cpm}
                     <div className="flex justify-between items-center border-b border-slate-800 pb-2">
                       <span className="text-xs font-bold text-white flex items-center gap-1.5">
                         <Clock className="w-3.5 h-3.5 text-slate-500" />
-                        受众衰退与性能诊断说明
+                        低回报风险与性能诊断说明
                       </span>
                       <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${fatigue.riskBg}`}>
                         {fatigue.riskLevel}
@@ -2329,7 +2257,7 @@ CPM：${creative.cpm}
 
                     <div className="space-y-4">
                       <div className="flex justify-between text-xs font-mono">
-                        <span className="text-slate-400">诊断疲劳分:</span>
+                        <span className="text-slate-400">风险评分:</span>
                         <span className="font-bold text-white">{fatigue.fatigueScore} / 100 分</span>
                       </div>
                       

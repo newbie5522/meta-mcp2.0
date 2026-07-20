@@ -8,6 +8,26 @@ import type {
   CreativeAnalysisRequest
 } from "../../shared/creative-intelligence-contract.js";
 
+const DEMO_STORE_NAMES = [
+  "Shopline Fashion Store",
+  "Shopify Electronics Hub",
+  "Shoplazza Home Decor"
+];
+
+const DEMO_STORE_DOMAINS = [
+  "fashion.shoplineapp.com",
+  "electronics.myshopify.com",
+  "decor.shoplazza.com"
+];
+
+const productionStoreWhere = {
+  NOT: [
+    { mode: "sandbox" },
+    { name: { in: DEMO_STORE_NAMES } },
+    { domain: { in: DEMO_STORE_DOMAINS } }
+  ]
+};
+
 function dateOnly(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
@@ -33,6 +53,27 @@ function parseMetadata(value: unknown): Record<string, any> {
   } catch {
     return {};
   }
+}
+
+function assetIdentity(creative: any, creativeId: string, adId: string): string {
+  return String(
+    creative?.imageHash ||
+    creative?.videoHash ||
+    creative?.metaAssetId ||
+    creativeId ||
+    adId
+  );
+}
+
+function accountAssetGroupKey(input: { accountId: string; assetIdentity: string }): string {
+  return `${normalizeMetaAccountId(input.accountId)}::${input.assetIdentity}`;
+}
+
+function scopedError(code: string, statusCode = 409) {
+  const error: any = new Error(code);
+  error.code = code;
+  error.statusCode = statusCode;
+  return error;
 }
 
 export function buildCreativeAnalysisScopeHash(input: {
@@ -163,15 +204,81 @@ export async function analyzeCreativeScope(request: CreativeAnalysisRequest): Pr
     throw error;
   }
 
+  const accountVariants = [scope.accountId, scope.accountId.replace(/^act_/, "")];
+  if (scope.storeId !== null) {
+    const store = await prisma.store.findFirst({
+      where: { id: scope.storeId, ...productionStoreWhere }
+    });
+    if (!store) throw scopedError("CREATIVE_ANALYSIS_STORE_ACCOUNT_MISMATCH");
+    const [boundAccounts, mappings] = await Promise.all([
+      prisma.adAccount.findMany({
+        where: { fb_account_id: { in: accountVariants } }
+      }),
+      prisma.accountMapping.findMany({
+        where: { fbAccountId: { in: accountVariants } }
+      })
+    ]);
+    const boundStoreIds = new Set<number>([
+      ...boundAccounts.map((account: any) => account.storeId).filter((value: any) => value !== null && value !== undefined).map(Number),
+      ...mappings.map((mapping: any) => mapping.storeId).filter((value: any) => value !== null && value !== undefined).map(Number)
+    ]);
+    if (!boundStoreIds.has(scope.storeId)) {
+      throw scopedError("CREATIVE_ANALYSIS_STORE_ACCOUNT_MISMATCH");
+    }
+  }
+
+  const candidateOr: any[] = [];
+  if (scope.adIds.length > 0) candidateOr.push({ id: { in: scope.adIds } });
+  if (scope.creativeIds.length > 0) candidateOr.push({ creativeId: { in: scope.creativeIds } });
+  const canonicalAds = await prisma.ad.findMany({
+    where: {
+      accountId: { in: accountVariants },
+      OR: candidateOr
+    },
+    include: { adSet: { include: { campaign: true } } }
+  });
+  const canonicalAdIds = uniqueSorted(canonicalAds.map((ad: any) => ad.id));
+  const canonicalCreativeIds = uniqueSorted(canonicalAds.map((ad: any) => ad.creativeId));
+  if (
+    !scope.adIds.every(id => canonicalAdIds.includes(id)) ||
+    !scope.creativeIds.every(id => canonicalCreativeIds.includes(id))
+  ) {
+    throw scopedError("CREATIVE_ANALYSIS_SCOPE_MISMATCH");
+  }
+  const canonicalCampaignIds = uniqueSorted(canonicalAds.map((ad: any) => ad.campaignId || ad.adSet?.campaignId || ad.adSet?.campaign?.id));
+  const canonicalAdsetIds = uniqueSorted(canonicalAds.map((ad: any) => ad.adsetId || ad.adSet?.id));
+  if (
+    !scope.campaignIds.every(id => canonicalCampaignIds.includes(id)) ||
+    !scope.adsetIds.every(id => canonicalAdsetIds.includes(id))
+  ) {
+    throw scopedError("CREATIVE_ANALYSIS_SCOPE_MISMATCH");
+  }
+
+  const canonicalCreatives = canonicalCreativeIds.length === 0
+    ? []
+    : await prisma.adCreative.findMany({ where: { creativeId: { in: canonicalCreativeIds } } });
+  const creativeById = new Map(canonicalCreatives.map((creative: any) => [creative.creativeId, creative]));
+  const canonicalAnalysisEntityIds = new Set<string>();
+  for (const ad of canonicalAds as any[]) {
+    const creative = creativeById.get(ad.creativeId);
+    const creativeId = String(ad.creativeId || "");
+    const assetKey = assetIdentity(creative, creativeId, String(ad.id || creativeId));
+    canonicalAnalysisEntityIds.add(accountAssetGroupKey({ accountId: scope.accountId, assetIdentity: assetKey }));
+  }
+  if (canonicalAnalysisEntityIds.size !== 1 || !canonicalAnalysisEntityIds.has(scope.analysisEntityId)) {
+    throw scopedError("CREATIVE_ANALYSIS_ASSET_MISMATCH");
+  }
+
   const where: any = {
     level: "ad",
     date: { gte: scope.startDate, lte: scope.endDate },
-    account_id: { in: [scope.accountId, scope.accountId.replace(/^act_/, "")] }
+    account_id: { in: accountVariants },
+    OR: [
+      { ad_id: { in: canonicalAdIds } },
+      { entity_id: { in: canonicalAdIds } },
+      { creative_id: { in: canonicalCreativeIds } }
+    ]
   };
-  if (scope.adIds.length) where.OR = [{ ad_id: { in: scope.adIds } }, { entity_id: { in: scope.adIds } }];
-  if (scope.creativeIds.length) {
-    where.OR = [...(where.OR || []), { creative_id: { in: scope.creativeIds } }];
-  }
   if (scope.campaignIds.length) where.campaign_id = { in: scope.campaignIds };
   if (scope.adsetIds.length) where.adset_id = { in: scope.adsetIds };
 
@@ -196,10 +303,10 @@ export async function analyzeCreativeScope(request: CreativeAnalysisRequest): Pr
     storeId: scope.storeId,
     startDate: scope.startDate,
     endDate: scope.endDate,
-    creativeIds: scope.creativeIds,
-    adIds: scope.adIds,
-    campaignIds: scope.campaignIds,
-    adsetIds: scope.adsetIds,
+    creativeIds: canonicalCreativeIds,
+    adIds: canonicalAdIds,
+    campaignIds: scope.campaignIds.length ? scope.campaignIds : canonicalCampaignIds,
+    adsetIds: scope.adsetIds.length ? scope.adsetIds : canonicalAdsetIds,
     latestPerformanceDate,
     latestSyncedAt,
     factRows: facts.length
@@ -271,11 +378,12 @@ export async function analyzeCreativeScope(request: CreativeAnalysisRequest): Pr
       factRows: facts.length,
       accountId: scope.accountId,
       storeId: scope.storeId,
-      creativeIds: scope.creativeIds,
-      adIds: scope.adIds,
-      campaignIds: scope.campaignIds,
-      adsetIds: scope.adsetIds,
-      latestPerformanceDate
+      creativeIds: canonicalCreativeIds,
+      adIds: canonicalAdIds,
+      campaignIds: scope.campaignIds.length ? scope.campaignIds : canonicalCampaignIds,
+      adsetIds: scope.adsetIds.length ? scope.adsetIds : canonicalAdsetIds,
+      latestPerformanceDate,
+      latestSyncedAt
     }
   };
 

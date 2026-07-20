@@ -1,7 +1,14 @@
 import prisma from "../../db/index.js";
 import dayjs from "dayjs";
 import { normalizeMetaAccountId } from "../utils.js";
-import type { CreativeMediaType } from "../../shared/creative-intelligence-contract.js";
+import type {
+  CreativeAdsetOption,
+  CreativeCampaignOption,
+  CreativeAccountOption,
+  CreativeFilterOptions,
+  CreativeMediaType,
+  CreativeStructureOnlyRow
+} from "../../shared/creative-intelligence-contract.js";
 
 type CreativeType = CreativeMediaType;
 
@@ -149,6 +156,60 @@ function singleUniqueUrl(values: Iterable<unknown>): string | null {
   return urls.length === 1 ? urls[0] : null;
 }
 
+function adCampaignId(ad: any): string {
+  return String(ad?.campaignId || ad?.adSet?.campaignId || ad?.adSet?.campaign?.id || "");
+}
+
+function adAdsetId(ad: any): string {
+  return String(ad?.adsetId || ad?.adSet?.id || "");
+}
+
+function buildStructureGroups(input: { ads: any[]; creatives: any[] }) {
+  const creativeById = new Map(input.creatives.map((creative: any) => [creative.creativeId, creative]));
+  const groups = new Map<string, any>();
+
+  for (const ad of input.ads) {
+    const creativeId = String(ad?.creativeId || "");
+    if (!creativeId) continue;
+    const creative: any = creativeById.get(creativeId);
+    const accountId = normalizeMetaAccountId(ad?.accountId || creative?.fbAccountId || "");
+    const assetKey = assetIdentity(creative, creativeId, String(ad?.id || creativeId));
+    const analysisEntityId = accountAssetGroupKey({ accountId, assetIdentity: assetKey });
+
+    if (!groups.has(analysisEntityId)) {
+      groups.set(analysisEntityId, {
+        analysisEntityId,
+        aggregationKey: assetKey,
+        accountId,
+        creativeIds: new Set<string>(),
+        creativeNames: new Set<string>(),
+        adIds: new Set<string>(),
+        campaignIds: new Set<string>(),
+        adsetIds: new Set<string>(),
+        imageUrls: new Set<string>(),
+        previewUrls: new Set<string>(),
+        landingUrls: new Set<string>(),
+        mediaTypes: new Set<CreativeMediaType>()
+      });
+    }
+
+    const group = groups.get(analysisEntityId);
+    group.creativeIds.add(creativeId);
+    if (creative?.name) group.creativeNames.add(String(creative.name));
+    if (ad?.id) group.adIds.add(String(ad.id));
+    const campaignId = adCampaignId(ad);
+    const adsetId = adAdsetId(ad);
+    if (campaignId) group.campaignIds.add(campaignId);
+    if (adsetId) group.adsetIds.add(adsetId);
+    if (creative?.imageUrl) group.imageUrls.add(String(creative.imageUrl));
+    if (creative?.previewUrl) group.previewUrls.add(String(creative.previewUrl));
+    if (creative?.landingUrl) group.landingUrls.add(String(creative.landingUrl));
+    group.mediaTypes.add(parseCreativeType(creative?.type || creative?.mediaType));
+  }
+
+  return Array.from(groups.values());
+}
+
 function parseRawPayload(raw: string | null | undefined): any | null {
   if (!raw) return null;
   try {
@@ -249,14 +310,14 @@ function classifyCreative(item: {
     riskLevel = "较高";
   } else if (item.spend >= 20 && item.roas !== null && item.roas < 1) {
     opsBucket = "fatigue_warning";
-    opsBucketLabel = "疲劳预警";
+    opsBucketLabel = "低回报风险";
     recommendedAction = "准备替换素材或降低预算";
     diagnosisReason = "当前 Meta ROAS 低于观察线";
     riskLevel = "较高";
   }
 
   const opsScore = fixed(Math.max(0, Math.min(100,
-    Math.min(50, (item.roas || 0) * 20) + Math.min(30, (item.ctr || 0) * 6) + Math.min(20, item.purchases * 4)
+    Math.min(50, (item.roas ?? 0) * 20) + Math.min(30, (item.ctr ?? 0) * 6) + Math.min(20, item.purchases * 4)
   )), 1);
 
   return {
@@ -322,7 +383,7 @@ export async function getAggregatedCreativeInsights(params: {
 
   const [totalAdPerfCount, stores, mappings, adAccounts] = await Promise.all([
     prisma.factMetaPerformance.count({ where: { level: "ad" } }),
-    prisma.store.findMany({ where: productionStoreWhere }),
+    prisma.store.findMany({ where: productionStoreWhere, orderBy: { id: "asc" } }),
     prisma.accountMapping.findMany(),
     prisma.adAccount.findMany()
   ]);
@@ -333,7 +394,11 @@ export async function getAggregatedCreativeInsights(params: {
     throw error;
   }
 
-  const storeMap = new Map(stores.map((store: any) => [store.id, store.name]));
+  const storeMap = new Map(stores.map((store: any) => [Number(store.id), store.name]));
+  const storeOptions = stores.map((store: any) => ({
+    storeId: Number(store.id),
+    storeName: String(store.name || `Store ${store.id}`)
+  }));
   const productionStoreIds = new Set(stores.map((store: any) => Number(store.id)));
   const accountNameMap = new Map<string, string>();
   const accountToStoreMap = new Map<string, number>();
@@ -361,55 +426,63 @@ export async function getAggregatedCreativeInsights(params: {
     : new Set(Array.from(accountToStoreMap.entries()).filter(([, storeId]) => storeId === filterStoreId).map(([accountId]) => accountId));
 
   if (normalizedFilterAccountId && storeAccountIds && !storeAccountIds.has(normalizedFilterAccountId)) {
-    return emptyResponse({ page, pageSize, startStr, endStr, totalAdPerfCount, ads: [], creatives: [], includeZero, exportRequested });
+    return emptyResponse({ page, pageSize, startStr, endStr, totalAdPerfCount, ads: [], creatives: [], includeZero, exportRequested, storeOptions });
   }
   if (normalizedFilterAccountId && allowedDefaultAccountIds.size > 0 && !allowedDefaultAccountIds.has(normalizedFilterAccountId)) {
-    return emptyResponse({ page, pageSize, startStr, endStr, totalAdPerfCount, ads: [], creatives: [], includeZero, exportRequested });
+    return emptyResponse({ page, pageSize, startStr, endStr, totalAdPerfCount, ads: [], creatives: [], includeZero, exportRequested, storeOptions });
   }
 
-  const scopedAccountIds = normalizedFilterAccountId
-    ? [normalizedFilterAccountId]
-    : storeAccountIds
-      ? Array.from(storeAccountIds)
-      : Array.from(allowedDefaultAccountIds);
-  const adWhere: any = {};
-  if (scopedAccountIds?.length) {
-    adWhere.accountId = { in: Array.from(new Set(scopedAccountIds.flatMap(accountId => [accountId, accountId.replace(/^act_/, "")]))) };
+  const storeScopedAccountIds = storeAccountIds
+    ? Array.from(storeAccountIds)
+    : Array.from(allowedDefaultAccountIds);
+  const scopeAdWhere: any = {};
+  if (storeScopedAccountIds.length) {
+    scopeAdWhere.accountId = {
+      in: Array.from(new Set(storeScopedAccountIds.flatMap(accountId => [accountId, accountId.replace(/^act_/, "")])))
+    };
   }
-  if (filterCampaignId) adWhere.campaignId = filterCampaignId;
-  if (filterAdsetId) adWhere.adsetId = filterAdsetId;
 
-  const ads = await prisma.ad.findMany({
-    where: adWhere,
+  const scopeAds = await prisma.ad.findMany({
+    where: scopeAdWhere,
     include: { adSet: { include: { campaign: true } } }
   });
-  const scopedCreativeIds = Array.from(new Set((ads as any[]).map((ad: any) => ad.creativeId).filter(Boolean)));
-  if (scopedCreativeIds.length === 0) {
-    return emptyResponse({ page, pageSize, startStr, endStr, totalAdPerfCount, ads, creatives: [], includeZero, exportRequested });
-  }
-  const creatives = await prisma.adCreative.findMany({
-    where: { creativeId: { in: scopedCreativeIds } }
-  });
-  const adMap = new Map(ads.map((ad: any) => [ad.id, ad]));
-  const creativeMap = new Map(creatives.map((creative: any) => [creative.creativeId, creative]));
+  const scopeCreativeIds = Array.from(new Set((scopeAds as any[]).map((ad: any) => ad.creativeId).filter(Boolean)));
+  const creatives = scopeCreativeIds.length === 0
+    ? []
+    : await prisma.adCreative.findMany({ where: { creativeId: { in: scopeCreativeIds } } });
 
+  const selectedAds = (scopeAds as any[]).filter((ad: any) => {
+    const accountId = normalizeMetaAccountId(ad.accountId || "");
+    if (normalizedFilterAccountId && accountId !== normalizedFilterAccountId) return false;
+    if (filterCampaignId && adCampaignId(ad) !== filterCampaignId) return false;
+    if (filterAdsetId && adAdsetId(ad) !== filterAdsetId) return false;
+    return true;
+  });
+  const adMap = new Map(selectedAds.map((ad: any) => [ad.id, ad]));
+  const creativeMap = new Map((creatives as any[]).map((creative: any) => [creative.creativeId, creative]));
+
+  const selectedAdIds = selectedAds.map((ad: any) => String(ad.id || "")).filter(Boolean);
+  const selectedAccountIds = normalizedFilterAccountId
+    ? [normalizedFilterAccountId]
+    : storeScopedAccountIds;
   const performanceWhere: any = { level: "ad", date: { gte: startStr, lte: endStr } };
-  if (normalizedFilterAccountId) performanceWhere.account_id = {
-    in: [normalizedFilterAccountId, numericFilterAccountId]
-  };
-  else if (storeAccountIds) {
+  if (selectedAccountIds.length > 0) {
     performanceWhere.account_id = {
-      in: Array.from(new Set(Array.from(storeAccountIds).flatMap(accountId => [accountId, accountId.replace(/^act_/, "")])))
-    };
-  } else if (allowedDefaultAccountIds.size > 0) {
-    performanceWhere.account_id = {
-      in: Array.from(new Set(Array.from(allowedDefaultAccountIds).flatMap(accountId => [accountId, accountId.replace(/^act_/, "")])))
+      in: Array.from(new Set(selectedAccountIds.flatMap(accountId => [accountId, accountId.replace(/^act_/, "")])))
     };
   }
   if (filterCampaignId) performanceWhere.campaign_id = filterCampaignId;
   if (filterAdsetId) performanceWhere.adset_id = filterAdsetId;
+  if (selectedAdIds.length > 0) {
+    performanceWhere.OR = [
+      { ad_id: { in: selectedAdIds } },
+      { entity_id: { in: selectedAdIds } }
+    ];
+  }
 
-  const factRows = await prisma.factMetaPerformance.findMany({ where: performanceWhere });
+  const factRows = selectedAdIds.length === 0
+    ? []
+    : await prisma.factMetaPerformance.findMany({ where: performanceWhere });
   const grouped = new Map<string, any>();
   const keysWithFacts = new Set<string>();
   const singleDay = startStr === endStr;
@@ -490,7 +563,7 @@ export async function getAggregatedCreativeInsights(params: {
     const roas = item.spend > 0 ? item.purchaseValue / item.spend : null;
     const classification = classifyCreative({ hasPerformanceFacts, spend: item.spend, purchases: item.purchases, roas, ctr });
     const landingUrl = singleUniqueUrl(item.landingUrls);
-    const storeId = item.storeId;
+    const storeId = item.storeId === null || item.storeId === undefined ? null : Number(item.storeId);
     const creativeName = creativeNames.length === 0
       ? null
       : creativeNames.length === 1
@@ -539,55 +612,98 @@ export async function getAggregatedCreativeInsights(params: {
     };
   });
 
-  const structuralRows = (creatives as any[]).map((creative: any) => {
-    const associatedAds = (ads as any[]).filter((ad: any) => ad.creativeId === creative.creativeId);
-    const accountId = normalizeMetaAccountId(creative.fbAccountId || associatedAds[0]?.accountId || "");
-    const storeId = creative.storeId || accountToStoreMap.get(accountId) || null;
-    const structureAssetIdentity = assetIdentity(creative, creative.creativeId, associatedAds[0]?.id || creative.creativeId);
-    const key = accountAssetGroupKey({ accountId, assetIdentity: structureAssetIdentity });
-    const creativeIds = [creative.creativeId].filter(Boolean).sort();
-    const adIds = associatedAds.map((ad: any) => ad.id).filter(Boolean).sort();
-    const campaignIds = Array.from(new Set(associatedAds.map((ad: any) => ad.campaignId || ad.adSet?.campaignId).filter(Boolean))).sort();
-    const adsetIds = Array.from(new Set(associatedAds.map((ad: any) => ad.adsetId).filter(Boolean))).sort();
-    return {
-      id: key, analysisEntityId: key, aggregationKey: structureAssetIdentity, aggregationScope: "ACCOUNT_ASSET" as const,
-      creativeIds, creativeCount: creativeIds.length,
-      creativeNames: creative.name ? [creative.name] : [],
-      key, creativeId: creative.creativeId, creativeName: creative.name || `Creative ${creative.creativeId}`,
-      type: parseCreativeType(creative.type || creative.mediaType), accountId, accountName: accountNameMap.get(accountId) || "",
-      storeId, storeName: storeId ? (storeMap.get(storeId) || "关联店铺") : "未关联店铺",
-      adIds: associatedAds.map((ad: any) => ad.id),
-      campaignIds: Array.from(new Set(associatedAds.map((ad: any) => ad.campaignId || ad.adSet?.campaignId).filter(Boolean))),
-      adsetIds: Array.from(new Set(associatedAds.map((ad: any) => ad.adsetId).filter(Boolean))),
-      adId: adIds[0] || "",
-      campaignId: campaignIds[0] || "",
-      adsetId: adsetIds[0] || "",
-      adCount: adIds.length,
-      campaignCount: campaignIds.length,
-      adsetCount: adsetIds.length,
-      imageUrl: creative.imageUrl || "", previewUrl: creative.previewUrl || "", productLink: creative.landingUrl || null,
-      hasPerformanceFacts: false, opsBucket: null, opsBucketLabel: "数据不足", opsScore: null,
-      recommendedAction: null, diagnosisReason: "当前筛选周期无素材成效事实", fatigueScore: null, riskLevel: "数据不足",
-      frequency: null, frequencyAvailable: false, reach: null, reachAvailable: false,
-      addToCart: null, addToCartAvailable: false, hookRate: null, hookRateAvailable: false,
-      performanceSyncedAt: null, latestPerformanceDate: null
-    };
-  }).filter((row: any) => {
-    if (normalizedFilterAccountId && row.accountId !== normalizedFilterAccountId) return false;
-    if (filterStoreId !== null && row.storeId !== filterStoreId) return false;
-    if (filterCampaignId && !row.campaignIds.includes(filterCampaignId)) return false;
-    if (filterAdsetId && !row.adsetIds.includes(filterAdsetId)) return false;
-    if (filterType && row.type !== filterType) return false;
-    if (search && !`${row.creativeName} ${row.creativeId} ${row.accountName}`.toLowerCase().includes(search)) return false;
-    return true;
-  });
+  const toStructureOnlyRow = (group: any): CreativeStructureOnlyRow & { key: string; availability: any } => {
+    const creativeIds = Array.from(group.creativeIds).sort() as string[];
+    const adIds = Array.from(group.adIds).sort() as string[];
+    const campaignIds = Array.from(group.campaignIds).sort() as string[];
+    const adsetIds = Array.from(group.adsetIds).sort() as string[];
+    const creativeNames = Array.from(group.creativeNames).sort() as string[];
+    const mediaTypes = Array.from(group.mediaTypes).sort() as CreativeMediaType[];
+    const storeId = accountToStoreMap.get(group.accountId) || null;
+    const type = mediaTypes.length > 1 ? "MIXED" : mediaTypes[0] || "UNKNOWN";
+    const creativeName = creativeNames.length === 0
+      ? null
+      : creativeNames.length === 1
+        ? creativeNames[0]
+        : `${creativeNames[0]} 等 ${creativeNames.length} 个版本`;
+    const productLink = singleUniqueUrl(group.landingUrls);
 
-  const allStructureOnlyRows = structuralRows.filter((row: any) => !keysWithFacts.has(row.key));
+    return {
+      id: group.analysisEntityId,
+      key: group.analysisEntityId,
+      analysisEntityId: group.analysisEntityId,
+      aggregationKey: group.aggregationKey,
+      aggregationScope: "ACCOUNT_ASSET",
+      creativeId: creativeIds[0] || "",
+      creativeIds,
+      creativeCount: creativeIds.length,
+      adId: adIds[0] || "",
+      adIds,
+      adCount: adIds.length,
+      campaignId: campaignIds[0] || "",
+      campaignIds,
+      campaignCount: campaignIds.length,
+      adsetId: adsetIds[0] || "",
+      adsetIds,
+      adsetCount: adsetIds.length,
+      accountId: group.accountId,
+      accountName: accountNameMap.get(group.accountId) || null,
+      storeId,
+      storeName: storeId ? storeMap.get(storeId) || null : null,
+      creativeName,
+      creativeNames,
+      type,
+      imageUrl: firstNonEmptyUrl(group.imageUrls),
+      previewUrl: firstNonEmptyUrl(group.previewUrls),
+      productLink,
+      hasPerformanceFacts: false,
+      factRowCount: 0,
+      spend: null,
+      impressions: null,
+      clicks: null,
+      purchases: null,
+      purchaseValue: null,
+      ctr: null,
+      cpc: null,
+      cpm: null,
+      cpa: null,
+      roas: null,
+      reach: null,
+      addToCart: null,
+      frequency: null,
+      hookRate: null,
+      availability: {
+        frequency: false,
+        reach: false,
+        addToCart: false,
+        hookRate: false,
+        productLink: productLink !== null
+      },
+      opsScore: null,
+      opsBucket: null,
+      opsBucketLabel: "数据不足",
+      recommendedAction: null,
+      diagnosisReason: "当前筛选周期无素材成效事实",
+      fatigueScore: null,
+      riskLevel: "数据不足",
+      latestPerformanceDate: null,
+      performanceSyncedAt: null
+    };
+  };
+
+  const selectedStructuralRows = buildStructureGroups({ ads: selectedAds, creatives: creatives as any[] })
+    .map(toStructureOnlyRow)
+    .filter((row: any) => {
+      if (filterType && row.type !== filterType) return false;
+      if (search && !`${row.creativeName} ${row.creativeId} ${row.accountName || ""}`.toLowerCase().includes(search)) return false;
+      return true;
+    });
+
+  const allStructureOnlyRows = selectedStructuralRows.filter((row: any) => !keysWithFacts.has(row.analysisEntityId));
   const structureOnlyRows = allStructureOnlyRows.slice(0, 200);
   const structureOnlyTotalCount = allStructureOnlyRows.length;
   const structureOnlyTruncated = structureOnlyTotalCount > structureOnlyRows.length;
-  const scopeUniverseRows = performanceRows;
-  const businessFilteredRows = scopeUniverseRows.filter((row) => {
+  const businessFilteredRows = performanceRows.filter((row) => {
     if (!includeZero && row.spend <= 0) return false;
     if (row.spend < minSpend) return false;
     if (filterType && row.type !== filterType) return false;
@@ -613,32 +729,69 @@ export async function getAggregatedCreativeInsights(params: {
     if (row.opsBucket) result[row.opsBucket] = (result[row.opsBucket] || 0) + 1;
     return result;
   }, {});
-  const rowsForAccountOptions = scopeUniverseRows;
-  const rowsForCampaignOptions = normalizedFilterAccountId
-    ? scopeUniverseRows.filter((row: any) => row.accountId === normalizedFilterAccountId)
-    : scopeUniverseRows;
-  const rowsForAdsetOptions = rowsForCampaignOptions.filter((row: any) => (
-    !filterCampaignId || (row.campaignIds || []).includes(filterCampaignId)
-  ));
-  const rowsForTypeOptions = rowsForAdsetOptions.filter((row: any) => (
-    !filterAdsetId || (row.adsetIds || []).includes(filterAdsetId)
-  ));
-  const filterOptions = {
-    accountOptions: Array.from(new Map(rowsForAccountOptions.map((row: any) => [row.accountId, {
-      accountId: row.accountId,
-      accountName: row.accountName || row.fb_account_name || "账户名称未同步"
-    }])).values()).filter((item: any) => item.accountId),
-    campaignOptions: Array.from(new Set(rowsForCampaignOptions.flatMap((row: any) => row.campaignIds || []))).map((campaignId) => ({ campaignId, campaignName: null })),
-    adsetOptions: Array.from(new Set(rowsForAdsetOptions.flatMap((row: any) => row.adsetIds || []))).map((adsetId) => {
-      const owner = rowsForAdsetOptions.find((row: any) => (row.adsetIds || []).includes(adsetId));
-      return { adsetId, adsetName: null, campaignId: owner?.campaignId || null };
+  const accountOptionMap = new Map<string, CreativeAccountOption>();
+  for (const ad of scopeAds as any[]) {
+    const accountId = normalizeMetaAccountId(ad.accountId || "");
+    if (!accountId) continue;
+    accountOptionMap.set(accountId, {
+      accountId,
+      accountName: accountNameMap.get(accountId) || "账户名称未同步",
+      storeId: accountToStoreMap.get(accountId) || null
+    });
+  }
+
+  const campaignOptionMap = new Map<string, CreativeCampaignOption>();
+  for (const ad of scopeAds as any[]) {
+    const accountId = normalizeMetaAccountId(ad.accountId || "");
+    if (normalizedFilterAccountId && accountId !== normalizedFilterAccountId) continue;
+    const campaignId = adCampaignId(ad);
+    if (!campaignId) continue;
+    campaignOptionMap.set(campaignId, {
+      campaignId,
+      campaignName: ad.adSet?.campaign?.name || null,
+      accountId
+    });
+  }
+
+  const adsetOptionMap = new Map<string, CreativeAdsetOption>();
+  for (const ad of scopeAds as any[]) {
+    const accountId = normalizeMetaAccountId(ad.accountId || "");
+    const campaignId = adCampaignId(ad);
+    const adsetId = adAdsetId(ad);
+    if (normalizedFilterAccountId && accountId !== normalizedFilterAccountId) continue;
+    if (filterCampaignId && campaignId !== filterCampaignId) continue;
+    if (!adsetId) continue;
+    adsetOptionMap.set(adsetId, {
+      adsetId,
+      adsetName: ad.adSet?.name || null,
+      campaignId,
+      accountId
+    });
+  }
+
+  const typeGroups = buildStructureGroups({
+    ads: (scopeAds as any[]).filter((ad: any) => {
+      const accountId = normalizeMetaAccountId(ad.accountId || "");
+      if (normalizedFilterAccountId && accountId !== normalizedFilterAccountId) return false;
+      if (filterCampaignId && adCampaignId(ad) !== filterCampaignId) return false;
+      if (filterAdsetId && adAdsetId(ad) !== filterAdsetId) return false;
+      return true;
     }),
-    creativeTypeOptions: Array.from(new Set(rowsForTypeOptions.map((row: any) => row.type).filter(Boolean))).map((type) => ({ type }))
+    creatives: creatives as any[]
+  });
+  const filterOptions: CreativeFilterOptions = {
+    storeOptions,
+    accountOptions: Array.from(accountOptionMap.values()).sort((a, b) => a.accountId.localeCompare(b.accountId)),
+    campaignOptions: Array.from(campaignOptionMap.values()).sort((a, b) => a.campaignId.localeCompare(b.campaignId)),
+    adsetOptions: Array.from(adsetOptionMap.values()).sort((a, b) => a.adsetId.localeCompare(b.adsetId)),
+    creativeTypeOptions: Array.from(new Set(typeGroups.flatMap((group: any) => Array.from(group.mediaTypes)))).filter(Boolean).sort().map((type: any) => ({ type }))
   };
   const truncated = exportRequested && sortedRows.length > exportLimit;
+  const totalPages = Math.ceil(bucketFilteredRows.length / pageSize);
+  const resolvedPage = totalPages === 0 ? 1 : Math.min(page, totalPages);
   const visibleRows = exportRequested
     ? sortedRows.slice(0, exportLimit)
-    : sortedRows.slice((page - 1) * pageSize, page * pageSize);
+    : sortedRows.slice((resolvedPage - 1) * pageSize, resolvedPage * pageSize);
 
   return {
     success: true,
@@ -647,8 +800,9 @@ export async function getAggregatedCreativeInsights(params: {
     structureOnlyRows,
     summary,
     structureSummary: {
-      totalStructureCount: structuralRows.length,
-      structureOnlyCount: structureOnlyRows.length,
+      totalStructureCount: selectedStructuralRows.length,
+      structureOnlyCount: structureOnlyTotalCount,
+      structureOnlyVisibleCount: structureOnlyRows.length,
       structureOnlyTotalCount,
       structureOnlyTruncated
     },
@@ -656,15 +810,15 @@ export async function getAggregatedCreativeInsights(params: {
     structureOnlyTruncated,
     bucketSummary,
     pagination: {
-      page,
+      page: resolvedPage,
       pageSize,
       total: bucketFilteredRows.length,
-      totalPages: Math.ceil(bucketFilteredRows.length / pageSize),
+      totalPages,
       pageRowCount: visibleRows.length,
       filteredTotalCount: bucketFilteredRows.length
     },
     total: bucketFilteredRows.length,
-    page,
+    page: resolvedPage,
     pageSize,
     filteredTotalCount: bucketFilteredRows.length,
     pageRowCount: visibleRows.length,
@@ -684,12 +838,12 @@ export async function getAggregatedCreativeInsights(params: {
     },
     diagnostics: {
       hasAdLevelInsights: totalAdPerfCount > 0,
-      hasAdCreativeLinks: ads.some((ad: any) => Boolean(ad.creativeId)),
+      hasAdCreativeLinks: (scopeAds as any[]).some((ad: any) => Boolean(ad.creativeId)),
       hasCreativeStaticInfo: creatives.length > 0,
       performanceRows: factRows.length,
-      structureRows: ads.length,
+      structureRows: (scopeAds as any[]).length,
       noAdLevelInsightsWarning: totalAdPerfCount === 0,
-      adCreativeNotLinkedWarning: !ads.some((ad: any) => Boolean(ad.creativeId)),
+      adCreativeNotLinkedWarning: !(scopeAds as any[]).some((ad: any) => Boolean(ad.creativeId)),
       creativeStaticMissingWarning: creatives.length === 0
     },
     dataSourceExplain: {
@@ -702,16 +856,17 @@ export async function getAggregatedCreativeInsights(params: {
 function emptyResponse(input: {
   page: number; pageSize: number; startStr: string; endStr: string; totalAdPerfCount: number;
   ads: any[]; creatives: any[]; includeZero: boolean; exportRequested: boolean;
+  storeOptions?: Array<{ storeId: number; storeName: string }>;
 }) {
   return {
     success: true, data: [], performanceRows: [], structureOnlyRows: [], summary: summarize([]),
-    structureSummary: { totalStructureCount: 0, structureOnlyCount: 0, structureOnlyTotalCount: 0, structureOnlyTruncated: false },
+    structureSummary: { totalStructureCount: 0, structureOnlyCount: 0, structureOnlyVisibleCount: 0, structureOnlyTotalCount: 0, structureOnlyTruncated: false },
     structureOnlyTotalCount: 0,
     structureOnlyTruncated: false,
     bucketSummary: {},
     pagination: { page: input.page, pageSize: input.pageSize, total: 0, totalPages: 0, pageRowCount: 0, filteredTotalCount: 0 },
     total: 0, page: input.page, pageSize: input.pageSize, filteredTotalCount: 0, pageRowCount: 0,
-    filterOptions: { accountOptions: [], campaignOptions: [], adsetOptions: [], creativeTypeOptions: [] },
+    filterOptions: { storeOptions: input.storeOptions || [], accountOptions: [], campaignOptions: [], adsetOptions: [], creativeTypeOptions: [] },
     export: { requested: input.exportRequested, truncated: false, limit: 5000, totalMatched: 0, exportedRowCount: 0, message: null },
     dataScope: { page: "creative-insights", primarySource: "Meta 素材成效", dateField: "FactMetaPerformance.date", timezone: "America/Los_Angeles", includeZeroSpend: input.includeZero },
     diagnostics: {

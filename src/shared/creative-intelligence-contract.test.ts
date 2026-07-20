@@ -100,7 +100,8 @@ describe("creative intelligence shared contract", () => {
         adIds: row.adIds,
         campaignIds: row.campaignIds,
         adsetIds: row.adsetIds,
-        latestPerformanceDate: null
+        latestPerformanceDate: null,
+        latestSyncedAt: null
       }
     };
 

@@ -68,6 +68,61 @@ export interface CreativeIntelligenceRow {
   performanceSyncedAt: string | null;
 }
 
+export interface CreativeStructureOnlyRow {
+  id: string;
+  analysisEntityId: string;
+  aggregationKey: string;
+  aggregationScope: "ACCOUNT_ASSET";
+  creativeId: string;
+  creativeIds: string[];
+  creativeCount: number;
+  adId: string;
+  adIds: string[];
+  adCount: number;
+  campaignId: string;
+  campaignIds: string[];
+  campaignCount: number;
+  adsetId: string;
+  adsetIds: string[];
+  adsetCount: number;
+  accountId: string;
+  accountName: string | null;
+  storeId: number | null;
+  storeName: string | null;
+  creativeName: string | null;
+  creativeNames: string[];
+  type: CreativeMediaType;
+  imageUrl: string | null;
+  previewUrl: string | null;
+  productLink: string | null;
+  hasPerformanceFacts: false;
+  factRowCount: 0;
+  spend: null;
+  impressions: null;
+  clicks: null;
+  purchases: null;
+  purchaseValue: null;
+  ctr: null;
+  cpc: null;
+  cpm: null;
+  cpa: null;
+  roas: null;
+  reach: null;
+  addToCart: null;
+  frequency: null;
+  hookRate: null;
+  availability: CreativeMetricAvailability;
+  opsScore: null;
+  opsBucket: null;
+  opsBucketLabel: "数据不足";
+  recommendedAction: null;
+  diagnosisReason: string;
+  fatigueScore: null;
+  riskLevel: "数据不足";
+  latestPerformanceDate: null;
+  performanceSyncedAt: null;
+}
+
 export interface CreativeIntelligenceSummary {
   performanceCount: number;
   spend: number;
@@ -80,6 +135,46 @@ export interface CreativeIntelligenceSummary {
   cpm: number | null;
   cpa: number | null;
   roas: number | null;
+}
+
+export interface CreativeStoreOption {
+  storeId: number;
+  storeName: string;
+}
+
+export interface CreativeAccountOption {
+  accountId: string;
+  accountName: string;
+  storeId: number | null;
+}
+
+export interface CreativeCampaignOption {
+  campaignId: string;
+  campaignName: string | null;
+  accountId: string;
+}
+
+export interface CreativeAdsetOption {
+  adsetId: string;
+  adsetName: string | null;
+  campaignId: string;
+  accountId: string;
+}
+
+export interface CreativeFilterOptions {
+  storeOptions: CreativeStoreOption[];
+  accountOptions: CreativeAccountOption[];
+  campaignOptions: CreativeCampaignOption[];
+  adsetOptions: CreativeAdsetOption[];
+  creativeTypeOptions: Array<{ type: CreativeMediaType }>;
+}
+
+export interface CreativeStructureSummary {
+  totalStructureCount: number;
+  structureOnlyCount: number;
+  structureOnlyVisibleCount: number;
+  structureOnlyTotalCount: number;
+  structureOnlyTruncated: boolean;
 }
 
 export type CreativeAiConclusion =
@@ -144,5 +239,6 @@ export interface CreativeAnalysisReport {
     campaignIds: string[];
     adsetIds: string[];
     latestPerformanceDate: string | null;
+    latestSyncedAt: string | null;
   };
 }

@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { prismaMock, coverageMock } = vi.hoisted(() => ({
   prismaMock: {
+    store: { findFirst: vi.fn() },
+    adAccount: { findMany: vi.fn() },
+    accountMapping: { findMany: vi.fn() },
+    ad: { findMany: vi.fn() },
+    adCreative: { findMany: vi.fn() },
     factMetaPerformance: { findMany: vi.fn() },
     aiAnalysisReport: { findFirst: vi.fn(), create: vi.fn() }
   },
@@ -52,6 +57,24 @@ const fact = (overrides: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   coverageMock.mockResolvedValue({ status: "READY" });
+  prismaMock.store.findFirst.mockResolvedValue({ id: 1, name: "Store 1" });
+  prismaMock.adAccount.findMany.mockResolvedValue([{ fb_account_id: "act_1", storeId: 1 }]);
+  prismaMock.accountMapping.findMany.mockResolvedValue([{ fbAccountId: "act_1", storeId: 1 }]);
+  prismaMock.ad.findMany.mockResolvedValue([{
+    id: "ad-1",
+    creativeId: "creative-1",
+    accountId: "act_1",
+    campaignId: "camp-1",
+    adsetId: "set-1",
+    adSet: { id: "set-1", campaignId: "camp-1", campaign: { id: "camp-1" } }
+  }]);
+  prismaMock.adCreative.findMany.mockResolvedValue([{
+    creativeId: "creative-1",
+    fbAccountId: "act_1",
+    imageHash: "asset-a",
+    videoHash: null,
+    metaAssetId: null
+  }]);
   prismaMock.factMetaPerformance.findMany.mockResolvedValue([fact()]);
   prismaMock.aiAnalysisReport.findFirst.mockResolvedValue(null);
   prismaMock.aiAnalysisReport.create.mockResolvedValue({});

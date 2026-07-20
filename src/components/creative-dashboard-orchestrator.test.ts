@@ -92,7 +92,19 @@ describe("creative dashboard orchestrator", () => {
 
   it("CR-ORCH-05/06/07 applies unavailable coverage states", () => {
     expect(resolveCreativeDashboardResponse({ coverage: { status: "NOT_SYNCED" }, structureOnlyRows: [row({ hasPerformanceFacts: false })], dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" } }, "2026-07-01", "2026-07-07").performanceRows).toEqual([]);
-    expect(resolveCreativeDashboardResponse({ coverage: { status: "TRUE_EMPTY" }, dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" } }, "2026-07-01", "2026-07-07").summary).toBeNull();
+    expect(resolveCreativeDashboardResponse({ coverage: { status: "TRUE_EMPTY" }, dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" } }, "2026-07-01", "2026-07-07").summary).toMatchObject({
+      performanceCount: 0,
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      purchases: 0,
+      purchaseValue: 0,
+      ctr: null,
+      cpc: null,
+      cpm: null,
+      cpa: null,
+      roas: null
+    });
     expect(resolveCreativeDashboardResponse({ coverage: { status: "ERROR" }, dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" } }, "2026-07-01", "2026-07-07").structureOnlyRows).toEqual([]);
   });
 
