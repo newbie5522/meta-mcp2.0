@@ -10,7 +10,7 @@ import { cleanMetaAccountFactsForRange } from "../services/meta-ledger.service.j
 import dayjs from "dayjs";
 import { syncMetaAccountSpendRealtime } from "../services/meta-realtime-sync.service.js";
 import { getStoreOrderSummary } from "../services/order-fact.service.js";
-import { refreshStoreDataCenterLedger } from "../services/datacenter-store-ledger.service.js";
+import { executeStoreDataPipeline } from "../services/store-data-pipeline.service.js";
 import { refreshMetaDataCenterLedger } from "../services/datacenter-meta-ledger.service.js";
 import { syncMetaAudienceBreakdown } from "../services/meta-audience-breakdown-sync.service.js";
 import { v4 as uuidv4 } from "uuid";
@@ -724,34 +724,44 @@ router.post("/sync/trigger", async (req, res) => {
       const targets = await resolveSafeStoreTargets({ storeId, limit });
       const taskIds: string[] = [];
       let lastTaskId: string | null = null;
+      const storeReceipts: any[] = [];
       const ledgers: any[] = [];
 
       for (const store of targets) {
-        const taskId = await SyncCenter.syncStoreOrders(
-          store.id,
+        const receipt = await executeStoreDataPipeline({
+          store,
           chainId,
-          "frontend_view_sync",
-          lastTaskId,
-          range.days,
-          range.startDate,
-          range.endDate,
-          {
-            baselineRevenue: baselineRevenue !== undefined ? parseFloat(String(baselineRevenue)) : undefined,
-            rebuild: rebuild === true || rebuild === "true"
-          }
-        );
-        taskIds.push(taskId);
-        lastTaskId = taskId;
-        ledgers.push(await refreshStoreDataCenterLedger({
-          storeId: store.id,
+          triggeredBy: "frontend_view_sync",
+          previousTaskId: lastTaskId,
+          days: range.days,
           startDate: range.startDate,
-          endDate: range.endDate
-        }));
+          endDate: range.endDate,
+          baselineRevenue: baselineRevenue !== undefined ? parseFloat(String(baselineRevenue)) : undefined,
+          rebuild: rebuild === true || rebuild === "true"
+        });
+        storeReceipts.push(receipt);
+        ledgers.push(receipt.ledger);
+        if (receipt.orderSync.taskId) {
+          taskIds.push(receipt.orderSync.taskId);
+          lastTaskId = receipt.orderSync.taskId;
+        }
       }
 
-      const summary = await summarizeSyncLogs(taskIds);
+      const summary = taskIds.length > 0 ? await summarizeSyncLogs(taskIds) : {
+        recordsFetched: 0,
+        recordsSaved: 0,
+        recordsUpdated: 0,
+        failedAccounts: [],
+        failedSlices: storeReceipts.flatMap(receipt => receipt.failedSlices || []),
+        truncated: false,
+        coverageComplete: false
+      };
       const ledgerRecordsSaved = ledgers.reduce((sum, item) => sum + Number(item.recordsSaved || item.snapshots?.length || 0), 0);
-      const status = deriveSyncStatus(summary);
+      const status = storeReceipts.length > 0 && storeReceipts.every(receipt => receipt.status === "FAILED")
+        ? "FAILED"
+        : storeReceipts.some(receipt => receipt.status === "FAILED" || receipt.status === "PARTIAL_SUCCESS")
+          ? "PARTIAL_SUCCESS"
+          : deriveSyncStatus(summary);
       if (status === "FAILED") {
         return returnFailedSyncResponse(res, { summary, chainId, taskType, taskIds });
       }
@@ -773,9 +783,13 @@ router.post("/sync/trigger", async (req, res) => {
         recordsSaved: summary.recordsSaved + ledgerRecordsSaved,
         recordsUpdated: summary.recordsUpdated,
         failedAccounts: summary.failedAccounts,
-        failedSlices: summary.failedSlices,
+        failedSlices: [
+          ...(summary.failedSlices || []),
+          ...storeReceipts.flatMap(receipt => receipt.failedSlices || [])
+        ],
         truncated: summary.truncated,
         coverageComplete: summary.coverageComplete,
+        storeReceipts,
         ledgers,
         ...buildProgress({
           currentStep: taskIds.length + ledgers.length,
@@ -1071,7 +1085,7 @@ router.post("/sync/trigger", async (req, res) => {
       const summary = await summarizeSyncLogs(taskIds);
       return res.json({
         success: true,
-        status: "SUCCESS",
+        status: deriveSyncStatus(summary),
         message: "成功同步并更新 Meta 客户及有效广告账户状态 (AdAccount)。",
         chainId,
         taskType,
@@ -1191,24 +1205,28 @@ router.post("/sync/trigger", async (req, res) => {
         });
       }
 
-      const result = await refreshStoreDataCenterLedger({
-        storeId: Number(storeId),
+      const store = await prisma.store.findUnique({ where: { id: Number(storeId) } });
+      if (!store) {
+        return res.status(404).json({
+          success: false,
+          error: "STORE_NOT_FOUND",
+          message: `Store ${storeId} was not found`
+        });
+      }
+
+      const rangeDays = Math.max(1, dayjs(endDate).diff(dayjs(startDate), "day") + 1);
+      const result = await executeStoreDataPipeline({
+        store,
+        chainId,
+        triggeredBy: "frontend_direct_ledger_refresh",
         startDate,
-        endDate
+        endDate,
+        days: rangeDays,
+        rebuild: true
       });
 
-      const orderCount = result.snapshots?.reduce(
-        (s: number, r: any) => s + Number(r.orderCount || 0),
-        0
-      ) || 0;
-      const grossSales = Number(
-        (
-          result.snapshots?.reduce(
-            (s: number, r: any) => s + Number(r.grossSales || 0),
-            0
-          ) || 0
-        ).toFixed(2)
-      );
+      const orderCount = result.ledger.uniqueOrderCount || 0;
+      const grossSales = result.ledger.totalGrossSales || 0;
 
       return res.json({
         success: true,
@@ -1216,12 +1234,16 @@ router.post("/sync/trigger", async (req, res) => {
         message: `店铺数据中心账本刷新完成 (订单数: ${orderCount}, 销售额: $${grossSales})`,
         chainId,
         taskType,
+        taskIds: result.orderSync.taskId ? [result.orderSync.taskId] : [],
         orderCount,
         grossSales,
-        snapshotsCount: result.snapshots?.length || 0,
-        recordsFetched: orderCount,
-        recordsSaved: result.snapshots?.length || 0,
-        recordsUpdated: 0,
+        snapshotsCount: result.ledger.recordsSaved || 0,
+        recordsFetched: result.orderSync.recordsFetched,
+        recordsSaved: result.orderSync.recordsSaved + result.ledger.recordsSaved,
+        recordsUpdated: result.orderSync.recordsUpdated,
+        storeReceipts: [result],
+        ledgers: [result.ledger],
+        failedSlices: result.failedSlices,
         ...buildProgress({
           currentStep: 1,
           totalSteps: 1,

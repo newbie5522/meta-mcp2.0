@@ -1,7 +1,7 @@
 import prisma from "../../db/index.js";
 import { SyncCenter } from "./sync-center.service.js";
 import { refreshMetaDataCenterLedger } from "./datacenter-meta-ledger.service.js";
-import { refreshStoreDataCenterLedger } from "./datacenter-store-ledger.service.js";
+import { executeStoreDataPipeline } from "./store-data-pipeline.service.js";
 import { runDataCenterAudit } from "./data-center-audit.service.js";
 import { getMetaToken } from "../utils.js";
 import dayjs from "dayjs";
@@ -59,6 +59,7 @@ export async function runDataCenterRebuild(params: RebuildParams) {
   // Track counts
   let metaStepsExecuted = 0;
   let storeStepsExecuted = 0;
+  const storePipelineReceipts: any[] = [];
 
   // 1. precheck_meta_token
   const step1Start = new Date().toISOString();
@@ -497,25 +498,20 @@ export async function runDataCenterRebuild(params: RebuildParams) {
 
     for (const store of activeStores) {
       try {
-        const taskId = await SyncCenter.syncStoreOrders(
-          store.id,
-          taskChainId,
-          "rebuild_api",
-          null,
-          daysDiff,
-          params.startDate,
-          params.endDate,
-          { rebuild: rebuildStoreOrders }
-        );
-        const log = await prisma.syncLog.findUnique({ where: { id: taskId } });
-        if (log) {
-          totalFetched += log.recordsFetched || 0;
-          totalSaved += log.recordsSaved || 0;
-          if (log.status === "failed") {
-            failedSyncStores.push({ storeId: store.id, message: "SyncCenter task was marked as failed" });
-          }
-        } else {
-          failedSyncStores.push({ storeId: store.id, message: "SyncLog record not generated" });
+        const receipt = await executeStoreDataPipeline({
+          store,
+          chainId: taskChainId,
+          triggeredBy: "rebuild_api",
+          days: daysDiff,
+          startDate: params.startDate,
+          endDate: params.endDate,
+          rebuild: rebuildStoreOrders
+        } as any);
+        storePipelineReceipts.push(receipt);
+        totalFetched += receipt.orderSync.recordsFetched || 0;
+        totalSaved += receipt.orderSync.recordsSaved || 0;
+        if (receipt.orderSync.status === "FAILED" || receipt.status === "FAILED") {
+          failedSyncStores.push({ storeId: store.id, message: receipt.orderSync.error || "Store pipeline sync failed" });
         }
       } catch (err: any) {
         failedSyncStores.push({ storeId: store.id, message: err.message || String(err) });
@@ -586,13 +582,24 @@ export async function runDataCenterRebuild(params: RebuildParams) {
 
     for (const store of activeStores) {
       try {
-        const result = await refreshStoreDataCenterLedger({
-          storeId: store.id,
-          startDate: params.startDate,
-          endDate: params.endDate
-        });
-        totalFetched += result.totalFetched || 0;
-        totalSaved += (result.snapshots || []).length;
+        let receipt = storePipelineReceipts.find(item => Number(item.storeId) === Number(store.id));
+        if (!receipt) {
+          receipt = await executeStoreDataPipeline({
+            store,
+            chainId: taskChainId,
+            triggeredBy: "rebuild_api",
+            days: daysDiff,
+            startDate: params.startDate,
+            endDate: params.endDate,
+            rebuild: rebuildStoreOrders
+          });
+          storePipelineReceipts.push(receipt);
+        }
+        totalFetched += receipt.ledger.recordsFetched || 0;
+        totalSaved += receipt.ledger.recordsSaved || 0;
+        if (receipt.ledger.status === "FAILED") {
+          failedLedgerStores.push({ storeId: store.id, message: receipt.ledger.error || "Store ledger projection failed" });
+        }
       } catch (err: any) {
         failedLedgerStores.push({ storeId: store.id, message: err.message || String(err) });
       }

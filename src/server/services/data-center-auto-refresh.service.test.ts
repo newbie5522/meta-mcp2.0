@@ -13,7 +13,7 @@ const { prismaMock, refreshMeta, refreshStore, executeView } = vi.hoisted(() => 
 
 vi.mock("../../db/index.js", () => ({ default: prismaMock }));
 vi.mock("./datacenter-meta-ledger.service.js", () => ({ refreshMetaDataCenterLedger: refreshMeta }));
-vi.mock("./datacenter-store-ledger.service.js", () => ({ refreshStoreDataCenterLedger: refreshStore }));
+vi.mock("./store-data-pipeline.service.js", () => ({ executeStoreDataPipeline: refreshStore }));
 vi.mock("./sync-view-task-executor.service.js", () => ({ executeSyncViewTask: executeView }));
 
 import { ensureDataCenterFreshness, ensureDataCenterViewFreshness } from "./data-center-auto-refresh.service";
@@ -26,7 +26,12 @@ beforeEach(() => {
   prismaMock.store.findMany.mockResolvedValue([{ id: 1, name: "Store 1" }]);
   prismaMock.store.findUnique.mockResolvedValue({ id: 1, name: "Store 1", mode: "production", domain: "live.example.com" });
   refreshMeta.mockResolvedValue({ recordsFetched: 1, recordsSaved: 1, recordsUpdated: 0, failedAccounts: [] });
-  refreshStore.mockResolvedValue({ snapshots: [{ orderCount: 1 }] });
+  refreshStore.mockResolvedValue({
+    status: "SUCCESS",
+    orderSync: { error: null },
+    ledger: { status: "SUCCESS", uniqueOrderCount: 1, recordsSaved: 1, error: null },
+    failedSlices: []
+  });
   executeView.mockImplementation(async ({ taskType }: any) => ({
     taskType,
     status: "SUCCESS",

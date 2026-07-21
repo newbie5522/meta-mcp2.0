@@ -5,7 +5,7 @@ import timezonePlugin from "dayjs/plugin/timezone.js";
 import prisma from "../../db/index.js";
 import { getBusinessNow } from "../../shared/business-time.js";
 import { refreshMetaDataCenterLedger } from "./datacenter-meta-ledger.service.js";
-import { refreshStoreDataCenterLedger } from "./datacenter-store-ledger.service.js";
+import { executeStoreDataPipeline } from "./store-data-pipeline.service.js";
 import { executeSyncViewTask } from "./sync-view-task-executor.service.js";
 import { deriveCanonicalSyncStatus } from "../types/sync-tasks.js";
 
@@ -378,24 +378,31 @@ async function runActualRefresh(params: {
 
     for (const store of storesToSync) {
       try {
-        const storeRes = await refreshStoreDataCenterLedger({
-          storeId: store.id,
+        const days = Math.max(1, dayjs(params.endDate).diff(dayjs(params.startDate), "day") + 1);
+        const storeRes = await executeStoreDataPipeline({
+          store,
+          chainId: run.id,
+          triggeredBy: "auto_refresh",
+          days,
           startDate: params.startDate,
           endDate: params.endDate
         });
 
-        const snapshotFetched = storeRes.snapshots?.reduce((s: number, r: any) => s + Number(r.orderCount || 0), 0) || 0;
+        const snapshotFetched = storeRes.ledger.uniqueOrderCount || 0;
 
         storesResult.push({
           storeId: store.id,
           storeName: store.name,
-          status: "SUCCESS",
+          status: storeRes.status === "FAILED" ? "FAILED" : storeRes.status,
           totalFetched: snapshotFetched,
-          snapshots: storeRes.snapshots?.length || 0,
-          errorMessage: null
+          snapshots: storeRes.ledger.recordsSaved || 0,
+          errorMessage: storeRes.failedSlices?.[0]?.message || storeRes.ledger.error || storeRes.orderSync.error || null
         });
+        if (storeRes.status === "FAILED" || storeRes.status === "PARTIAL_SUCCESS") {
+          overallStatus = "PARTIAL";
+        }
       } catch (storeErr: any) {
-        console.error(`[DataCenterAutoRefresh] refreshStoreDataCenterLedger failed for store ${store.name} (${store.id}):`, storeErr);
+        console.error(`[DataCenterAutoRefresh] executeStoreDataPipeline failed for store ${store.name} (${store.id}):`, storeErr);
         overallStatus = "PARTIAL";
         storesResult.push({
           storeId: store.id,

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { prismaMock, syncCenterMock, uuidMock, refreshStoreLedgerMock } = vi.hoisted(() => ({
+const { prismaMock, syncCenterMock, uuidMock, executeStoreDataPipelineMock } = vi.hoisted(() => ({
   prismaMock: {
     syncLog: {
       updateMany: vi.fn(),
@@ -15,7 +15,7 @@ const { prismaMock, syncCenterMock, uuidMock, refreshStoreLedgerMock } = vi.hois
     syncStoreOrders: vi.fn()
   },
   uuidMock: vi.fn(),
-  refreshStoreLedgerMock: vi.fn()
+  executeStoreDataPipelineMock: vi.fn()
 }));
 
 vi.mock("../../db/index.js", () => ({ default: prismaMock, prisma: prismaMock }));
@@ -27,7 +27,7 @@ vi.mock("../services/store-ledger.service.js", () => ({ rebuiltStoreOrderSummary
 vi.mock("../services/meta-ledger.service.js", () => ({ cleanMetaAccountFactsForRange: vi.fn() }));
 vi.mock("../services/meta-realtime-sync.service.js", () => ({ syncMetaAccountSpendRealtime: vi.fn() }));
 vi.mock("../services/order-fact.service.js", () => ({ getStoreOrderSummary: vi.fn() }));
-vi.mock("../services/datacenter-store-ledger.service.js", () => ({ refreshStoreDataCenterLedger: refreshStoreLedgerMock }));
+vi.mock("../services/store-data-pipeline.service.js", () => ({ executeStoreDataPipeline: executeStoreDataPipelineMock }));
 vi.mock("../services/datacenter-meta-ledger.service.js", () => ({ refreshMetaDataCenterLedger: vi.fn() }));
 vi.mock("../services/meta-audience-breakdown-sync.service.js", () => ({ syncMetaAudienceBreakdown: vi.fn() }));
 vi.mock("uuid", () => ({ v4: uuidMock }));
@@ -75,7 +75,30 @@ beforeEach(() => {
   syncCenterMock.syncMetaAccounts.mockResolvedValue("task-accounts");
   syncCenterMock.syncMetaActivity.mockResolvedValue("task-activity");
   syncCenterMock.syncStoreOrders.mockResolvedValue("task-store");
-  refreshStoreLedgerMock.mockResolvedValue({ recordsSaved: 0 });
+  executeStoreDataPipelineMock.mockResolvedValue({
+    storeId: 1,
+    status: "SUCCESS",
+    orderSync: {
+      taskId: "task-store",
+      status: "SUCCESS",
+      recordsFetched: 0,
+      recordsSaved: 0,
+      recordsUpdated: 0,
+      coverageComplete: true,
+      truncated: false,
+      error: null
+    },
+    ledger: {
+      status: "SUCCESS",
+      source: "Order",
+      dateField: "Order.store_local_date",
+      recordsFetched: 0,
+      recordsSaved: 0,
+      uniqueOrderCount: 0,
+      error: null
+    },
+    failedSlices: []
+  });
 });
 
 describe("deriveSyncStatus", () => {
