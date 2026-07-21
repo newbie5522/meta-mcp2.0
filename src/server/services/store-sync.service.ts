@@ -4,8 +4,9 @@ import prisma from "../../db/index.js";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
-import { normalizeTimezone as normalizeTimezoneUtil } from "../utils/timezone.js";
+import { normalizeIanaTimezoneOrNull, requireVerifiedIanaTimezone } from "../utils/timezone.js";
 import { fetchStoreOrdersCanonical, saveCanonicalOrdersToDb } from "./store-sync-core.js";
+import { resolveVerifiedStoreTimezone } from "./store-timezone.service.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -47,47 +48,7 @@ export interface StoreSyncResult {
 }
 
 export function normalizeTimezone(tz: string | null | undefined): string | null {
-  if (!tz) return null;
-  const trimmed = tz.trim();
-  try {
-    Intl.DateTimeFormat(undefined, { timeZone: trimmed });
-    return trimmed;
-  } catch (e) {}
-
-  const match = trimmed.match(/([+-])(\d{1,2})/);
-  if (match) {
-    const sign = match[1] === '-' ? -1 : 1;
-    const hours = parseInt(match[2], 10);
-    switch (hours) {
-      case -11: return "Pacific/Midway";
-      case -10: return "Pacific/Honolulu";
-      case -9: return "America/Anchorage";
-      case -8: return "America/Los_Angeles";
-      case -7: return "America/Los_Angeles";
-      case -6: return "America/Chicago";
-      case -5: return "America/New_York";
-      case -4: return "America/Halifax";
-      case -3: return "America/Argentina/Buenos_Aires";
-      case -2: return "America/Noronha";
-      case -1: return "Atlantic/Cape_Verde";
-      case 0: return "UTC";
-      case 1: return "Europe/London";
-      case 2: return "Europe/Paris";
-      case 3: return "Europe/Moscow";
-      case 4: return "Asia/Dubai";
-      case 5: return "Asia/Karachi";
-      case 6: return "Asia/Almaty";
-      case 7: return "Asia/Bangkok";
-      case 8: return "Asia/Shanghai";
-      case 9: return "Asia/Tokyo";
-      case 10: return "Australia/Sydney";
-      case 11: return "Pacific/Guadalcanal";
-      case 12: return "Pacific/Auckland";
-      case 13: return "Pacific/Apia";
-      default: return null;
-    }
-  }
-  return null;
+  return normalizeIanaTimezoneOrNull(tz);
 }
 
 export function resolveStoreTimezoneForSync(store: { id: number; name: string; platform: string | null; timezone: string | null }): string {
@@ -99,25 +60,17 @@ export function resolveStoreTimezoneForSync(store: { id: number; name: string; p
 }
 
 export function getStoreLocalDate(createdAtStr: string | Date, timezoneStr: string | null | undefined): string {
-  if (!createdAtStr) return dayjs().format("YYYY-MM-DD");
+  const tz = requireVerifiedIanaTimezone(timezoneStr);
+  if (!createdAtStr) return dayjs().tz(tz).format("YYYY-MM-DD");
   const d = typeof createdAtStr === "string" ? createdAtStr : createdAtStr.toISOString();
-  try {
-    const tz = normalizeTimezone(timezoneStr) || "Asia/Shanghai";
-    return dayjs(d).tz(tz).format("YYYY-MM-DD");
-  } catch (err) {
-    return dayjs(d).format("YYYY-MM-DD");
-  }
+  return dayjs(d).tz(tz).format("YYYY-MM-DD");
 }
 
 export function getStoreLocalDatetime(createdAtStr: string | Date, timezoneStr: string | null | undefined): string {
-  if (!createdAtStr) return dayjs().format("YYYY-MM-DDTHH:mm:ss");
+  const tz = requireVerifiedIanaTimezone(timezoneStr);
+  if (!createdAtStr) return dayjs().tz(tz).format("YYYY-MM-DDTHH:mm:ss");
   const d = typeof createdAtStr === "string" ? createdAtStr : createdAtStr.toISOString();
-  try {
-    const tz = normalizeTimezone(timezoneStr) || "Asia/Shanghai";
-    return dayjs(d).tz(tz).format("YYYY-MM-DDTHH:mm:ss");
-  } catch (err) {
-    return dayjs(d).format("YYYY-MM-DDTHH:mm:ss");
-  }
+  return dayjs(d).tz(tz).format("YYYY-MM-DDTHH:mm:ss");
 }
 
 export function isStoreLocalDateWithinRange(
@@ -130,13 +83,9 @@ export function isStoreLocalDateWithinRange(
 }
 
 export function getTzOffset(timezoneName: string | null | undefined, dateStr: string): string {
-  const tz = normalizeTimezone(timezoneName) || "Asia/Shanghai";
-  try {
-    const d = dayjs.tz(`${dateStr}T12:00:00`, tz);
-    return d.format("Z");
-  } catch (err) {
-    return "+08:00";
-  }
+  const tz = requireVerifiedIanaTimezone(timezoneName);
+  const d = dayjs.tz(`${dateStr}T12:00:00`, tz);
+  return d.format("Z");
 }
 
 function sanitizeUrl(url: string): string {
@@ -306,19 +255,7 @@ export async function syncStoreData(
     }
 
     try {
-      const timezoneBefore = store.timezone || "";
-      const normalizedTimezone = normalizeTimezoneUtil(timezoneBefore, {
-        id: store.id,
-        domain: store.domain || "",
-        name: store.name || ""
-      });
-
-      if (store.timezone !== normalizedTimezone) {
-        await prisma.store.update({
-          where: { id: store.id },
-          data: { timezone: normalizedTimezone }
-        });
-      }
+      const verifiedTimezone = await resolveVerifiedStoreTimezone(store);
 
       const canonical = await fetchStoreOrdersCanonical({
         platform,
@@ -327,7 +264,10 @@ export async function syncStoreData(
         token,
         startDate,
         endDate,
-        timezone: normalizedTimezone,
+        timezone: verifiedTimezone.timezone,
+        timezoneSource: verifiedTimezone.timezoneSource,
+        timezoneVerifiedAt: verifiedTimezone.timezoneVerifiedAt,
+        platformTimezoneRaw: verifiedTimezone.platformTimezoneRaw,
         storeName: store.name || ""
       });
 
@@ -370,7 +310,13 @@ export async function syncStoreData(
           isSaved: true,
           skipReason: ""
         })),
-        diagnostics: canonical.diagnostics
+        diagnostics: {
+          ...canonical.diagnostics,
+          timezone: verifiedTimezone.timezone,
+          timezoneSource: verifiedTimezone.timezoneSource,
+          timezoneVerifiedAt: verifiedTimezone.timezoneVerifiedAt,
+          platformTimezoneRaw: verifiedTimezone.platformTimezoneRaw
+        }
       };
 
     } catch (err: any) {
@@ -379,7 +325,7 @@ export async function syncStoreData(
         storeId: store.id,
         storeName: store.name,
         platform: store.platform || "unknown",
-        timezone: store.timezone || "America/Los_Angeles",
+        timezone: store.timezone || "",
         localStartDate: startDate,
         localEndDate: endDate,
         utcStartDate: "",
@@ -465,12 +411,7 @@ export async function fetchShoplineOrdersDirect(
 
 async function syncShoplineStoreData(store: any, startDate: string, endDate: string): Promise<StoreSyncResult> {
   const domain = store.domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
-  
-  // Standardize Baslayer timezone to America/Los_Angeles
-  let timezoneStr = store.timezone || "America/Los_Angeles";
-  if (domain.includes("baslayer") || store.name?.toLowerCase().includes("baslayer")) {
-    timezoneStr = "America/Los_Angeles";
-  }
+  const timezoneStr = requireVerifiedIanaTimezone(store.timezone);
 
   const tzOffset = getTzOffset(timezoneStr, startDate);
   const startUtc = `${startDate}T00:00:00${tzOffset}`;
@@ -721,7 +662,7 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
     storeId: store.id,
     storeName: store.name,
     platform: "shopify",
-    timezone: store.timezone || "GMT+8",
+    timezone: requireVerifiedIanaTimezone(store.timezone),
     localStartDate: startDate,
     localEndDate: endDate,
     utcStartDate: startUtc,
@@ -939,7 +880,7 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
     'Content-Type': 'application/json'
   };
 
-  const storeTimezone = store.timezone || "America/Los_Angeles";
+  const storeTimezone = requireVerifiedIanaTimezone(store.timezone);
   const formattedMin = dayjs.tz(`${startDate}T00:00:00`, storeTimezone).format();
   const formattedMax = dayjs.tz(`${endDate}T23:59:59`, storeTimezone).format();
 

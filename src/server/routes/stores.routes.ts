@@ -2,7 +2,8 @@ import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
 import { getTimezoneOffsetStr, normalizeMetaAccountId } from "../utils.js";
-import { normalizeTimezone } from "../utils/timezone.js";
+import { normalizeIanaTimezoneOrNull } from "../utils/timezone.js";
+import { fetchPlatformStoreTimezone, StoreTimezoneError } from "../services/store-timezone.service.js";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
@@ -84,48 +85,21 @@ function sanitizeStore(store: any) {
 
 function determineTimezoneSource(
   configuredTz: string | null | undefined,
-  domain: string,
-  name: string
-): "manual" | "platform_shop_api" | "normalized_alias" | "system_default" {
-  if (!configuredTz) {
-    return "system_default";
+  lastSyncLog: any
+): "persisted_verified" | "unverified" {
+  const normalized = normalizeIanaTimezoneOrNull(configuredTz);
+  if (!normalized || !lastSyncLog?.metadata) return "unverified";
+  try {
+    const meta = JSON.parse(lastSyncLog.metadata);
+    const diag = meta.diagnostics || meta;
+    const evidenceTimezone = meta.timezone || diag.timezoneAfter || diag.timezone;
+    const evidenceSource = meta.timezoneSource || diag.timezoneSource;
+    return evidenceTimezone === normalized && evidenceSource === "platform_shop_api"
+      ? "persisted_verified"
+      : "unverified";
+  } catch {
+    return "unverified";
   }
-
-  const isBaslayer = 
-    (domain && domain.toLowerCase().includes("baslayer")) ||
-    (name && name.toLowerCase().includes("baslayer"));
-
-  if (isBaslayer) {
-    return "normalized_alias";
-  }
-
-  const trimmed = configuredTz.trim();
-  const lower = trimmed.toLowerCase();
-
-  if (
-    lower === "us/pacific" || 
-    lower === "pacific time" || 
-    lower === "pst" || 
-    lower === "pdt" || 
-    lower.includes("gmt-7") || 
-    lower.includes("utc-7") || 
-    lower.includes("gmt-07") || 
-    lower.includes("utc-07") ||
-    lower.includes("gmt -07") ||
-    lower.includes("utc -07") ||
-    lower.includes("gmt-") ||
-    lower.includes("gmt+") ||
-    lower.includes("utc-") ||
-    lower.includes("utc+")
-  ) {
-    return "normalized_alias";
-  }
-
-  if (trimmed.includes("/")) {
-    return "platform_shop_api";
-  }
-
-  return "manual";
 }
 
 function parseOffsetHours(offsetStr: string): number {
@@ -137,24 +111,17 @@ function parseOffsetHours(offsetStr: string): number {
 
 function buildTimezoneDiagnostics(store: any, lastSyncLog: any) {
   const configuredTimezone = store.timezone || null;
-  const normalizedTimezone = normalizeTimezone(configuredTimezone, {
-    id: store.id,
-    domain: store.domain || "",
-    name: store.name || ""
-  });
+  const normalizedTimezone = normalizeIanaTimezoneOrNull(configuredTimezone);
 
-  let currentOffset = "GMT-7";
-  let offsetStr = "-07:00";
-  try {
+  let currentOffset: string | null = null;
+  let offsetStr: string | null = null;
+  if (normalizedTimezone) {
     offsetStr = dayjs().tz(normalizedTimezone).format("Z");
     const hours = parseInt(offsetStr.split(":")[0], 10);
     currentOffset = `GMT${hours >= 0 ? "+" : ""}${hours}`;
-  } catch (e) {
-    offsetStr = "-07:00";
-    currentOffset = "GMT-7";
   }
 
-  const timezoneSource = determineTimezoneSource(configuredTimezone, store.domain || "", store.name || "");
+  const timezoneSource = determineTimezoneSource(configuredTimezone, lastSyncLog);
 
   let lastSyncWindow: any = undefined;
   let observedOrderOffsets: string[] = [];
@@ -187,9 +154,9 @@ function buildTimezoneDiagnostics(store: any, lastSyncLog: any) {
   }
 
   const warnings: string[] = [];
-  const baseOffsetHours = parseOffsetHours(offsetStr);
+  const baseOffsetHours = offsetStr ? parseOffsetHours(offsetStr) : null;
 
-  if (observedOrderOffsets && observedOrderOffsets.length > 0) {
+  if (baseOffsetHours !== null && observedOrderOffsets && observedOrderOffsets.length > 0) {
     for (const offsetVal of observedOrderOffsets) {
       const parsedHours = parseOffsetHours(offsetVal);
       if (parsedHours !== baseOffsetHours) {
@@ -204,6 +171,7 @@ function buildTimezoneDiagnostics(store: any, lastSyncLog: any) {
     normalizedTimezone,
     currentOffset,
     timezoneSource,
+    timezoneVerified: timezoneSource !== "unverified",
     lastSyncWindow,
     observedOrderOffsets,
     warnings
@@ -266,87 +234,18 @@ async function detectStoreTimezone(
   token: string,
   existingTimezone?: string | null
 ): Promise<string> {
-  const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
-
-  // Force standardize Baslayer to America/Los_Angeles
-  if (cleanDomain.includes("baslayer") || domain.includes("baslayer")) {
-    return "America/Los_Angeles";
+  const verified = await fetchPlatformStoreTimezone({
+    platform,
+    domain,
+    timezone: existingTimezone || null,
+    shopline_token: platform === "shopline" ? token : null,
+    shopify_token: platform === "shopify" ? token : null,
+    shoplazza_token: platform === "shoplazza" ? token : null
+  });
+  if (!verified) {
+    throw new StoreTimezoneError("STORE_TIMEZONE_UNVERIFIED", { platform, domain });
   }
-
-  // 1. Try Platform Shop Info API
-  if (platform === "shopify") {
-    try {
-      const response = await axios.get(`https://${cleanDomain}/admin/api/2024-01/shop.json`, {
-        headers: {
-          'X-Shopify-Access-Token': token,
-          'Content-Type': 'application/json'
-        },
-        timeout: 5000
-      });
-      const ianaTz = response.data?.shop?.iana_timezone || response.data?.shop?.timezone;
-      if (ianaTz) {
-        return normalizeTimezone(ianaTz, { domain });
-      }
-    } catch (e: any) {
-      console.warn(`[Tz Detection] Shopify Shop API failed:`, e.message);
-    }
-  } else if (platform === "shopline") {
-    const candidates = [
-      `https://${cleanDomain}/admin/openapi/v20220301/shop.json`,
-      `https://${cleanDomain}/admin/openapi/v20201201/shop.json`,
-      `https://${cleanDomain}/admin/api/v20200901/shop.json`,
-      `https://${cleanDomain}/admin/openapi/shop.json`,
-    ];
-    for (const url of candidates) {
-      try {
-         const response = await axios.get(url, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 4000
-        });
-        const tz = response.data?.shop?.iana_timezone || response.data?.shop?.timezone || response.data?.data?.timezone;
-        if (tz) {
-          return normalizeTimezone(tz, { domain });
-        }
-      } catch (e: any) {
-        console.warn(`[Tz Detection] Shopline candidate failed: ${url}`, e.message);
-      }
-    }
-  } else if (platform === "shoplazza") {
-    const candidates = [
-      `https://${cleanDomain}/openapi/2022-01/shop`,
-      `https://${cleanDomain}/openapi/2022-01/shop.json`,
-      `https://${cleanDomain}/openapi/2020-01/shop`,
-      `https://${cleanDomain}/openapi/shop`,
-    ];
-    for (const url of candidates) {
-      try {
-        const response = await axios.get(url, {
-          headers: {
-            'Access-Token': token,
-            'Content-Type': 'application/json'
-          },
-          timeout: 4000
-        });
-        const tz = response.data?.shop?.iana_timezone || response.data?.shop?.timezone;
-        if (tz) {
-          return normalizeTimezone(tz, { domain });
-        }
-      } catch (e: any) {
-        console.warn(`[Tz Detection] Shoplazza candidate failed: ${url}`, e.message);
-      }
-    }
-  }
-
-  // 3. Fallback to existing timezone
-  if (existingTimezone) {
-    return normalizeTimezone(existingTimezone, { domain });
-  }
-
-  // 4. Default fallback: America/Los_Angeles as required
-  return "America/Los_Angeles";
+  return verified.timezone;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -361,23 +260,6 @@ function normalizeDomain(domain: string | undefined | null): string {
   d = d.replace(/\/admin(\/.*)?$/, "");
   d = d.replace(/\/+$/, "");
   return d;
-}
-
-function withTimeout(promise: Promise<any>, ms: number, defaultValue: any): Promise<any> {
-  let timeoutId: any;
-  const timeoutPromise = new Promise((resolve) => {
-    timeoutId = setTimeout(() => {
-      console.warn(`[Stores Route] detectStoreTimezone exceeded ${ms}ms limit. Falling back to default.`);
-      resolve(defaultValue);
-    }, ms);
-  });
-  return Promise.race([
-    promise.then((res) => {
-      clearTimeout(timeoutId);
-      return res;
-    }),
-    timeoutPromise
-  ]);
 }
 
 function normalizePlatform(platform: string | undefined | null): "shopline" | "shopify" | "shoplazza" {
@@ -443,36 +325,48 @@ router.post("/", async (req, res) => {
     }
     const existingToken = existingStore?.[tokenField] || "";
     const token = submittedToken || existingToken;
+    const confirmTimezoneChange = req.body?.confirmTimezoneChange === true || req.body?.confirmTimezoneChange === "true";
 
-    // Best-effort Timezone detection
-    let resolvedTimezone = "America/Los_Angeles";
+    let resolvedTimezone: string | null = null;
     const warnings: string[] = [];
-    try {
-      if (token && normalizedDomain) {
-        const fallTz = timezone || existingStore?.timezone || "America/Los_Angeles";
-        resolvedTimezone = await withTimeout(
-          detectStoreTimezone(
-            actualPlatform,
-            normalizedDomain,
-            token,
-            fallTz
-          ),
-          2000,
-          fallTz
-        );
-      } else {
-        resolvedTimezone = timezone || existingStore?.timezone || "America/Los_Angeles";
-      }
-    } catch (tzErr) {
-      warnings.push("Timezone detection failed, store was saved with fallback timezone.");
-      resolvedTimezone = normalizeTimezone(timezone || existingStore?.timezone, { domain: normalizedDomain, name: normalizedName });
-      console.error("[Stores Route] Timezone detection error:", tzErr);
+
+    if (token && normalizedDomain) {
+      resolvedTimezone = await detectStoreTimezone(
+        actualPlatform,
+        normalizedDomain,
+        token,
+        timezone || existingStore?.timezone || null
+      );
+    } else {
+      resolvedTimezone = normalizeIanaTimezoneOrNull(timezone || existingStore?.timezone || null);
     }
 
-    resolvedTimezone = normalizeTimezone(resolvedTimezone, {
-      domain: normalizedDomain,
-      name: normalizedName
-    });
+    if (!resolvedTimezone) {
+      return res.status(400).json({
+        success: false,
+        error: "STORE_TIMEZONE_UNVERIFIED",
+        details: "Store timezone must be verified from the platform Shop API or supplied as a valid IANA timezone when no token/domain is available."
+      });
+    }
+
+    if (existingStore) {
+      const previousTimezone = normalizeIanaTimezoneOrNull(existingStore.timezone);
+      if (previousTimezone && previousTimezone !== resolvedTimezone) {
+        const affectedOrderCount = await prisma.order.count({ where: { storeId: existingStore.id } });
+        if (affectedOrderCount > 0 && !confirmTimezoneChange) {
+          return res.status(409).json({
+            success: false,
+            error: "STORE_TIMEZONE_CHANGED",
+            storeId: existingStore.id,
+            previousTimezone,
+            platformTimezone: resolvedTimezone,
+            affectedOrderCount,
+            start: null,
+            end: null
+          });
+        }
+      }
+    }
 
     let savedStore: any = null;
     let responseMode: "created" | "updated_by_id" | "updated_existing_by_name" = "created";

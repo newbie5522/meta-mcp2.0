@@ -5,9 +5,11 @@ import {
   normalizeTimezone, 
   getTzOffset, 
   getStoreLocalDate, 
-  getStoreLocalDatetime 
+  getStoreLocalDatetime,
+  requireVerifiedIanaTimezone
 } from "../utils/timezone.js";
 import { extractOrderLedgerAmount } from "./store-ledger.service.js";
+import type { StoreTimezoneSource } from "./store-timezone.service.js";
 
 export type StorePlatform = "shopline" | "shopify" | "shoplazza";
 
@@ -302,49 +304,10 @@ export function extractOffset(text: string | null | undefined): string | null {
 }
 
 export function determineTimezoneSource(
-  configuredTz: string | null | undefined,
-  domain: string,
-  name: string
-): "manual" | "platform_shop_api" | "normalized_alias" | "system_default" {
-  if (!configuredTz) {
-    return "system_default";
-  }
-
-  const isBaslayer = 
-    (domain && domain.toLowerCase().includes("baslayer")) ||
-    (name && name.toLowerCase().includes("baslayer"));
-
-  if (isBaslayer) {
-    return "normalized_alias";
-  }
-
-  const trimmed = configuredTz.trim();
-  const lower = trimmed.toLowerCase();
-
-  if (
-    lower === "us/pacific" || 
-    lower === "pacific time" || 
-    lower === "pst" || 
-    lower === "pdt" || 
-    lower.includes("gmt-7") || 
-    lower.includes("utc-7") || 
-    lower.includes("gmt-07") || 
-    lower.includes("utc-07") ||
-    lower.includes("gmt -07") ||
-    lower.includes("utc -07") ||
-    lower.includes("gmt-") ||
-    lower.includes("gmt+") ||
-    lower.includes("utc-") ||
-    lower.includes("utc+")
-  ) {
-    return "normalized_alias";
-  }
-
-  if (trimmed.includes("/")) {
-    return "platform_shop_api";
-  }
-
-  return "manual";
+  configuredTz: string | null | undefined
+): StoreTimezoneSource {
+  requireVerifiedIanaTimezone(configuredTz);
+  return "persisted_verified";
 }
 
 /**
@@ -358,6 +321,9 @@ export async function fetchStoreOrdersCanonical(params: {
   startDate: string;
   endDate: string;
   timezone: string;
+  timezoneSource?: StoreTimezoneSource;
+  timezoneVerifiedAt?: string;
+  platformTimezoneRaw?: string | null;
   storeName?: string;
   baseline?: {
     orders?: number;
@@ -370,7 +336,9 @@ export async function fetchStoreOrdersCanonical(params: {
     platform: StorePlatform;
     timezoneBefore: string;
     timezoneAfter: string;
-    timezoneSource: "manual" | "platform_shop_api" | "normalized_alias" | "system_default";
+    timezoneSource: StoreTimezoneSource;
+    timezoneVerifiedAt?: string;
+    platformTimezoneRaw?: string | null;
     requestStartAt: string;
     requestEndAt: string;
     expandedStartAt: string;
@@ -401,8 +369,7 @@ export async function fetchStoreOrdersCanonical(params: {
   };
 }> {
   const timezoneBefore = params.timezone;
-  const storeContext = { id: params.storeId, domain: params.domain };
-  const storeTimezone = normalizeTimezone(timezoneBefore, storeContext);
+  const storeTimezone = requireVerifiedIanaTimezone(timezoneBefore);
   
   const offset = getTzOffset(storeTimezone, params.startDate);
   
@@ -675,7 +642,7 @@ export async function fetchStoreOrdersCanonical(params: {
     }
   }
   const observedOrderOffsets = Array.from(observedOrderOffsetsSet);
-  const timezoneSource = determineTimezoneSource(timezoneBefore, params.domain, params.storeName || "");
+  const timezoneSource = params.timezoneSource || "persisted_verified";
 
   return {
     orders: canonicalOrders,
@@ -685,6 +652,8 @@ export async function fetchStoreOrdersCanonical(params: {
       timezoneBefore,
       timezoneAfter: storeTimezone,
       timezoneSource,
+      timezoneVerifiedAt: params.timezoneVerifiedAt,
+      platformTimezoneRaw: params.platformTimezoneRaw ?? null,
       requestStartAt,
       requestEndAt,
       expandedStartAt,
