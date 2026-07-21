@@ -12,7 +12,12 @@ const { prismaMock } = vi.hoisted(() => ({
 vi.mock("../../db/index.js", () => ({ default: prismaMock }));
 vi.mock("../utils.js", () => ({ normalizeMetaAccountId: (value: string) => value }));
 
-import { createCreativeAnalyzeHandler, createDataCenterHierarchyHandler } from "./data-center.routes";
+import {
+  audienceMetaMetric,
+  createCreativeAnalyzeHandler,
+  createDataCenterHierarchyHandler,
+  reconcileAudienceCoverageWithFactRows
+} from "./data-center.routes";
 
 function responseMock() {
   const response: any = {
@@ -35,6 +40,53 @@ async function invoke(handler: any, query: any) {
   await handler({ query }, response);
   return response;
 }
+
+describe("Audience coverage route helpers", () => {
+  const row = (date = "2026-07-19") => ({ date, spend: 10 });
+
+  it("AUD-ROUTE-01 NOT_SYNCED + dbRows > 0 resolves PARTIAL_COVERAGE", () => {
+    const coverage = reconcileAudienceCoverageWithFactRows({ status: "NOT_SYNCED" }, [row()]);
+    expect(coverage.status).toBe("PARTIAL_COVERAGE");
+    expect(coverage.allowCurrentFactsWhileRunning).toBe(false);
+    expect(coverage.rangeRowCount).toBe(1);
+  });
+
+  it("AUD-ROUTE-02 TRUE_EMPTY + dbRows > 0 resolves PARTIAL_COVERAGE", () => {
+    expect(reconcileAudienceCoverageWithFactRows({ status: "TRUE_EMPTY" }, [row()]).status).toBe("PARTIAL_COVERAGE");
+  });
+
+  it("AUD-ROUTE-03 NOT_SYNCED + dbRows = 0 keeps rows unavailable and metrics null", () => {
+    const coverage = reconcileAudienceCoverageWithFactRows({ status: "NOT_SYNCED" }, []);
+    expect(coverage.status).toBe("NOT_SYNCED");
+    expect(audienceMetaMetric(coverage, false, 10, "additive")).toBeNull();
+  });
+
+  it("AUD-ROUTE-04 TRUE_EMPTY + dbRows = 0 renders additive zero and ratios null", () => {
+    const coverage = reconcileAudienceCoverageWithFactRows({ status: "TRUE_EMPTY" }, []);
+    expect(audienceMetaMetric(coverage, false, 10, "additive")).toBe(0);
+    expect(audienceMetaMetric(coverage, false, 1.5, "ratio")).toBeNull();
+  });
+
+  it("AUD-ROUTE-05 SYNC_RUNNING + dbRows > 0 allows current persisted facts", () => {
+    const coverage = reconcileAudienceCoverageWithFactRows({ status: "SYNC_RUNNING" }, [row()]);
+    expect(coverage.status).toBe("SYNC_RUNNING");
+    expect(coverage.allowCurrentFactsWhileRunning).toBe(true);
+    expect(audienceMetaMetric(coverage, true, 10, "additive")).toBe(10);
+  });
+
+  it("AUD-ROUTE-06 ERROR + dbRows > 0 keeps rows and metrics hidden", () => {
+    const coverage = reconcileAudienceCoverageWithFactRows({ status: "ERROR" }, [row()]);
+    expect(coverage.status).toBe("ERROR");
+    expect(coverage.allowCurrentFactsWhileRunning).toBe(false);
+    expect(audienceMetaMetric(coverage, true, 10, "additive")).toBeNull();
+  });
+
+  it("AUD-ROUTE-09 exact row dates are carried into effective coverage", () => {
+    const coverage = reconcileAudienceCoverageWithFactRows({ status: "PARTIAL_COVERAGE" }, [row("2026-07-18"), row("2026-07-19")]);
+    expect(coverage.earliestAvailableDate).toBe("2026-07-18");
+    expect(coverage.latestAvailableDate).toBe("2026-07-19");
+  });
+});
 
 describe("Data Center canonical hierarchy handlers", () => {
   let getCanonicalAdHierarchy: any;

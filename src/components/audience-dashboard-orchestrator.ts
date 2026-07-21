@@ -22,7 +22,8 @@ export type AudienceRequestContext = {
 export function buildAudienceClearedState() {
   return {
     data: [],
-    summary: null,
+    metaSummary: null,
+    storeSummary: null,
     orderCountryRows: [],
     metaCoverage: null,
     storeCoverage: null,
@@ -58,6 +59,72 @@ export function shouldApplyAudienceSourceResult(sourceRequestKey: string, curren
   return sourceRequestKey === currentRequestKey;
 }
 
+export function audienceMetaRowsAllowed(coverage: any) {
+  const status = String(coverage?.status || "").toUpperCase();
+  return (
+    status === "READY" ||
+    status === "PARTIAL_COVERAGE" ||
+    (status === "SYNC_RUNNING" && coverage?.allowCurrentFactsWhileRunning === true)
+  );
+}
+
+export function extractAudienceMetaSummary(payload: any) {
+  return payload?.summary?.meta || {
+    spend: payload?.summary?.totalSpend ?? null,
+    impressions: payload?.summary?.totalImpressions ?? null,
+    clicks: payload?.summary?.totalClicks ?? null,
+    purchases: payload?.summary?.totalPurchases ?? null,
+    purchaseValue: payload?.summary?.totalPurchaseValue ?? null,
+    ctr: payload?.summary?.ctr ?? null,
+    cpc: payload?.summary?.cpc ?? null,
+    cpm: payload?.summary?.cpm ?? null,
+    cpa: payload?.summary?.cpa ?? null,
+    roas: payload?.summary?.roas ?? null
+  };
+}
+
+function metaSummaryHasCurrentValues(metaSummary: any) {
+  return Boolean(
+    metaSummary &&
+      (
+        metaSummary.spend !== null ||
+        metaSummary.impressions !== null ||
+        metaSummary.clicks !== null ||
+        metaSummary.purchases !== null ||
+        metaSummary.purchaseValue !== null
+      )
+  );
+}
+
+function failClosedMetaResult(input: {
+  metaCoverage: any;
+  responseDateRange: any;
+  lastGoodData: any;
+  context: AudienceRequestContext;
+  reason: string;
+  message: string;
+}) {
+  return {
+    data: [],
+    metaSummary: null,
+    metaCoverage: input.metaCoverage,
+    dataHealth: {
+      status: "RESPONSE_SCOPE_INCONSISTENT",
+      reason: input.reason,
+      message: input.message,
+      dateRange: {
+        startDate: input.context.startStr,
+        endDate: input.context.endStr,
+        timezone: "America/Los_Angeles"
+      }
+    },
+    viewNotice: input.message,
+    responseDateRange: input.responseDateRange,
+    nextLastGoodData: input.lastGoodData,
+    toastError: true
+  };
+}
+
 export function resolveAudienceMetaSourceResult(input: {
   payload?: any;
   error?: any;
@@ -69,15 +136,15 @@ export function resolveAudienceMetaSourceResult(input: {
   if (error) {
     return {
       data: [],
-      summary: null,
+      metaSummary: null,
       metaCoverage: { status: "ERROR" },
       dataHealth: {
         status: "ERROR",
         reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
-        message: "当前受众筛选周期请求失败，未使用旧数据。",
+        message: "Current audience request failed; old data was not reused.",
         dateRange: { startDate: context.startStr, endDate: context.endStr, timezone: "America/Los_Angeles" }
       },
-      viewNotice: "当前受众筛选周期请求失败，未展示旧数据。",
+      viewNotice: "Current audience request failed; old data was not displayed.",
       responseDateRange: null,
       nextLastGoodData: lastGoodData,
       toastError: true
@@ -87,28 +154,29 @@ export function resolveAudienceMetaSourceResult(input: {
   if (!payload) {
     return {
       data: [],
-      summary: null,
+      metaSummary: null,
       metaCoverage: null,
       dataHealth: {
         status: "EMPTY_RESPONSE",
         reason: "NO_PAYLOAD_FOR_CURRENT_REQUEST",
-        message: "当前受众筛选周期没有返回有效数据，未使用旧数据。",
+        message: "Current audience request returned no usable payload.",
         dateRange: { startDate: context.startStr, endDate: context.endStr, timezone: "America/Los_Angeles" }
       },
-      viewNotice: "当前受众筛选周期没有返回有效数据。",
+      viewNotice: "Current audience request returned no usable payload.",
       responseDateRange: null,
       nextLastGoodData: lastGoodData
     };
   }
 
-  const rows = payload.rows || [];
-  const metaCoverage = payload.metaCoverage || payload.coverage?.meta || null;
+  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+  const metaCoverage = payload?.metaCoverage || (payload?.coverage?.status ? payload.coverage : payload?.coverage?.meta) || null;
   const responseDateRange = payload.dateRange || payload.appliedFilters || null;
+  const metaSummary = extractAudienceMetaSummary(payload);
 
   if (isDateRangeMismatch(payload, context.startStr, context.endStr)) {
     return {
       data: [],
-      summary: null,
+      metaSummary: null,
       metaCoverage,
       dataHealth: { status: "DATE_RANGE_MISMATCH", message: DATE_RANGE_MISMATCH_MESSAGE },
       viewNotice: DATE_RANGE_MISMATCH_MESSAGE,
@@ -122,7 +190,7 @@ export function resolveAudienceMetaSourceResult(input: {
     if (safeLastGoodData) {
       return {
         data: safeLastGoodData.rows || safeLastGoodData.data || [],
-        summary: safeLastGoodData.summary || null,
+        metaSummary: safeLastGoodData.metaSummary || null,
         metaCoverage: safeLastGoodData.metaCoverage || null,
         dataHealth: safeLastGoodData.dataHealth || null,
         viewNotice: CURRENT_RANGE_NOT_READY_MESSAGE,
@@ -133,19 +201,41 @@ export function resolveAudienceMetaSourceResult(input: {
     }
   }
 
+  if (rows.length > 0 && !audienceMetaRowsAllowed(metaCoverage)) {
+    return failClosedMetaResult({
+      metaCoverage,
+      responseDateRange,
+      lastGoodData,
+      context,
+      reason: "ROWS_VISIBLE_WHILE_COVERAGE_NOT_READY",
+      message: "Audience response coverage and rows are inconsistent; possible stale rows were not displayed."
+    });
+  }
+
+  if (rows.length > 0 && !metaSummaryHasCurrentValues(metaSummary)) {
+    return failClosedMetaResult({
+      metaCoverage,
+      responseDateRange,
+      lastGoodData,
+      context,
+      reason: "ROWS_VISIBLE_WITHOUT_CURRENT_SUMMARY",
+      message: "Audience response returned rows without a current Meta summary; possible stale rows were not displayed."
+    });
+  }
+
   const nextLastGoodData = makeLastGoodData(context.requestKey, rows, {
     rows,
-    summary: payload.summary || null,
+    metaSummary,
     dataHealth: payload.dataHealth || null,
     metaCoverage
   });
 
   return {
     data: rows,
-    summary: payload.summary || null,
+    metaSummary,
     metaCoverage,
     dataHealth: payload.dataHealth || null,
-    viewNotice: null,
+    viewNotice: String(metaCoverage?.status || "").toUpperCase() === "PARTIAL_COVERAGE" ? metaCoverage?.message || null : null,
     responseDateRange,
     nextLastGoodData
   };
@@ -161,6 +251,7 @@ export function resolveAudienceStoreSourceResult(input: {
   if (context.activeTab !== "country") {
     return {
       orderCountryRows: [],
+      storeSummary: null,
       countriesHealth: null,
       storeCoverage: null,
       countriesLoading: false
@@ -171,10 +262,11 @@ export function resolveAudienceStoreSourceResult(input: {
     const errData = error?.response?.data;
     return {
       orderCountryRows: [],
+      storeSummary: null,
       countriesHealth: {
         status: "COUNTRIES_REQUEST_FAILED",
         reason: "ORDER_COUNTRY_AUXILIARY_REQUEST_FAILED",
-        message: errData?.message || errData?.details || errData?.error || error?.message || "店铺订单国家辅助请求失败。",
+        message: errData?.message || errData?.details || errData?.error || error?.message || "Store country auxiliary request failed.",
         dateRange: { startDate: context.startStr, endDate: context.endStr, timezone: "America/Los_Angeles" }
       },
       storeCoverage: { status: "ERROR" },
@@ -182,10 +274,50 @@ export function resolveAudienceStoreSourceResult(input: {
     };
   }
 
+  if (!payload) {
+    return {
+      orderCountryRows: [],
+      storeSummary: null,
+      countriesHealth: null,
+      storeCoverage: null,
+      countriesLoading: false
+    };
+  }
+
+  const storeCoverage = payload?.storeCoverage || payload?.coverage || null;
+
+  if (isDateRangeMismatch(payload, context.startStr, context.endStr)) {
+    return {
+      orderCountryRows: [],
+      storeSummary: null,
+      countriesHealth: {
+        status: "DATE_RANGE_MISMATCH",
+        reason: "STORE_COUNTRY_DATE_RANGE_MISMATCH",
+        message: DATE_RANGE_MISMATCH_MESSAGE
+      },
+      storeCoverage,
+      countriesLoading: false
+    };
+  }
+
+  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+  const summary = payload?.summary || null;
+  const rowOrderCount = rows.reduce((sum, row) => sum + Number(row.orderCount || row.orders || 0), 0);
+  const rowRevenue = rows.reduce((sum, row) => sum + Number(row.revenue || row.totalRevenue || row.orderRevenue || 0), 0);
+  const storeSummary = {
+    orderCount: summary?.orderCount === null ? null : Number(summary?.orderCount ?? rowOrderCount),
+    revenue: summary?.revenue === null ? null : Number(summary?.revenue ?? rowRevenue),
+    averageOrderValue: summary?.averageOrderValue === null
+      ? null
+      : Number(summary?.averageOrderValue ?? (rowOrderCount > 0 ? rowRevenue / rowOrderCount : 0)),
+    countryCount: summary?.countryCount === null ? null : Number(summary?.countryCount ?? rows.length)
+  };
+
   return {
-    orderCountryRows: payload?.rows || [],
+    orderCountryRows: rows,
+    storeSummary,
     countriesHealth: payload?.dataHealth || null,
-    storeCoverage: payload?.storeCoverage || payload?.coverage || null,
+    storeCoverage,
     countriesLoading: false
   };
 }

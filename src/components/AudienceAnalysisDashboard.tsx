@@ -45,7 +45,8 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   // Data State
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any[]>([]);
-  const [summary, setSummary] = useState<any | null>(null);
+  const [metaSummary, setMetaSummary] = useState<any | null>(null);
+  const [audienceStoreSummary, setAudienceStoreSummary] = useState<any | null>(null);
   const [dataHealth, setDataHealth] = useState<any | null>(null);
   const [metaCoverage, setMetaCoverage] = useState<any | null>(null);
   const [storeCoverage, setStoreCoverage] = useState<any | null>(null);
@@ -77,12 +78,32 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   });
   const currentRequestKeyRef = useRef(currentRequestKey);
   currentRequestKeyRef.current = currentRequestKey;
+  const audienceRequestIdRef = useRef(0);
+  const audienceAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    setViewNotice(null);
+    audienceAbortRef.current?.abort();
+    audienceRequestIdRef.current += 1;
+    const cleared = buildAudienceClearedState();
+    setData(cleared.data);
+    setMetaSummary(cleared.metaSummary);
+    setAudienceStoreSummary(cleared.storeSummary);
+    setOrderCountryRows(cleared.orderCountryRows);
+    setMetaCoverage(cleared.metaCoverage);
+    setStoreCoverage(cleared.storeCoverage);
+    setDataHealth(cleared.dataHealth);
+    setCountriesHealth(cleared.countriesHealth);
+    setViewNotice(cleared.viewNotice);
     setResponseDateRange(null);
     setSyncStatus({ status: "idle" });
+    setLastGoodData(previous => previous?.requestKey === currentRequestKey ? previous : null);
   }, [currentRequestKey]);
+
+  useEffect(() => {
+    return () => {
+      audienceAbortRef.current?.abort();
+    };
+  }, []);
 
   // Fetch Filters (Stores and Accounts) from central endpoint
   useEffect(() => {
@@ -108,11 +129,20 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
   // Load audience insights from server matching the exact requirements
   const fetchAudienceInsights = async () => {
+    audienceAbortRef.current?.abort();
+    const controller = new AbortController();
+    audienceAbortRef.current = controller;
+    const requestId = ++audienceRequestIdRef.current;
+    const requestKey = currentRequestKey;
+    const isCurrent = () =>
+      requestId === audienceRequestIdRef.current &&
+      requestKey === currentRequestKeyRef.current &&
+      !controller.signal.aborted;
+
     setLoading(true);
     try {
       const startStr = format(startDate, "yyyy-MM-dd");
       const endStr = format(endDate, "yyyy-MM-dd");
-      const requestKey = currentRequestKey;
       const context: AudienceRequestContext = {
         requestKey,
         startStr,
@@ -127,7 +157,8 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
       const { metaParams, storeParams } = buildAudienceSourceRequestParams(context);
       const cleared = buildAudienceClearedState();
       setData(cleared.data);
-      setSummary(cleared.summary);
+      setMetaSummary(cleared.metaSummary);
+      setAudienceStoreSummary(cleared.storeSummary);
       setOrderCountryRows(cleared.orderCountryRows);
       setMetaCoverage(cleared.metaCoverage);
       setStoreCoverage(cleared.storeCoverage);
@@ -141,14 +172,14 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         setCountriesLoading(false);
       }
 
-      const metaPromise = axios.get("/api/data-center/audience", { params: metaParams });
+      const metaPromise = axios.get("/api/data-center/audience", { params: metaParams, signal: controller.signal });
       const storePromise = storeParams
-        ? axios.get("/api/data-center/countries", { params: storeParams })
+        ? axios.get("/api/data-center/countries", { params: storeParams, signal: controller.signal })
         : Promise.resolve({ data: null });
 
       const [metaSettled, storeSettled] = await Promise.allSettled([metaPromise, storePromise]);
 
-      if (shouldApplyAudienceSourceResult(requestKey, currentRequestKeyRef.current)) {
+      if (isCurrent() && shouldApplyAudienceSourceResult(requestKey, currentRequestKeyRef.current)) {
         const metaResult = resolveAudienceMetaSourceResult({
           payload: metaSettled.status === "fulfilled" ? metaSettled.value.data : undefined,
           error: metaSettled.status === "rejected" ? metaSettled.reason : undefined,
@@ -156,35 +187,41 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
           lastGoodData
         });
         setData(metaResult.data);
-        setSummary(metaResult.summary);
+        setMetaSummary(metaResult.metaSummary);
         setDataHealth(metaResult.dataHealth);
         setMetaCoverage(metaResult.metaCoverage);
         setResponseDateRange(metaResult.responseDateRange);
         setViewNotice(metaResult.viewNotice);
         setLastGoodData(metaResult.nextLastGoodData);
-        if (metaResult.toastError) {
+        if ((metaResult as any).toastError) {
           toast.error("加载受众成效分析发生错误");
         }
       }
 
-      if (shouldApplyAudienceSourceResult(requestKey, currentRequestKeyRef.current)) {
+      if (isCurrent() && shouldApplyAudienceSourceResult(requestKey, currentRequestKeyRef.current)) {
         const storeResult = resolveAudienceStoreSourceResult({
           payload: storeSettled.status === "fulfilled" ? storeSettled.value.data : undefined,
           error: storeSettled.status === "rejected" ? storeSettled.reason : undefined,
           context
         });
         setOrderCountryRows(storeResult.orderCountryRows);
+        setAudienceStoreSummary(storeResult.storeSummary);
         setCountriesHealth(storeResult.countriesHealth);
         setStoreCoverage(storeResult.storeCoverage);
         setCountriesLoading(storeResult.countriesLoading);
       }
 
     } catch (err: any) {
+      if (axios.isCancel(err) || err?.code === "ERR_CANCELED") {
+        return;
+      }
       console.error("Failed to fetch audience insights", err);
-      setLoading(false);
       toast.error("加载受众成效分析发生错误");
     } finally {
-      setLoading(false);
+      if (isCurrent()) {
+        setLoading(false);
+        setCountriesLoading(false);
+      }
     }
   };
 
@@ -310,8 +347,8 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   const handleAskAICopilot = (row: any) => {
     const formattedCtr = (row.ctr * 100).toFixed(4);
     const suggestion = getSuggestionAction(row);
-    const totalSpend = summary?.totalSpend ?? 1;
-    const totalPurchases = summary?.totalPurchases ?? 1;
+    const totalSpend = metaSummary?.spend ?? 1;
+    const totalPurchases = metaSummary?.purchases ?? 1;
     const spendRatio = totalSpend > 0 ? (row.spend / totalSpend) * 100 : 0;
     const purchaseRatio = totalPurchases > 0 ? (row.purchases / totalPurchases) * 100 : 0;
     
@@ -355,35 +392,23 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   };
 
   // Safe Getters for Core Summary Cards (direct consumption from API)
-  const visibleMetaCountryRows = useMemo(() => data.filter(row =>
+  const metaStatus = String(metaCoverage?.status || dataHealth?.status || "").toUpperCase();
+  const canRenderMetaRows =
+    metaStatus === "READY" ||
+    metaStatus === "PARTIAL_COVERAGE" ||
+    (metaStatus === "SYNC_RUNNING" && metaCoverage?.allowCurrentFactsWhileRunning === true);
+  const safeMetaRows = useMemo(() => canRenderMetaRows ? data : [], [canRenderMetaRows, data]);
+  const visibleMetaCountryRows = useMemo(() => safeMetaRows.filter(row =>
     activeTab !== "country" ||
       Number(row.spend || 0) > 0 ||
       Number(row.impressions || 0) > 0 ||
       Number(row.clicks || 0) > 0 ||
       Number(row.purchases || row.metaPurchases || 0) > 0
-  ), [data, activeTab]);
+  ), [safeMetaRows, activeTab]);
   const visibleOrderCountryRows = useMemo(() => orderCountryRows.filter(row =>
     Number(row.orderCount || row.orders || 0) > 0 ||
       Number(row.revenue || row.totalRevenue || row.orderRevenue || 0) > 0
   ), [orderCountryRows]);
-  const metaSummary = summary?.meta || {
-    spend: summary?.totalSpend ?? null,
-    impressions: summary?.totalImpressions ?? null,
-    clicks: summary?.totalClicks ?? null,
-    purchases: summary?.totalPurchases ?? null,
-    purchaseValue: summary?.totalPurchaseValue ?? null,
-    ctr: summary?.ctr ?? null,
-    cpc: summary?.cpc ?? null,
-    cpm: summary?.cpm ?? null,
-    cpa: summary?.cpa ?? null,
-    roas: summary?.roas ?? null
-  };
-  const storeSummary = summary?.store ?? {
-    orderCount: visibleOrderCountryRows.reduce((sum, row) => sum + Number(row.orderCount || row.orders || 0), 0),
-    revenue: visibleOrderCountryRows.reduce((sum, row) => sum + Number(row.revenue || row.totalRevenue || row.orderRevenue || 0), 0),
-    averageOrderValue: 0,
-    countryCount: visibleOrderCountryRows.length
-  };
   const storeOrderCountFromRows = visibleOrderCountryRows.reduce(
     (sum, row) => sum + Number(row.orderCount || row.orders || 0),
     0
@@ -393,10 +418,10 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     0
   );
   const normalizedStoreSummary = {
-    orderCount: storeSummary.orderCount === null ? null : Number(storeSummary.orderCount ?? storeOrderCountFromRows),
-    revenue: storeSummary.revenue === null ? null : Number(storeSummary.revenue ?? storeRevenueFromRows),
-    averageOrderValue: storeSummary.averageOrderValue === null ? null : Number(storeSummary.averageOrderValue ?? 0),
-    countryCount: storeSummary.countryCount === null ? null : Number(storeSummary.countryCount ?? visibleOrderCountryRows.length)
+    orderCount: audienceStoreSummary?.orderCount === null || audienceStoreSummary?.orderCount === undefined ? null : Number(audienceStoreSummary.orderCount),
+    revenue: audienceStoreSummary?.revenue === null || audienceStoreSummary?.revenue === undefined ? null : Number(audienceStoreSummary.revenue),
+    averageOrderValue: audienceStoreSummary?.averageOrderValue === null || audienceStoreSummary?.averageOrderValue === undefined ? null : Number(audienceStoreSummary.averageOrderValue),
+    countryCount: audienceStoreSummary?.countryCount === null || audienceStoreSummary?.countryCount === undefined ? null : Number(audienceStoreSummary.countryCount)
   };
   useEffect(() => {
     if (
@@ -421,16 +446,16 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     startStrKey,
     endStrKey
   ]);
-  const totalSpend = metaSummary.spend === null ? null : Number(metaSummary.spend);
-  const totalImpressions = metaSummary.impressions === null ? null : Number(metaSummary.impressions);
-  const totalClicks = metaSummary.clicks === null ? null : Number(metaSummary.clicks);
-  const totalPurchases = metaSummary.purchases === null ? null : Number(metaSummary.purchases);
-  const totalPurchaseValue = metaSummary.purchaseValue === null ? null : Number(metaSummary.purchaseValue);
-  const ctrVal = metaSummary.ctr === null ? null : Number(metaSummary.ctr) * 100;
-  const cpcVal = metaSummary.cpc === null ? null : Number(metaSummary.cpc);
-  const cpmVal = metaSummary.cpm === null ? null : Number(metaSummary.cpm);
-  const cpaVal = metaSummary.cpa === null ? null : Number(metaSummary.cpa);
-  const roasVal = metaSummary.roas === null ? null : Number(metaSummary.roas);
+  const totalSpend = metaSummary?.spend === null || metaSummary?.spend === undefined ? null : Number(metaSummary.spend);
+  const totalImpressions = metaSummary?.impressions === null || metaSummary?.impressions === undefined ? null : Number(metaSummary.impressions);
+  const totalClicks = metaSummary?.clicks === null || metaSummary?.clicks === undefined ? null : Number(metaSummary.clicks);
+  const totalPurchases = metaSummary?.purchases === null || metaSummary?.purchases === undefined ? null : Number(metaSummary.purchases);
+  const totalPurchaseValue = metaSummary?.purchaseValue === null || metaSummary?.purchaseValue === undefined ? null : Number(metaSummary.purchaseValue);
+  const ctrVal = metaSummary?.ctr === null || metaSummary?.ctr === undefined ? null : Number(metaSummary.ctr) * 100;
+  const cpcVal = metaSummary?.cpc === null || metaSummary?.cpc === undefined ? null : Number(metaSummary.cpc);
+  const cpmVal = metaSummary?.cpm === null || metaSummary?.cpm === undefined ? null : Number(metaSummary.cpm);
+  const cpaVal = metaSummary?.cpa === null || metaSummary?.cpa === undefined ? null : Number(metaSummary.cpa);
+  const roasVal = metaSummary?.roas === null || metaSummary?.roas === undefined ? null : Number(metaSummary.roas);
   const moneyOrNA = (value: number | null, digits = 2) => value === null ? "N/A" : `$${value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
   const numberOrNA = (value: number | null) => value === null ? "N/A" : value.toLocaleString();
 
@@ -441,20 +466,20 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   };
 
   // Unified data source for both charts and table (limited to Top 10 for country to prevent label skipping/overlap)
-  const tableRows = activeTab === "country" ? visibleMetaCountryRows : data;
+  const tableRows = activeTab === "country" ? visibleMetaCountryRows : safeMetaRows;
 
   const chartRows = useMemo(() => {
     if (activeTab === "country") {
       return visibleMetaCountryRows.slice(0, 10);
     }
-    return data;
-  }, [activeTab, data, visibleMetaCountryRows]);
+    return safeMetaRows;
+  }, [activeTab, safeMetaRows, visibleMetaCountryRows]);
 
   const chartKey = `${activeTab}-${format(startDate, "yyyyMMdd")}-${format(endDate, "yyyyMMdd")}-${selectedStore}-${selectedAccount}-${sortBy}-${chartRows.length}`;
   const isMetaBreakdownMissing = dataHealth?.status === "MISSING_META_BREAKDOWN" || dataHealth?.reason === "META_AUDIENCE_BREAKDOWN_MISSING";
   const shouldShowAudienceNotice =
     !loading &&
-    data.length === 0 &&
+    safeMetaRows.length === 0 &&
     dataHealth?.status &&
     !["READY", "OK"].includes(String(dataHealth.status).toUpperCase());
   const audienceNoticeMessage =
@@ -565,7 +590,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     <div className="flex flex-col gap-6 font-sans">
       
       {/* ⚠️ Data Health Warning Banner (warnings & missing from API) */}
-      {data.length > 0 && dataHealth && (dataHealth.warnings?.length > 0 || dataHealth.missing?.length > 0) && (
+      {safeMetaRows.length > 0 && dataHealth && (dataHealth.warnings?.length > 0 || dataHealth.missing?.length > 0) && (
         <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-1.5 text-xs text-slate-700 shadow-sm">
           <div className="flex items-center gap-2 font-bold mb-1">
             <AlertTriangle className="w-4 h-4 text-slate-500 animate-pulse" />
@@ -712,7 +737,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         responseEndDate={responseDateRange?.endDate}
         latestAvailableDate={metaCoverage?.latestAvailableDate}
         timezone={responseDateRange?.timezone || "America/Los_Angeles"}
-        rowCount={data.length}
+        rowCount={safeMetaRows.length}
         factRows={dataHealth?.factRows}
         status={metaCoverage?.status || dataHealth?.status || "UNKNOWN"}
         level={activeTab}

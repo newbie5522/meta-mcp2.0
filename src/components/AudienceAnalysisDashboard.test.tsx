@@ -10,7 +10,7 @@ import {
 
 function context(overrides: Partial<AudienceRequestContext> = {}): AudienceRequestContext {
   return {
-    requestKey: "audience:2026-07-01:2026-07-07:country",
+    requestKey: "audience:2026-07-01:2026-07-07:country:store-1",
     startStr: "2026-07-01",
     endStr: "2026-07-07",
     selectedStore: "1",
@@ -25,7 +25,7 @@ function context(overrides: Partial<AudienceRequestContext> = {}): AudienceReque
 
 const metaPayload = {
   rows: [{ dimensionValue: "US", spend: 10 }],
-  summary: { totalSpend: 10 },
+  summary: { meta: { spend: 10, impressions: 100, clicks: 5, purchases: 1, purchaseValue: 20, ctr: 0.05, cpc: 2, cpm: 100, cpa: 10, roas: 2 } },
   metaCoverage: { status: "READY", source: "meta" },
   storeCoverage: { status: "STALE_FROM_META" },
   dataHealth: { status: "READY" },
@@ -33,16 +33,19 @@ const metaPayload = {
 };
 
 const storePayload = {
-  rows: [{ country: "US", orderCount: 2 }],
+  rows: [{ country: "US", orderCount: 2, orderRevenue: 30 }],
+  summary: { orderCount: 2, revenue: 30, averageOrderValue: 15, countryCount: 1 },
   dataHealth: { status: "READY" },
-  storeCoverage: { status: "READY", source: "countries" }
+  storeCoverage: { status: "READY", source: "countries" },
+  dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" }
 };
 
 describe("Audience source orchestration contract", () => {
   it("clears Meta and Store source state before a new request", () => {
     expect(buildAudienceClearedState()).toEqual({
       data: [],
-      summary: null,
+      metaSummary: null,
+      storeSummary: null,
       orderCountryRows: [],
       metaCoverage: null,
       storeCoverage: null,
@@ -59,12 +62,13 @@ describe("Audience source orchestration contract", () => {
 
     expect(meta).toMatchObject({
       data: metaPayload.rows,
-      summary: metaPayload.summary,
+      metaSummary: metaPayload.summary.meta,
       metaCoverage: metaPayload.metaCoverage
     });
     expect(meta).not.toHaveProperty("storeCoverage");
     expect(store).toMatchObject({
       orderCountryRows: storePayload.rows,
+      storeSummary: storePayload.summary,
       countriesHealth: storePayload.dataHealth,
       storeCoverage: storePayload.storeCoverage
     });
@@ -77,79 +81,167 @@ describe("Audience source orchestration contract", () => {
 
     expect(store.storeCoverage).toEqual({ status: "READY", source: "countries" });
     expect(meta.metaCoverage).toEqual({ status: "READY", source: "meta" });
-    expect(meta).not.toHaveProperty("storeCoverage");
+    expect(meta).not.toHaveProperty("storeSummary");
   });
 
-  it("allows Meta error and Store success to coexist", () => {
-    const ctx = context();
-    const meta = resolveAudienceMetaSourceResult({ error: new Error("meta failed"), context: ctx, lastGoodData: null });
-    const store = resolveAudienceStoreSourceResult({ payload: storePayload, context: ctx });
-
-    expect(meta.dataHealth.status).toBe("ERROR");
-    expect(store.orderCountryRows).toHaveLength(1);
-    expect(store.storeCoverage.status).toBe("READY");
-  });
-
-  it("allows Meta success and Store error to coexist", () => {
-    const ctx = context();
-    const meta = resolveAudienceMetaSourceResult({ payload: metaPayload, context: ctx, lastGoodData: null });
-    const store = resolveAudienceStoreSourceResult({ error: new Error("store failed"), context: ctx });
-
-    expect(meta.dataHealth.status).toBe("READY");
-    expect(store.orderCountryRows).toEqual([]);
-    expect(store.storeCoverage.status).toBe("ERROR");
-  });
-
-  it("keeps Store success when Meta has a date range mismatch", () => {
-    const ctx = context();
+  it("AUD-ORCH-01 NOT_SYNCED + rows fails closed", () => {
     const meta = resolveAudienceMetaSourceResult({
-      payload: { ...metaPayload, dateRange: { startDate: "2026-06-01", endDate: "2026-06-07" } },
-      context: ctx,
+      payload: { ...metaPayload, metaCoverage: { status: "NOT_SYNCED" } },
+      context: context(),
       lastGoodData: null
     });
-    const store = resolveAudienceStoreSourceResult({ payload: storePayload, context: ctx });
 
     expect(meta.data).toEqual([]);
-    expect(meta.dataHealth.status).toBe("DATE_RANGE_MISMATCH");
-    expect(store.storeCoverage).toEqual(storePayload.storeCoverage);
+    expect(meta.metaSummary).toBeNull();
+    expect(meta.dataHealth.status).toBe("RESPONSE_SCOPE_INCONSISTENT");
   });
 
-  it("preserves only Meta lastGoodData and never restores Store coverage", () => {
+  it("AUD-ORCH-02 TRUE_EMPTY + rows fails closed", () => {
+    const meta = resolveAudienceMetaSourceResult({
+      payload: { ...metaPayload, metaCoverage: { status: "TRUE_EMPTY" } },
+      context: context(),
+      lastGoodData: null
+    });
+
+    expect(meta.data).toEqual([]);
+    expect(meta.metaSummary).toBeNull();
+  });
+
+  it("AUD-ORCH-03 PARTIAL + rows + summary is accepted", () => {
+    const meta = resolveAudienceMetaSourceResult({
+      payload: { ...metaPayload, metaCoverage: { status: "PARTIAL_COVERAGE", message: "partial" } },
+      context: context(),
+      lastGoodData: null
+    });
+
+    expect(meta.data).toHaveLength(1);
+    expect(meta.metaSummary.spend).toBe(10);
+    expect(meta.viewNotice).toBe("partial");
+  });
+
+  it("AUD-ORCH-04 rows + null summary fails closed", () => {
+    const meta = resolveAudienceMetaSourceResult({
+      payload: { ...metaPayload, summary: null },
+      context: context(),
+      lastGoodData: null
+    });
+
+    expect(meta.data).toEqual([]);
+    expect(meta.dataHealth.reason).toBe("ROWS_VISIBLE_WITHOUT_CURRENT_SUMMARY");
+  });
+
+  it("AUD-ORCH-05 Store date mismatch clears Store rows and summary", () => {
+    const store = resolveAudienceStoreSourceResult({
+      payload: { ...storePayload, dateRange: { startDate: "2026-06-01", endDate: "2026-06-07" } },
+      context: context()
+    });
+
+    expect(store.orderCountryRows).toEqual([]);
+    expect(store.storeSummary).toBeNull();
+    expect(store.countriesHealth.status).toBe("DATE_RANGE_MISMATCH");
+  });
+
+  it("AUD-ORCH-06 Store summary falls back to Store response rows when summary is absent", () => {
+    const store = resolveAudienceStoreSourceResult({
+      payload: { ...storePayload, summary: null },
+      context: context()
+    });
+
+    expect(store.storeSummary).toEqual({
+      orderCount: 2,
+      revenue: 30,
+      averageOrderValue: 15,
+      countryCount: 1
+    });
+  });
+
+  it("AUD-ORCH-07 Meta result never supplies Store summary", () => {
+    const meta = resolveAudienceMetaSourceResult({
+      payload: metaPayload,
+      context: context(),
+      lastGoodData: null
+    });
+
+    expect(meta).not.toHaveProperty("storeSummary");
+  });
+
+  it("AUD-ORCH-08 request A does not override request B", () => {
+    expect(shouldApplyAudienceSourceResult("request-A", "request-B")).toBe(false);
+    expect(shouldApplyAudienceSourceResult("request-B", "request-B")).toBe(true);
+  });
+
+  it("AUD-ORCH-10 lastGoodData cross date is rejected", () => {
+    const ctx = context({ requestKey: "audience:2026-07-02:2026-07-07:country:store-1", startStr: "2026-07-02" });
+    const lastGoodData = {
+      requestKey: "audience:2026-07-01:2026-07-07:country:store-1",
+      rows: [{ dimensionValue: "CA", spend: 8 }],
+      metaSummary: { spend: 8 },
+      dataHealth: { status: "READY" },
+      metaCoverage: { status: "READY" }
+    };
+    const meta = resolveAudienceMetaSourceResult({
+      payload: { rows: [], coverage: { status: "SYNC_RUNNING" }, dataHealth: { status: "SYNC_RUNNING" }, allowStaleWhileRunning: true, dateRange: { startDate: "2026-07-02", endDate: "2026-07-07" } },
+      context: ctx,
+      lastGoodData
+    });
+
+    expect(meta.data).toEqual([]);
+    expect((meta as any).preservedLastGoodData).toBeUndefined();
+  });
+
+  it("AUD-ORCH-11 lastGoodData cross Store is rejected", () => {
+    const ctx = context({ requestKey: "audience:2026-07-01:2026-07-07:country:store-2", selectedStore: "2" });
+    const lastGoodData = {
+      requestKey: "audience:2026-07-01:2026-07-07:country:store-1",
+      rows: [{ dimensionValue: "CA", spend: 8 }],
+      metaSummary: { spend: 8 },
+      dataHealth: { status: "READY" },
+      metaCoverage: { status: "READY" }
+    };
+    const meta = resolveAudienceMetaSourceResult({
+      payload: { rows: [], coverage: { status: "SYNC_RUNNING" }, dataHealth: { status: "SYNC_RUNNING" }, allowStaleWhileRunning: true, dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" } },
+      context: ctx,
+      lastGoodData
+    });
+
+    expect(meta.data).toEqual([]);
+    expect((meta as any).preservedLastGoodData).toBeUndefined();
+  });
+
+  it("AUD-ORCH-12 same-key running reuse requires allowStaleWhileRunning", () => {
     const ctx = context();
     const lastGoodData = {
       requestKey: ctx.requestKey,
       rows: [{ dimensionValue: "CA", spend: 8 }],
-      summary: { totalSpend: 8 },
+      metaSummary: { spend: 8, impressions: 1, clicks: 1, purchases: 1, purchaseValue: 8 },
       dataHealth: { status: "READY" },
-      metaCoverage: { status: "READY", source: "last-good-meta" },
-      storeCoverage: { status: "STALE_STORE_SHOULD_NOT_APPLY" }
+      metaCoverage: { status: "READY", source: "last-good-meta" }
     };
-    const meta = resolveAudienceMetaSourceResult({
-      payload: { rows: [], dataHealth: { status: "SYNC_RUNNING" }, allowStaleWhileRunning: true, dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" } },
+    const blocked = resolveAudienceMetaSourceResult({
+      payload: { rows: [], coverage: { status: "SYNC_RUNNING" }, dataHealth: { status: "SYNC_RUNNING" }, dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" } },
       context: ctx,
       lastGoodData
     });
-    const store = resolveAudienceStoreSourceResult({ payload: storePayload, context: ctx });
+    const preserved = resolveAudienceMetaSourceResult({
+      payload: { rows: [], coverage: { status: "SYNC_RUNNING" }, dataHealth: { status: "SYNC_RUNNING" }, allowStaleWhileRunning: true, dateRange: { startDate: "2026-07-01", endDate: "2026-07-07" } },
+      context: ctx,
+      lastGoodData
+    });
 
-    expect(meta.data).toEqual(lastGoodData.rows);
-    expect(meta.metaCoverage).toEqual(lastGoodData.metaCoverage);
-    expect(meta).not.toHaveProperty("storeCoverage");
-    expect(store.storeCoverage).toEqual(storePayload.storeCoverage);
-  });
-
-  it("rejects stale request A after switching to request B", () => {
-    expect(shouldApplyAudienceSourceResult("request-A", "request-B")).toBe(false);
-    expect(shouldApplyAudienceSourceResult("request-B", "request-B")).toBe(true);
+    expect(blocked.data).toEqual([]);
+    expect(preserved.data).toEqual(lastGoodData.rows);
+    expect(preserved.metaSummary).toEqual(lastGoodData.metaSummary);
   });
 
   it("clears Store source state when active tab is not country", () => {
     const store = resolveAudienceStoreSourceResult({
       payload: storePayload,
-      context: context({ activeTab: "age_gender" })
+      context: context({ activeTab: "age" })
     });
 
     expect(store).toEqual({
       orderCountryRows: [],
+      storeSummary: null,
       countriesHealth: null,
       storeCoverage: null,
       countriesLoading: false
@@ -176,16 +268,5 @@ describe("Audience source orchestration contract", () => {
       minSpend: "10",
       includeUnmappedSpend: "true"
     });
-  });
-
-  it("never takes Store coverage from the Meta audience payload", () => {
-    const meta = resolveAudienceMetaSourceResult({
-      payload: metaPayload,
-      context: context(),
-      lastGoodData: null
-    });
-
-    expect(meta.metaCoverage).toEqual(metaPayload.metaCoverage);
-    expect(meta).not.toHaveProperty("storeCoverage");
   });
 });

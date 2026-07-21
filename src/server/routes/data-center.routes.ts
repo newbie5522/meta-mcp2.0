@@ -112,6 +112,91 @@ function coverageMetric(coverage: any, value: number) {
     : null;
 }
 
+export function reconcileAudienceCoverageWithFactRows(coverage: any, dbRows: any[]) {
+  const rows = Array.isArray(dbRows) ? dbRows : [];
+  const rowDates = rows
+    .map(row => String(row?.date || ""))
+    .filter(value => /^\d{4}-\d{2}-\d{2}$/.test(value))
+    .sort();
+  const factRowCount = rows.length;
+  const status = String(coverage?.status || "").toUpperCase();
+  const earliestFromRows = rowDates[0] || coverage?.earliestAvailableDate || null;
+  const latestFromRows = rowDates[rowDates.length - 1] || coverage?.latestAvailableDate || null;
+  const base = {
+    ...(coverage || {}),
+    rangeRowCount: factRowCount,
+    earliestAvailableDate: earliestFromRows,
+    latestAvailableDate: latestFromRows
+  };
+
+  if (factRowCount <= 0 || status === "ERROR") {
+    return {
+      ...base,
+      allowCurrentFactsWhileRunning: false
+    };
+  }
+
+  if (status === "SYNC_RUNNING") {
+    return {
+      ...base,
+      message: "Current audience sync is running; rendering current persisted facts.",
+      allowCurrentFactsWhileRunning: true
+    };
+  }
+
+  if (status === "READY" || status === "PARTIAL_COVERAGE") {
+    return {
+      ...base,
+      allowCurrentFactsWhileRunning: false
+    };
+  }
+
+  if (status === "NOT_SYNCED" || status === "TRUE_EMPTY") {
+    return {
+      ...base,
+      status: "PARTIAL_COVERAGE",
+      structureRowCount: Math.max(Number(coverage?.structureRowCount || 0), factRowCount),
+      explicitRangeSyncSuccess: false,
+      coverageComplete: false,
+      coverageBasis: "FACT_ROWS_ONLY",
+      message: "Audience facts exist for this request; coverage was reconciled to partial coverage.",
+      allowCurrentFactsWhileRunning: false
+    };
+  }
+
+  return {
+    ...base,
+    status: "PARTIAL_COVERAGE",
+    structureRowCount: Math.max(Number(coverage?.structureRowCount || 0), factRowCount),
+    explicitRangeSyncSuccess: false,
+    coverageComplete: false,
+    coverageBasis: "FACT_ROWS_ONLY",
+    allowCurrentFactsWhileRunning: false
+  };
+}
+
+function audienceRowsRenderable(coverage: any, hasCurrentFacts: boolean) {
+  const status = String(coverage?.status || "").toUpperCase();
+  if (!hasCurrentFacts) return false;
+  if (status === "READY" || status === "PARTIAL_COVERAGE") return true;
+  if (status === "SYNC_RUNNING") return coverage?.allowCurrentFactsWhileRunning === true;
+  return false;
+}
+
+export function audienceMetaMetric(
+  coverage: any,
+  hasCurrentFacts: boolean,
+  value: number,
+  mode: "additive" | "ratio" = "additive"
+) {
+  const status = String(coverage?.status || "").toUpperCase();
+  if (status === "TRUE_EMPTY") return mode === "additive" ? 0 : null;
+  if (!hasCurrentFacts) return null;
+  if (status === "READY" || status === "PARTIAL_COVERAGE") return value;
+  if (status === "SYNC_RUNNING" && coverage?.allowCurrentFactsWhileRunning === true) return value;
+  return null;
+}
+
 function countryMetaMetric(
   coverage: any,
   hasMetaFacts: boolean,
@@ -793,17 +878,18 @@ router.get("/audience", async (req, res) => {
       averageOrderValue: coverageMetric(audienceCoverage.storeCoverage, Number((storeCountryAnalytics.summary.averageOrderValue || 0).toFixed(4))),
       countryCount: coverageMetric(audienceCoverage.storeCoverage, Number(storeCountryAnalytics.summary.countryCount || 0))
     });
+    const noFactMetaCoverage = reconcileAudienceCoverageWithFactRows(audienceCoverage.metaCoverage, []);
     const emptyMetaSummary = {
-      spend: coverageMetric(audienceCoverage.metaCoverage, 0),
-      impressions: coverageMetric(audienceCoverage.metaCoverage, 0),
-      clicks: coverageMetric(audienceCoverage.metaCoverage, 0),
-      purchases: coverageMetric(audienceCoverage.metaCoverage, 0),
-      purchaseValue: coverageMetric(audienceCoverage.metaCoverage, 0),
-      roas: coverageMetric(audienceCoverage.metaCoverage, 0),
-      ctr: coverageMetric(audienceCoverage.metaCoverage, 0),
-      cpc: coverageMetric(audienceCoverage.metaCoverage, 0),
-      cpm: coverageMetric(audienceCoverage.metaCoverage, 0),
-      cpa: coverageMetric(audienceCoverage.metaCoverage, 0)
+      spend: audienceMetaMetric(noFactMetaCoverage, false, 0, "additive"),
+      impressions: audienceMetaMetric(noFactMetaCoverage, false, 0, "additive"),
+      clicks: audienceMetaMetric(noFactMetaCoverage, false, 0, "additive"),
+      purchases: audienceMetaMetric(noFactMetaCoverage, false, 0, "additive"),
+      purchaseValue: audienceMetaMetric(noFactMetaCoverage, false, 0, "additive"),
+      roas: audienceMetaMetric(noFactMetaCoverage, false, 0, "ratio"),
+      ctr: audienceMetaMetric(noFactMetaCoverage, false, 0, "ratio"),
+      cpc: audienceMetaMetric(noFactMetaCoverage, false, 0, "ratio"),
+      cpm: audienceMetaMetric(noFactMetaCoverage, false, 0, "ratio"),
+      cpa: audienceMetaMetric(noFactMetaCoverage, false, 0, "ratio")
     };
 
     // 1. Store filtering: resolve store mapped accounts
@@ -840,31 +926,18 @@ router.get("/audience", async (req, res) => {
     // Short-circuit if Store filter specified but no accounts map to it
     if (filterAccountIds !== null && filterAccountIds.length === 0) {
       return res.json({
-        coverage: audienceCoverage.metaCoverage,
-        sourceCoverage: audienceCoverage.metaCoverage,
-        metaCoverage: audienceCoverage.metaCoverage,
+        coverage: noFactMetaCoverage,
+        sourceCoverage: noFactMetaCoverage,
+        metaCoverage: noFactMetaCoverage,
         storeCoverage: audienceCoverage.storeCoverage,
         rows: [],
-        summary: {
-          totalSpend: emptyMetaSummary.spend,
-          totalImpressions: emptyMetaSummary.impressions,
-          totalClicks: emptyMetaSummary.clicks,
-          totalPurchases: emptyMetaSummary.purchases,
-          totalPurchaseValue: emptyMetaSummary.purchaseValue,
-          ctr: emptyMetaSummary.ctr,
-          cpc: emptyMetaSummary.cpc,
-          cpm: emptyMetaSummary.cpm,
-          cpa: emptyMetaSummary.cpa,
-          roas: emptyMetaSummary.roas,
-          meta: emptyMetaSummary,
-          store: buildStoreSummary()
-        },
+        summary,
         dataScope: audienceDataScope,
         filters: { startDate: startStr, endDate: endStr, storeId, accountId, campaignId, adsetId, adId, dimensionType: currentDimType },
         pagination: { page: Number(page || 1), pageSize: Number(pageSize || 50), totalItems: 0, totalPages: 0 },
         dataHealth: {
           status: "MISSING_META_BREAKDOWN",
-          warnings: [],
+          warnings,
           missing: ["该店铺未绑定任何广告账户，无法加载广告受众数据。"],
           source: "FactAudienceBreakdown",
           factRows: 0,
@@ -915,6 +988,15 @@ router.get("/audience", async (req, res) => {
     const dbRows = await prisma.factAudienceBreakdown.findMany({
       where: whereClause
     });
+    const effectiveMetaCoverage = reconcileAudienceCoverageWithFactRows(
+      audienceCoverage.metaCoverage,
+      dbRows
+    );
+    const effectiveAudienceCoverage = {
+      ...audienceCoverage,
+      metaCoverage: effectiveMetaCoverage
+    };
+    const hasCurrentMetaFacts = dbRows.length > 0;
 
     // 4. Perform TypeScript/JavaScript based aggregate grouping by dimension_value
     const groups: Record<string, {
@@ -1011,9 +1093,13 @@ router.get("/audience", async (req, res) => {
     const pageNum = Number(page || 1);
     let pageSizeNum = Number(pageSize || 50);
 
-    const totalItems = filteredRows.length;
-    const totalPages = Math.ceil(totalItems / pageSizeNum);
+    const rawTotalItems = filteredRows.length;
+    const totalPages = Math.ceil(rawTotalItems / pageSizeNum);
     const paginatedRows = filteredRows.slice((pageNum - 1) * pageSizeNum, pageNum * pageSizeNum);
+    const canReturnMetaRows = audienceRowsRenderable(effectiveMetaCoverage, hasCurrentMetaFacts);
+    const responseRows = canReturnMetaRows ? paginatedRows : [];
+    const totalItems = canReturnMetaRows ? rawTotalItems : 0;
+    const responseTotalPages = canReturnMetaRows ? totalPages : 0;
 
     // 9. Aggregated overall Summary
     const summarySpend = filteredRows.reduce((s, r) => s + r.spend, 0);
@@ -1029,27 +1115,27 @@ router.get("/audience", async (req, res) => {
     const summaryRoas = summarySpend > 0 ? (summaryPurchaseValue / summarySpend) : 0;
 
     const summary = {
-      totalSpend: coverageMetric(audienceCoverage.metaCoverage, Number(summarySpend.toFixed(4))),
-      totalImpressions: coverageMetric(audienceCoverage.metaCoverage, summaryImpressions),
-      totalClicks: coverageMetric(audienceCoverage.metaCoverage, summaryClicks),
-      totalPurchases: coverageMetric(audienceCoverage.metaCoverage, summaryPurchases),
-      totalPurchaseValue: coverageMetric(audienceCoverage.metaCoverage, Number(summaryPurchaseValue.toFixed(4))),
-      ctr: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCtr.toFixed(6))),
-      cpc: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCpc.toFixed(4))),
-      cpm: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCpm.toFixed(4))),
-      cpa: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCpa.toFixed(4))),
-      roas: coverageMetric(audienceCoverage.metaCoverage, Number(summaryRoas.toFixed(4))),
+      totalSpend: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summarySpend.toFixed(4)), "additive"),
+      totalImpressions: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, summaryImpressions, "additive"),
+      totalClicks: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, summaryClicks, "additive"),
+      totalPurchases: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, summaryPurchases, "additive"),
+      totalPurchaseValue: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryPurchaseValue.toFixed(4)), "additive"),
+      ctr: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCtr.toFixed(6)), "ratio"),
+      cpc: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCpc.toFixed(4)), "ratio"),
+      cpm: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCpm.toFixed(4)), "ratio"),
+      cpa: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCpa.toFixed(4)), "ratio"),
+      roas: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryRoas.toFixed(4)), "ratio"),
       meta: {
-        spend: coverageMetric(audienceCoverage.metaCoverage, Number(summarySpend.toFixed(4))),
-        impressions: coverageMetric(audienceCoverage.metaCoverage, summaryImpressions),
-        clicks: coverageMetric(audienceCoverage.metaCoverage, summaryClicks),
-        purchases: coverageMetric(audienceCoverage.metaCoverage, summaryPurchases),
-        purchaseValue: coverageMetric(audienceCoverage.metaCoverage, Number(summaryPurchaseValue.toFixed(4))),
-        roas: coverageMetric(audienceCoverage.metaCoverage, Number(summaryRoas.toFixed(4))),
-        ctr: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCtr.toFixed(6))),
-        cpc: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCpc.toFixed(4))),
-        cpm: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCpm.toFixed(4))),
-        cpa: coverageMetric(audienceCoverage.metaCoverage, Number(summaryCpa.toFixed(4)))
+        spend: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summarySpend.toFixed(4)), "additive"),
+        impressions: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, summaryImpressions, "additive"),
+        clicks: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, summaryClicks, "additive"),
+        purchases: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, summaryPurchases, "additive"),
+        purchaseValue: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryPurchaseValue.toFixed(4)), "additive"),
+        roas: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryRoas.toFixed(4)), "ratio"),
+        ctr: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCtr.toFixed(6)), "ratio"),
+        cpc: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCpc.toFixed(4)), "ratio"),
+        cpm: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCpm.toFixed(4)), "ratio"),
+        cpa: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCpa.toFixed(4)), "ratio")
       },
       store: buildStoreSummary()
     };
@@ -1062,34 +1148,39 @@ router.get("/audience", async (req, res) => {
       missing.push("当前受众 breakdown 仅同步账户层级，Campaign / AdSet / Ad 受众层级尚未同步。");
     }
 
-    let healthStatus: "READY" | "PARTIAL" | "EMPTY" | "FAILED" = "READY";
-    if (paginatedRows.length === 0) {
+    const coverageStatus = String(effectiveMetaCoverage.status || "").toUpperCase();
+    if (coverageStatus === "PARTIAL_COVERAGE") {
+      warnings.push(effectiveMetaCoverage.message || "Current audience coverage is partial.");
+    }
+    if (coverageStatus === "SYNC_RUNNING") {
+      warnings.push(effectiveMetaCoverage.message || "Current audience sync is running.");
+    }
+    if (coverageStatus === "NOT_SYNCED") {
+      missing.push("Current audience range has no proven sync result.");
+    }
+    if (coverageStatus === "TRUE_EMPTY") {
+      missing.push("Current audience range was synced and confirmed empty.");
+    }
+
+    let healthStatus: any = effectiveMetaCoverage.status || "READY";
+    if (healthStatus === "READY" && (missing.length > 0 || warnings.length > 0)) {
+      healthStatus = "PARTIAL_COVERAGE";
+    }
+
+    if (responseRows.length === 0) {
       return res.json({
         success: true,
-        coverage: audienceCoverage.metaCoverage,
-        sourceCoverage: audienceCoverage.metaCoverage,
-        metaCoverage: audienceCoverage.metaCoverage,
-        storeCoverage: audienceCoverage.storeCoverage,
+        coverage: effectiveMetaCoverage,
+        sourceCoverage: effectiveMetaCoverage,
+        metaCoverage: effectiveMetaCoverage,
+        storeCoverage: effectiveAudienceCoverage.storeCoverage,
         data: [],
         rows: [],
-        summary: {
-          totalSpend: emptyMetaSummary.spend,
-          totalImpressions: emptyMetaSummary.impressions,
-          totalClicks: emptyMetaSummary.clicks,
-          totalPurchases: emptyMetaSummary.purchases,
-          totalPurchaseValue: emptyMetaSummary.purchaseValue,
-          ctr: emptyMetaSummary.ctr,
-          cpc: emptyMetaSummary.cpc,
-          cpm: emptyMetaSummary.cpm,
-          cpa: emptyMetaSummary.cpa,
-          roas: emptyMetaSummary.roas,
-          meta: emptyMetaSummary,
-          store: buildStoreSummary()
-        },
+        summary,
         dataScope: audienceDataScope,
         dataHealth: {
-          status: audienceCoverage.metaCoverage.status,
-          reason: audienceCoverage.metaCoverage.status,
+          status: effectiveMetaCoverage.status,
+          reason: effectiveMetaCoverage.status,
           missing: ["当前日期范围没有 Meta 受众拆分数据。请在同步中心同步受众 breakdown。"],
           warnings: [],
           source: "FactAudienceBreakdown",
@@ -1115,18 +1206,16 @@ router.get("/audience", async (req, res) => {
           noMockData: true
         }
       });
-    } else if (missing.length > 0 || warnings.length > 0) {
-      healthStatus = "PARTIAL";
     }
 
     res.json({
       success: true,
-      coverage: audienceCoverage.metaCoverage,
-      sourceCoverage: audienceCoverage.metaCoverage,
-      metaCoverage: audienceCoverage.metaCoverage,
-      storeCoverage: audienceCoverage.storeCoverage,
-      data: paginatedRows,
-      rows: paginatedRows,
+      coverage: effectiveMetaCoverage,
+      sourceCoverage: effectiveMetaCoverage,
+      metaCoverage: effectiveMetaCoverage,
+      storeCoverage: effectiveAudienceCoverage.storeCoverage,
+      data: responseRows,
+      rows: responseRows,
       summary,
       dataScope: audienceDataScope,
       filters: {
@@ -1145,7 +1234,7 @@ router.get("/audience", async (req, res) => {
         page: pageNum,
         pageSize: pageSizeNum,
         totalItems,
-        totalPages
+        totalPages: responseTotalPages
       },
       dataHealth: {
         status: healthStatus,
@@ -1153,7 +1242,7 @@ router.get("/audience", async (req, res) => {
         missing,
         source: "FactAudienceBreakdown",
         factRows: dbRows.length,
-        structureRows: paginatedRows.length,
+        structureRows: responseRows.length,
         dateRange: buildDateRange(startStr, endStr),
         queryDebug: buildQueryDebug({
           source: "FactAudienceBreakdown",
@@ -1163,7 +1252,7 @@ router.get("/audience", async (req, res) => {
           includeZeroSpend: queryFlag(includeZeroSpend),
           mappedOnly: false,
           factRows: dbRows.length,
-          structureRows: paginatedRows.length
+          structureRows: responseRows.length
         })
       },
       appliedFilters,
