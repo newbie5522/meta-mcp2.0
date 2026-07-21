@@ -371,8 +371,10 @@ export async function getAggregatedCreativeInsights(params: {
   const filterStoreId = params.storeId && params.storeId !== "all" ? Number(params.storeId) : null;
   const filterCampaignId = params.campaignId && params.campaignId !== "all" ? params.campaignId : null;
   const filterAdsetId = params.adsetId && params.adsetId !== "all" ? params.adsetId : null;
-  const filterType = params.creativeType && params.creativeType !== "ALL" ? String(params.creativeType).toUpperCase() : null;
-  const filterBucket = params.opsBucket && params.opsBucket !== "ALL" ? String(params.opsBucket) : null;
+  const creativeTypeParam = String(params.creativeType || "").trim();
+  const opsBucketParam = String(params.opsBucket || "").trim();
+  const filterType = creativeTypeParam && creativeTypeParam.toUpperCase() !== "ALL" ? creativeTypeParam.toUpperCase() : null;
+  const filterBucket = opsBucketParam && opsBucketParam.toUpperCase() !== "ALL" ? opsBucketParam : null;
   const search = String(params.search || "").trim().toLowerCase();
   const minSpend = Math.max(0, finiteNumber(params.minSpend));
   const includeZero = params.includeZeroSpend === true || params.includeZeroSpend === "true";

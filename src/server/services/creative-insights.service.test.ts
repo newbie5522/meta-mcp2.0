@@ -116,6 +116,34 @@ describe("Creative insight fact and structure separation", () => {
     });
   });
 
+  it("treats creativeType and opsBucket all sentinels as case-insensitive", async () => {
+    prismaMock.factMetaPerformance.findMany.mockResolvedValue([
+      {
+        date: "2026-07-01", level: "ad", account_id: "act_1", campaign_id: "camp-1", adset_id: "set-1",
+        ad_id: "ad-1", entity_id: "ad-1", creative_id: "creative-1", spend: 10, impressions: 100,
+        clicks: 10, purchases: 1, purchase_value: 20, raw_payload: null, synced_at: new Date("2026-07-02T00:00:00Z")
+      }
+    ]);
+
+    const result = await getAggregatedCreativeInsights({
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      creativeType: "ALL",
+      opsBucket: "all",
+      includeZeroSpend: true
+    });
+
+    expect(result.performanceRows).toHaveLength(1);
+    expect(result.summary).toMatchObject({
+      performanceCount: 1,
+      spend: 10,
+      impressions: 100,
+      clicks: 10,
+      purchases: 1,
+      purchaseValue: 20
+    });
+  });
+
   it("exports the complete filtered set and only uses a real landing URL", async () => {
     prismaMock.factMetaPerformance.findMany.mockResolvedValue(ads.map((ad, index) => ({
       date: "2026-07-01", level: "ad", account_id: "act_1", campaign_id: ad.campaignId, adset_id: ad.adsetId,
