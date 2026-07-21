@@ -3,7 +3,7 @@ import prisma from "../../db/index.js";
 import { SyncCenter } from "./sync-center.service.js";
 import { refreshStoreDataCenterLedger } from "./datacenter-store-ledger.service.js";
 
-export type StorePipelineStatus = "SUCCESS" | "NO_NEW_DATA" | "PARTIAL_SUCCESS" | "FAILED";
+export type StorePipelineStatus = "SUCCESS" | "NO_NEW_DATA" | "PARTIAL_SUCCESS" | "FAILED" | "RUNNING";
 
 export type StorePipelineReceipt = {
   storeId: number;
@@ -135,9 +135,15 @@ export async function executeStoreDataPipeline(input: {
   const recordsFetched = Number(log?.recordsFetched ?? metadata.recordsFetched ?? 0);
   const recordsSaved = Number(log?.recordsSaved ?? metadata.recordsSaved ?? 0);
   const recordsUpdated = Number(metadata.recordsUpdated ?? 0);
-  const coverageComplete = metadata.coverageComplete !== false && log?.status === "success";
+  const syncFailedSlices = Array.isArray(metadata.failedSlices) ? metadata.failedSlices : [];
+  const coverageComplete =
+    log?.status === "success" &&
+    metadata.coverageComplete === true &&
+    metadata.truncated !== true &&
+    syncFailedSlices.length === 0;
   const truncated = metadata.truncated === true;
   const error = log?.errorMessage || log?.error || metadata.errorMessage || metadata.error || null;
+  const canonicalStatus = String(metadata.status || "").trim().toUpperCase();
 
   baseReceipt.orderSync = {
     taskId,
@@ -151,6 +157,13 @@ export async function executeStoreDataPipeline(input: {
   };
   baseReceipt.timezone = metadataTimezone(metadata, store);
   baseReceipt.timezoneSource = metadataTimezoneSource(metadata);
+  baseReceipt.failedSlices.push(...syncFailedSlices);
+
+  if (orderStatus === "RUNNING" || orderStatus === "PENDING") {
+    baseReceipt.status = "RUNNING";
+    baseReceipt.ledger.status = "SKIPPED";
+    return baseReceipt;
+  }
 
   if (orderStatus === "FAILED") {
     baseReceipt.status = "FAILED";
@@ -163,7 +176,9 @@ export async function executeStoreDataPipeline(input: {
       storeId: store.id,
       startDate: input.startDate,
       endDate: input.endDate,
-      rangeVerified: coverageComplete
+      rangeVerified: coverageComplete,
+      sourceSyncTaskId: taskId,
+      sourceSyncFinishedAt: log?.finishedAt || null
     });
     baseReceipt.ledger = {
       status: "SUCCESS",
@@ -191,8 +206,16 @@ export async function executeStoreDataPipeline(input: {
 
   if (baseReceipt.ledger.status === "FAILED") {
     baseReceipt.status = "PARTIAL_SUCCESS";
-  } else if (recordsFetched === 0 && recordsSaved === 0 && coverageComplete) {
+  } else if (
+    canonicalStatus === "NO_NEW_DATA" &&
+    recordsFetched === 0 &&
+    recordsSaved === 0 &&
+    coverageComplete &&
+    !truncated
+  ) {
     baseReceipt.status = "NO_NEW_DATA";
+  } else if (!coverageComplete || truncated || syncFailedSlices.length > 0) {
+    baseReceipt.status = recordsFetched > 0 || recordsSaved > 0 || baseReceipt.ledger.status === "SUCCESS" ? "PARTIAL_SUCCESS" : "FAILED";
   } else {
     baseReceipt.status = "SUCCESS";
   }

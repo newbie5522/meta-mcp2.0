@@ -1,5 +1,5 @@
 import prisma from "../../db/index.js";
-import { fetchPlatformStoreTimezone } from "../services/store-timezone.service.js";
+import { probePlatformStoreTimezone } from "../services/store-timezone.service.js";
 import { getTzOffset, normalizeIanaTimezoneOrNull } from "../utils/timezone.js";
 
 function serializeError(error: unknown) {
@@ -20,38 +20,46 @@ async function main() {
   });
 
   const rows = [];
+  let hasFailure = false;
   for (const store of stores) {
     const persistedTimezone = normalizeIanaTimezoneOrNull(store.timezone);
     let platformTimezoneRaw: string | null = null;
     let platformTimezoneNormalized: string | null = null;
     let timezoneSource = "unverified";
-    let error: string | null = null;
+    let finalErrorCode: string | null = null;
+    let attempts: any[] = [];
 
     try {
-      const verified = await fetchPlatformStoreTimezone(store);
-      if (verified) {
+      const probe = await probePlatformStoreTimezone(store);
+      attempts = probe.attempts;
+      finalErrorCode = probe.finalErrorCode;
+      if (probe.verified) {
+        const verified = probe.verified;
         platformTimezoneRaw = verified.platformTimezoneRaw;
         platformTimezoneNormalized = verified.timezone;
         timezoneSource = verified.timezoneSource;
       }
     } catch (err) {
-      error = serializeError(err);
+      finalErrorCode = serializeError(err);
     }
 
     const effectiveTimezone = platformTimezoneNormalized || persistedTimezone;
+    const matchesPlatform = Boolean(platformTimezoneNormalized && persistedTimezone === platformTimezoneNormalized);
+    if (!matchesPlatform || finalErrorCode) hasFailure = true;
     rows.push({
       storeId: store.id,
       storeName: store.name,
       platform: store.platform,
+      persistedTimezone: store.timezone || null,
       platformTimezoneRaw,
       platformTimezoneNormalized,
-      persistedTimezone: store.timezone || null,
-      matchesPlatform: Boolean(platformTimezoneNormalized && persistedTimezone === platformTimezoneNormalized),
       timezoneSource,
+      matchesPlatform,
+      attempts,
+      finalErrorCode,
       startDateOffset: effectiveTimezone ? getTzOffset(effectiveTimezone, "2026-06-01") : null,
       endDateOffset: effectiveTimezone ? getTzOffset(effectiveTimezone, "2026-07-01") : null,
-      hardcodedFallbackDetected: false,
-      error
+      hardcodedFallbackDetected: false
     });
   }
 
@@ -59,6 +67,9 @@ async function main() {
     generatedAt: new Date().toISOString(),
     stores: rows
   }, null, 2));
+  if (hasFailure || rows.length === 0) {
+    process.exitCode = 1;
+  }
 }
 
 main()

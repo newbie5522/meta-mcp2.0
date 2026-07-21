@@ -196,6 +196,7 @@ async function fetchRawPlatformOrdersPage(params: {
   nextUrl: string | null;
   responseHeaders: any;
   rawBody: any;
+  requestUrlSanitized: string;
 }> {
   const domain = params.domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -204,7 +205,8 @@ async function fetchRawPlatformOrdersPage(params: {
     headers["Authorization"] = `Bearer ${params.token}`;
     const url = params.pageUrlOverride || `https://${domain}/admin/openapi/v20240301/orders.json?status=any&created_at_min=${encodeURIComponent(params.startUtc)}&created_at_max=${encodeURIComponent(params.endUtc)}&limit=${params.pageSize}`;
     
-    console.log(`[Store Sync Core] GET ${sanitizeUrl(url)}`);
+    const requestUrlSanitized = sanitizeUrl(url);
+    console.log(`[Store Sync Core] GET ${requestUrlSanitized}`);
     const res = await axios.get(url, { headers, timeout: 15000 });
     const orders = res.data.data || res.data.orders || [];
     
@@ -237,14 +239,15 @@ async function fetchRawPlatformOrdersPage(params: {
       }
     }
     
-    return { orders, nextUrl, responseHeaders: res.headers, rawBody: res.data };
+    return { orders, nextUrl, responseHeaders: res.headers, rawBody: res.data, requestUrlSanitized };
   } 
 
   if (params.platform === "shopify") {
     headers["X-Shopify-Access-Token"] = params.token;
     const url = params.pageUrlOverride || `https://${domain}/admin/api/2024-01/orders.json?status=any&created_at_min=${encodeURIComponent(params.startUtc)}&created_at_max=${encodeURIComponent(params.endUtc)}&limit=${params.pageSize}`;
     
-    console.log(`[Store Sync Core] GET ${sanitizeUrl(url)}`);
+    const requestUrlSanitized = sanitizeUrl(url);
+    console.log(`[Store Sync Core] GET ${requestUrlSanitized}`);
     const res = await axios.get(url, { headers, timeout: 15000 });
     const orders = res.data.orders || [];
     
@@ -255,7 +258,7 @@ async function fetchRawPlatformOrdersPage(params: {
       nextUrl = matches ? matches[1] : null;
     }
     
-    return { orders, nextUrl, responseHeaders: res.headers, rawBody: res.data };
+    return { orders, nextUrl, responseHeaders: res.headers, rawBody: res.data, requestUrlSanitized };
   }
 
   if (params.platform === "shoplazza") {
@@ -276,14 +279,15 @@ async function fetchRawPlatformOrdersPage(params: {
     const suffix = useJsonSuffix ? ".json" : "";
     const url = `https://${domain}/openapi/${apiVersion}/orders${suffix}?created_at_min=${encodeURIComponent(params.startUtc)}&created_at_max=${encodeURIComponent(params.endUtc)}&limit=${params.pageSize}&page=${params.pageIndex}`;
     
-    console.log(`[Store Sync Core] GET ${sanitizeUrl(url)}`);
+    const requestUrlSanitized = sanitizeUrl(url);
+    console.log(`[Store Sync Core] GET ${requestUrlSanitized}`);
     const res = await axios.get(url, { headers, timeout: 15000 });
     const orders = res.data.orders || [];
     
     // Shoplazza uses page incrementing
     const nextUrl = orders.length >= params.pageSize ? "has_more" : null;
     
-    return { orders, nextUrl, responseHeaders: res.headers, rawBody: res.data };
+    return { orders, nextUrl, responseHeaders: res.headers, rawBody: res.data, requestUrlSanitized };
   }
 
   throw new Error(`Unsupported platform: ${params.platform}`);
@@ -366,7 +370,14 @@ export async function fetchStoreOrdersCanonical(params: {
     };
     attributionFieldStats: Record<string, { count: number; total: number }>;
     observedOrderOffsets: string[];
+    coverageComplete: boolean;
+    truncated: boolean;
+    paginationTermination: "NATURAL_END" | "EMPTY_PAGE" | "PAGE_LIMIT" | "ERROR";
+    failedSlices: any[];
   };
+  coverageComplete: boolean;
+  truncated: boolean;
+  failedSlices: any[];
 }> {
   const timezoneBefore = params.timezone;
   const storeTimezone = requireVerifiedIanaTimezone(timezoneBefore);
@@ -392,45 +403,70 @@ export async function fetchStoreOrdersCanonical(params: {
   const responseHeaderKeysSet = new Set<string>();
   const pageOrderCounts: number[] = [];
   let pagesFetched = 0;
+  let truncated = false;
+  let paginationTermination: "NATURAL_END" | "EMPTY_PAGE" | "PAGE_LIMIT" | "ERROR" = "NATURAL_END";
+  const failedSlices: any[] = [];
 
   while (isFetching) {
     pagesFetched++;
-    const pageResult = await fetchRawPlatformOrdersPage({
-      platform: params.platform,
-      domain: params.domain,
-      token: params.token,
-      startUtc: expandedStartAt,
-      endUtc: expandedEndAt,
-      pageSize: 100,
-      pageUrlOverride: currentUrl,
-      pageIndex
-    });
+    let pageResult;
+    try {
+      pageResult = await fetchRawPlatformOrdersPage({
+        platform: params.platform,
+        domain: params.domain,
+        token: params.token,
+        startUtc: expandedStartAt,
+        endUtc: expandedEndAt,
+        pageSize: 100,
+        pageUrlOverride: currentUrl,
+        pageIndex
+      });
+    } catch (error: any) {
+      paginationTermination = "ERROR";
+      failedSlices.push({
+        storeId: params.storeId,
+        platform: params.platform,
+        pageIndex,
+        message: error?.message || String(error)
+      });
+      throw error;
+    }
 
     const orders = pageResult.orders;
     pageOrderCounts.push(orders.length);
     rawOrders.push(...orders);
+    requestUrlsSanitized.push(pageResult.requestUrlSanitized);
 
     // Record diagnostics keys
     Object.keys(pageResult.rawBody || {}).forEach(k => responseBodyKeysSet.add(k));
     Object.keys(pageResult.responseHeaders || {}).forEach(k => responseHeaderKeysSet.add(k));
     
     // Safety check limit
-    if (pageResult.nextUrl === "has_more") {
+    const hasNextPage = Boolean(pageResult.nextUrl);
+    if (pagesFetched >= 50 && hasNextPage) {
+      truncated = true;
+      paginationTermination = "PAGE_LIMIT";
+      failedSlices.push({
+        storeId: params.storeId,
+        platform: params.platform,
+        pageIndex,
+        truncated: true,
+        reason: "PAGE_LIMIT"
+      });
+      isFetching = false;
+    } else if (pageResult.nextUrl === "has_more") {
       pageIndex++;
       currentUrl = null;
     } else if (pageResult.nextUrl) {
       currentUrl = pageResult.nextUrl;
     } else {
       isFetching = false;
+      paginationTermination = "NATURAL_END";
     }
 
     if (orders.length === 0) {
       isFetching = false;
-    }
-    
-    // Prevent runaway loops
-    if (pagesFetched >= 50) {
-      isFetching = false;
+      paginationTermination = "EMPTY_PAGE";
     }
   }
 
@@ -643,10 +679,14 @@ export async function fetchStoreOrdersCanonical(params: {
   }
   const observedOrderOffsets = Array.from(observedOrderOffsetsSet);
   const timezoneSource = params.timezoneSource || "persisted_verified";
+  const coverageComplete = !truncated && failedSlices.length === 0;
 
   return {
     orders: canonicalOrders,
     rawOrders,
+    coverageComplete,
+    truncated,
+    failedSlices,
     diagnostics: {
       platform: params.platform,
       timezoneBefore,
@@ -672,7 +712,11 @@ export async function fetchStoreOrdersCanonical(params: {
       responseHeaderKeys: Array.from(responseHeaderKeysSet),
       revenueFieldSums,
       attributionFieldStats,
-      observedOrderOffsets
+      observedOrderOffsets,
+      coverageComplete,
+      truncated,
+      paginationTermination,
+      failedSlices
     }
   };
 }

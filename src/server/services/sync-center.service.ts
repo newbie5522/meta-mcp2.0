@@ -7,6 +7,7 @@ import { ensureAdAccounts } from "./meta-hierarchy-sync.service.js";
 import { syncMetaInsightsForActiveAccounts } from "./meta-insights.service.js";
 import { syncMetaAudienceBreakdown } from "./meta-audience-breakdown-sync.service.js";
 import { syncStoreData } from "./store-sync.service.js";
+import { resolveVerifiedStoreTimezone } from "./store-timezone.service.js";
 import { extractMetaAssetHash } from "./metaFetchPatch.service.js";
 import { normalizeSyncExecutionResult, type SyncExecutionResult } from "../types/sync-tasks.js";
 
@@ -99,7 +100,7 @@ export class SyncCenter {
    */
   static async runTask(
     taskType: string,
-    sourceType: "meta" | "shopline" | "shoplazza" | "erp" | "summary" | "ai",
+    sourceType: "meta" | "shopline" | "shoplazza" | "shopify" | "erp" | "summary" | "ai",
     triggeredBy: string,
     taskChainId: string,
     parentTaskId: string | null = null,
@@ -257,9 +258,16 @@ export class SyncCenter {
 
   // 1. sync_store_profile
   static async syncStoreProfile(storeId: number, taskChainId: string, triggeredBy: string, parentTaskId: string | null = null): Promise<string> {
+    const storeForSource = await prisma.store.findUnique({ where: { id: storeId } });
+    const sourceType =
+      storeForSource?.platform === "shopify"
+        ? "shopify"
+        : storeForSource?.platform === "shoplazza"
+          ? "shoplazza"
+          : "shopline";
     return this.runTask(
       "sync_store_profile",
-      "shopline",
+      sourceType,
       triggeredBy,
       taskChainId,
       parentTaskId,
@@ -271,23 +279,31 @@ export class SyncCenter {
           throw new Error(`Store with ID ${storeId} not found`);
         }
 
-        // Simulating profile read with token or updates
-        const domain = store.domain || `${store.name}.shoplineapp.com`;
-        const currency = "USD"; // Default Currency
-        const timezone = store.timezone || "Asia/Shanghai";
+        const verifiedTimezone = await resolveVerifiedStoreTimezone(store);
+        const domain = store.domain || null;
 
         await prisma.store.update({
           where: { id: storeId },
           data: {
             domain,
-            timezone
+            timezone: verifiedTimezone.timezone
           }
         });
 
         return {
           recordsFetched: 1,
           recordsSaved: 1,
-          metadata: { storeName: store.name, domain, currency, timezone }
+          metadata: {
+            storeName: store.name,
+            domain,
+            timezone: verifiedTimezone.timezone,
+            timezoneSource: verifiedTimezone.timezoneSource,
+            timezoneVerifiedAt: verifiedTimezone.timezoneVerifiedAt,
+            platformTimezoneRaw: verifiedTimezone.platformTimezoneRaw,
+            coverageComplete: true,
+            truncated: false,
+            failedSlices: []
+          }
         };
       }
     );
@@ -309,9 +325,16 @@ export class SyncCenter {
   ): Promise<string> {
     const effectiveEndDate = endDateOverride || dayjs().format("YYYY-MM-DD");
     const effectiveStartDate = startDateOverride || dayjs(effectiveEndDate).subtract(days, "day").format("YYYY-MM-DD");
+    const storeForSource = await prisma.store.findUnique({ where: { id: storeId } });
+    const platform =
+      storeForSource?.platform === "shopify"
+        ? "shopify"
+        : storeForSource?.platform === "shoplazza"
+          ? "shoplazza"
+          : "shopline";
     return this.runTask(
       "sync_store_orders",
-      "shopline",
+      platform,
       triggeredBy,
       taskChainId,
       parentTaskId,
@@ -320,31 +343,25 @@ export class SyncCenter {
       async () => {
         const store = await prisma.store.findUnique({ where: { id: storeId } });
         if (!store) throw new Error(`Store with ID ${storeId} not found`);
+        const token =
+          platform === "shopify"
+            ? store.shopify_token
+            : platform === "shoplazza"
+              ? store.shoplazza_token
+              : store.shopline_token;
+        if (!String(token || "").trim()) {
+          throw new Error(`STORE_TOKEN_MISSING:${storeId}`);
+        }
 
         const endDate = effectiveEndDate;
         const startDate = effectiveStartDate;
 
         console.log(`[Sync Center] Running syncStoreData for ${store.name} (${startDate} to ${endDate}) with options: ${JSON.stringify(options || {})}`);
         const syncResults = await syncStoreData(startDate, endDate, String(storeId), options);
-        const res = syncResults[storeId] || {
-          storeId,
-          storeName: store.name,
-          platform: store.platform || "unknown",
-          timezone: store.timezone || "GMT+8",
-          localStartDate: startDate,
-          localEndDate: endDate,
-          utcStartDate: "",
-          utcEndDate: "",
-          requestUrlSanitized: "",
-          pageCount: 0,
-          recordsFetched: 0,
-          recordsSaved: 0,
-          recordsSkipped: 0,
-          skippedReasons: [],
-          duplicateCount: 0,
-          failedCount: 0,
-          orderItems: []
-        };
+        const res = syncResults[storeId];
+        if (!res) {
+          throw new Error(`STORE_SYNC_RESULT_MISSING:${storeId}`);
+        }
 
         if (res.errorMessage) {
           throw new Error(`[Store Orders Sync] ${res.errorMessage}`);
@@ -362,15 +379,25 @@ export class SyncCenter {
             ordersCountInDb: ordersCount,
             productsCountInDb: productsCount,
             startDate,
-            endDate
-          }
+            endDate,
+            status:
+              res.coverageComplete === true && res.truncated !== true && Number(res.recordsFetched || 0) === 0 && Number(res.recordsSaved || 0) === 0
+                ? "NO_NEW_DATA"
+                : undefined,
+            coverageComplete: res.coverageComplete === true,
+            truncated: res.truncated === true,
+            failedSlices: Array.isArray(res.failedSlices) ? res.failedSlices : []
+          },
+          coverageComplete: res.coverageComplete === true,
+          truncated: res.truncated === true,
+          failedSlices: Array.isArray(res.failedSlices) ? res.failedSlices : []
         };
       },
       {
         rangeStart: effectiveStartDate,
         rangeEnd: effectiveEndDate,
         scopeKey: `store:${storeId}`,
-        coverageComplete: true
+        coverageComplete: false
       }
     );
   }

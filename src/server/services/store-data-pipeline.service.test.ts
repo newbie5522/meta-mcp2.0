@@ -28,8 +28,12 @@ beforeEach(() => {
       recordsUpdated: 0,
       timezone: "America/New_York",
       timezoneSource: "platform_shop_api",
-      coverageComplete: true
-    })
+      coverageComplete: true,
+      truncated: false,
+      failedSlices: [],
+      status: "SUCCESS"
+    }),
+    finishedAt: new Date("2026-07-02T01:00:00.000Z")
   });
   refreshLedgerMock.mockResolvedValue({
     recordsFetched: 2,
@@ -63,6 +67,10 @@ describe("single canonical store data pipeline", () => {
       storeId: 1,
       rangeVerified: true
     }));
+    expect(refreshLedgerMock).toHaveBeenCalledWith(expect.objectContaining({
+      sourceSyncTaskId: "task-1",
+      sourceSyncFinishedAt: expect.any(Date)
+    }));
     expect(receipt).toMatchObject({
       status: "SUCCESS",
       orderSync: { taskId: "task-1", recordsFetched: 2, recordsSaved: 2 },
@@ -82,5 +90,116 @@ describe("single canonical store data pipeline", () => {
     });
     expect(receipt.status).toBe("PARTIAL_SUCCESS");
     expect(receipt.ledger.status).toBe("FAILED");
+  });
+
+  it("PIPE-03 truncated sync does not pass rangeVerified to ledger", async () => {
+    prismaMock.syncLog.findUnique.mockResolvedValue({
+      id: "task-1",
+      status: "success",
+      recordsFetched: 2,
+      recordsSaved: 2,
+      metadata: JSON.stringify({
+        coverageComplete: false,
+        truncated: true,
+        failedSlices: [],
+        status: "PARTIAL_SUCCESS"
+      })
+    });
+
+    const receipt = await executeStoreDataPipeline({
+      store,
+      chainId: "chain-1",
+      triggeredBy: "test",
+      startDate: "2026-07-01",
+      endDate: "2026-07-02",
+      days: 2
+    });
+
+    expect(refreshLedgerMock).toHaveBeenCalledWith(expect.objectContaining({
+      rangeVerified: false
+    }));
+    expect(receipt.status).toBe("PARTIAL_SUCCESS");
+  });
+
+  it("PIPE-04 failedSlices prevent verified range ledger coverage", async () => {
+    prismaMock.syncLog.findUnique.mockResolvedValue({
+      id: "task-1",
+      status: "success",
+      recordsFetched: 2,
+      recordsSaved: 2,
+      metadata: JSON.stringify({
+        coverageComplete: true,
+        truncated: false,
+        failedSlices: [{ page: 2 }],
+        status: "PARTIAL_SUCCESS"
+      })
+    });
+
+    const receipt = await executeStoreDataPipeline({
+      store,
+      chainId: "chain-1",
+      triggeredBy: "test",
+      startDate: "2026-07-01",
+      endDate: "2026-07-02",
+      days: 2
+    });
+
+    expect(refreshLedgerMock).toHaveBeenCalledWith(expect.objectContaining({
+      rangeVerified: false
+    }));
+    expect(receipt.status).toBe("PARTIAL_SUCCESS");
+    expect(receipt.failedSlices).toEqual([{ page: 2 }]);
+  });
+
+  it("PIPE-05 RUNNING/PENDING skips ledger refresh", async () => {
+    prismaMock.syncLog.findUnique.mockResolvedValue({
+      id: "task-1",
+      status: "running",
+      recordsFetched: 0,
+      recordsSaved: 0,
+      metadata: JSON.stringify({})
+    });
+
+    const receipt = await executeStoreDataPipeline({
+      store,
+      chainId: "chain-1",
+      triggeredBy: "test",
+      startDate: "2026-07-01",
+      endDate: "2026-07-02",
+      days: 2
+    });
+
+    expect(refreshLedgerMock).not.toHaveBeenCalled();
+    expect(receipt.status).toBe("RUNNING");
+    expect(receipt.ledger.status).toBe("SKIPPED");
+  });
+
+  it("PIPE-06 verified NO_NEW_DATA is explicit before allowing zero-day ledger", async () => {
+    prismaMock.syncLog.findUnique.mockResolvedValue({
+      id: "task-1",
+      status: "success",
+      recordsFetched: 0,
+      recordsSaved: 0,
+      metadata: JSON.stringify({
+        coverageComplete: true,
+        truncated: false,
+        failedSlices: [],
+        status: "NO_NEW_DATA"
+      })
+    });
+
+    const receipt = await executeStoreDataPipeline({
+      store,
+      chainId: "chain-1",
+      triggeredBy: "test",
+      startDate: "2026-07-01",
+      endDate: "2026-07-02",
+      days: 2
+    });
+
+    expect(refreshLedgerMock).toHaveBeenCalledWith(expect.objectContaining({
+      rangeVerified: true
+    }));
+    expect(receipt.status).toBe("NO_NEW_DATA");
   });
 });

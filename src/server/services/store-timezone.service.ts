@@ -4,11 +4,23 @@ import { normalizeIanaTimezoneOrNull } from "../utils/timezone.js";
 
 export type StoreTimezoneSource = "platform_shop_api" | "persisted_verified";
 
+export type TimezoneProbeAttempt = {
+  platform: string;
+  apiVersion: string;
+  endpoint: string;
+  httpStatus: number | null;
+  responseTopLevelKeys: string[];
+  dataKeys: string[];
+  timezoneFieldPath: string | null;
+  errorCode: string | null;
+};
+
 export type VerifiedStoreTimezone = {
   timezone: string;
   timezoneSource: StoreTimezoneSource;
   timezoneVerifiedAt: string;
   platformTimezoneRaw: string | null;
+  attempts?: TimezoneProbeAttempt[];
 };
 
 type StoreTimezoneInput = {
@@ -23,10 +35,14 @@ type StoreTimezoneInput = {
 };
 
 export class StoreTimezoneError extends Error {
-  code: "STORE_TIMEZONE_UNVERIFIED" | "STORE_TIMEZONE_CHANGED";
+  code:
+    | "STORE_TIMEZONE_UNVERIFIED"
+    | "STORE_TIMEZONE_CHANGED"
+    | "STORE_TIMEZONE_FIELD_UNAVAILABLE"
+    | "STORE_TIMEZONE_PERMISSION_DENIED";
   details: Record<string, unknown>;
 
-  constructor(code: "STORE_TIMEZONE_UNVERIFIED" | "STORE_TIMEZONE_CHANGED", details: Record<string, unknown> = {}) {
+  constructor(code: StoreTimezoneError["code"], details: Record<string, unknown> = {}) {
     super(code);
     this.name = "StoreTimezoneError";
     this.code = code;
@@ -61,91 +77,251 @@ function tokenForPlatform(store: StoreTimezoneInput): string | null {
   return trimmed ? trimmed : null;
 }
 
-function firstRawTimezone(payload: any): string | null {
+function readPath(payload: any, path: string): unknown {
+  return path.split(".").reduce((current, key) => current?.[key], payload);
+}
+
+function firstRawTimezone(payload: any, paths?: string[]): { raw: string | null; path: string | null } {
   const candidates = [
-    payload?.shop?.iana_timezone,
-    payload?.shop?.timezone,
-    payload?.data?.iana_timezone,
-    payload?.data?.timezone,
-    payload?.iana_timezone,
-    payload?.timezone
+    ...(paths || []),
+    "shop.iana_timezone",
+    "shop.timezone",
+    "data.iana_timezone",
+    "data.timezone",
+    "iana_timezone",
+    "timezone"
   ];
-  for (const candidate of candidates) {
+  for (const path of candidates) {
+    const candidate = readPath(payload, path);
     if (candidate !== null && candidate !== undefined && String(candidate).trim()) {
-      return String(candidate).trim();
+      return { raw: String(candidate).trim(), path };
     }
   }
-  return null;
+  return { raw: null, path: null };
 }
 
-async function getJson(url: string, headers: Record<string, string>) {
-  const response = await axios.get(url, { headers, timeout: 5000 });
-  if (response.status !== 200) return null;
-  return response.data;
+function sanitizedEndpoint(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url.split("?")[0];
+  }
 }
 
-export async function fetchPlatformStoreTimezone(store: StoreTimezoneInput): Promise<VerifiedStoreTimezone | null> {
+function keysOf(value: any): string[] {
+  return value && typeof value === "object" ? Object.keys(value).sort() : [];
+}
+
+function buildAttempt(input: {
+  platform: string;
+  apiVersion: string;
+  url: string;
+  httpStatus?: number | null;
+  payload?: any;
+  timezoneFieldPath?: string | null;
+  errorCode?: string | null;
+}): TimezoneProbeAttempt {
+  return {
+    platform: input.platform,
+    apiVersion: input.apiVersion,
+    endpoint: sanitizedEndpoint(input.url),
+    httpStatus: input.httpStatus ?? null,
+    responseTopLevelKeys: keysOf(input.payload),
+    dataKeys: keysOf(input.payload?.data),
+    timezoneFieldPath: input.timezoneFieldPath ?? null,
+    errorCode: input.errorCode ?? null
+  };
+}
+
+function axiosErrorCode(error: any): string {
+  const status = error?.response?.status;
+  if (status === 401 || status === 403) return "STORE_TIMEZONE_PERMISSION_DENIED";
+  if (status === 404) return "HTTP_404";
+  if (status) return `HTTP_${status}`;
+  return error?.code || error?.message || "REQUEST_ERROR";
+}
+
+async function tryTimezoneEndpoint(input: {
+  platform: "shopline" | "shopify" | "shoplazza";
+  apiVersion: string;
+  url: string;
+  headers: Record<string, string>;
+  fieldPaths: string[];
+  attempts: TimezoneProbeAttempt[];
+}): Promise<{ raw: string | null; timezone: string | null; fieldPath: string | null; permissionDenied: boolean }> {
+  try {
+    const response = await axios.get(input.url, { headers: input.headers, timeout: 5000 });
+    const payload = response.data;
+    const found = firstRawTimezone(payload, input.fieldPaths);
+    const timezone = normalizeIanaTimezoneOrNull(found.raw);
+    input.attempts.push(buildAttempt({
+      platform: input.platform,
+      apiVersion: input.apiVersion,
+      url: input.url,
+      httpStatus: response.status ?? null,
+      payload,
+      timezoneFieldPath: found.path,
+      errorCode: timezone ? null : "STORE_TIMEZONE_FIELD_UNAVAILABLE"
+    }));
+    return { raw: found.raw, timezone, fieldPath: found.path, permissionDenied: false };
+  } catch (error: any) {
+    const errorCode = axiosErrorCode(error);
+    input.attempts.push(buildAttempt({
+      platform: input.platform,
+      apiVersion: input.apiVersion,
+      url: input.url,
+      httpStatus: error?.response?.status ?? null,
+      payload: error?.response?.data,
+      errorCode
+    }));
+    return { raw: null, timezone: null, fieldPath: null, permissionDenied: errorCode === "STORE_TIMEZONE_PERMISSION_DENIED" };
+  }
+}
+
+export async function probePlatformStoreTimezone(store: StoreTimezoneInput): Promise<{
+  verified: VerifiedStoreTimezone | null;
+  attempts: TimezoneProbeAttempt[];
+  finalErrorCode: string | null;
+}> {
   const platform = normalizePlatform(store.platform);
   const domain = normalizeDomain(store.domain);
   const token = tokenForPlatform(store);
-  if (!domain || !token) return null;
+  const attempts: TimezoneProbeAttempt[] = [];
+  if (!domain || !token) return { verified: null, attempts, finalErrorCode: "STORE_TOKEN_MISSING" };
 
   const verifiedAt = new Date().toISOString();
 
   if (platform === "shopify") {
-    const payload = await getJson(`https://${domain}/admin/api/2024-01/shop.json`, {
+    const url = `https://${domain}/admin/api/2024-01/shop.json`;
+    const probe = await tryTimezoneEndpoint({
+      platform,
+      apiVersion: "2024-01",
+      url,
+      attempts,
+      fieldPaths: ["shop.iana_timezone", "shop.timezone"],
+      headers: {
       "X-Shopify-Access-Token": token,
-      "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      }
     });
-    const raw = firstRawTimezone(payload);
-    const timezone = normalizeIanaTimezoneOrNull(raw);
-    return timezone ? { timezone, timezoneSource: "platform_shop_api", timezoneVerifiedAt: verifiedAt, platformTimezoneRaw: raw } : null;
+    if (probe.timezone) {
+      return {
+        verified: { timezone: probe.timezone, timezoneSource: "platform_shop_api", timezoneVerifiedAt: verifiedAt, platformTimezoneRaw: probe.raw, attempts },
+        attempts,
+        finalErrorCode: null
+      };
+    }
+    return { verified: null, attempts, finalErrorCode: probe.permissionDenied ? "STORE_TIMEZONE_PERMISSION_DENIED" : "STORE_TIMEZONE_FIELD_UNAVAILABLE" };
   }
 
   if (platform === "shopline") {
     const candidates = [
-      `https://${domain}/admin/openapi/v20240301/shop.json`,
-      `https://${domain}/admin/openapi/v20220301/shop.json`,
-      `https://${domain}/admin/openapi/v20201201/shop.json`,
-      `https://${domain}/admin/api/v20200901/shop.json`,
-      `https://${domain}/admin/openapi/shop.json`
+      { version: "20260601", url: `https://${domain}/admin/openapi/v20260601/merchants/shop.json` },
+      { version: "20250601", url: `https://${domain}/admin/openapi/v20250601/merchants/shop.json` },
+      { version: "20250301", url: `https://${domain}/admin/openapi/v20250301/merchants/shop.json` }
     ];
-    for (const url of candidates) {
-      try {
-        const payload = await getJson(url, {
+    for (const candidate of candidates) {
+      const probe = await tryTimezoneEndpoint({
+        platform,
+        apiVersion: candidate.version,
+        url: candidate.url,
+        attempts,
+        fieldPaths: ["data.iana_timezone", "data.timezone", "shop.iana_timezone", "shop.timezone"],
+        headers: {
           "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json"
-        });
-        const raw = firstRawTimezone(payload);
-        const timezone = normalizeIanaTimezoneOrNull(raw);
-        if (timezone) return { timezone, timezoneSource: "platform_shop_api", timezoneVerifiedAt: verifiedAt, platformTimezoneRaw: raw };
-      } catch (error) {
-        // Try the next documented Shop endpoint candidate.
+          "Content-Type": "application/json; charset=utf-8",
+          "Accept": "application/json"
+        }
+      });
+      if (probe.permissionDenied) {
+        return { verified: null, attempts, finalErrorCode: "STORE_TIMEZONE_PERMISSION_DENIED" };
+      }
+      if (probe.timezone) {
+        return {
+          verified: { timezone: probe.timezone, timezoneSource: "platform_shop_api", timezoneVerifiedAt: verifiedAt, platformTimezoneRaw: probe.raw, attempts },
+          attempts,
+          finalErrorCode: null
+        };
       }
     }
-    return null;
+    return {
+      verified: null,
+      attempts,
+      finalErrorCode: attempts.some(a => a.errorCode === "STORE_TIMEZONE_FIELD_UNAVAILABLE")
+        ? "STORE_TIMEZONE_FIELD_UNAVAILABLE"
+        : attempts.length > 0 && attempts.every(a => a.errorCode === "HTTP_404")
+          ? "HTTP_404"
+          : "STORE_TIMEZONE_UNVERIFIED"
+    };
   }
 
   const candidates = [
-    `https://${domain}/openapi/2022-01/shop`,
-    `https://${domain}/openapi/2022-01/shop.json`,
-    `https://${domain}/openapi/2020-01/shop`,
-    `https://${domain}/openapi/shop`
+    { version: "2026-01", url: `https://${domain}/openapi/2026-01/shop` },
+    { version: "2025-06", url: `https://${domain}/openapi/2025-06/shop` },
+    { version: "2024-07", url: `https://${domain}/openapi/2024-07/shop` },
+    { version: "2022-01", url: `https://${domain}/openapi/2022-01/shop` }
   ];
-  for (const url of candidates) {
-    try {
-      const payload = await getJson(url, {
-        "Access-Token": token,
+  const shoplazzaFields = [
+    "shop.iana_timezone",
+    "shop.timezone",
+    "shop.time_zone",
+    "data.shop.iana_timezone",
+    "data.shop.timezone",
+    "data.shop.time_zone",
+    "data.iana_timezone",
+    "data.timezone",
+    "data.time_zone",
+    "iana_timezone",
+    "timezone",
+    "time_zone"
+  ];
+  for (const candidate of candidates) {
+    const probe = await tryTimezoneEndpoint({
+      platform,
+      apiVersion: candidate.version,
+      url: candidate.url,
+      attempts,
+      fieldPaths: shoplazzaFields,
+      headers: {
+        "access-token": token,
+        "Accept": "application/json",
         "Content-Type": "application/json"
-      });
-      const raw = firstRawTimezone(payload);
-      const timezone = normalizeIanaTimezoneOrNull(raw);
-      if (timezone) return { timezone, timezoneSource: "platform_shop_api", timezoneVerifiedAt: verifiedAt, platformTimezoneRaw: raw };
-    } catch (error) {
-      // Try the next documented Shop endpoint candidate.
+      }
+    });
+    if (probe.permissionDenied) {
+      return { verified: null, attempts, finalErrorCode: "STORE_TIMEZONE_PERMISSION_DENIED" };
+    }
+    if (probe.timezone) {
+      return {
+        verified: { timezone: probe.timezone, timezoneSource: "platform_shop_api", timezoneVerifiedAt: verifiedAt, platformTimezoneRaw: probe.raw, attempts },
+        attempts,
+        finalErrorCode: null
+      };
     }
   }
-  return null;
+  return {
+    verified: null,
+    attempts,
+    finalErrorCode: attempts.some(a => a.errorCode === "STORE_TIMEZONE_FIELD_UNAVAILABLE")
+      ? "STORE_TIMEZONE_FIELD_UNAVAILABLE"
+      : attempts.length > 0 && attempts.every(a => a.errorCode === "HTTP_404")
+        ? "HTTP_404"
+        : "STORE_TIMEZONE_UNVERIFIED"
+  };
+}
+
+export async function fetchPlatformStoreTimezone(store: StoreTimezoneInput): Promise<VerifiedStoreTimezone | null> {
+  const result = await probePlatformStoreTimezone(store);
+  if (result.finalErrorCode === "STORE_TIMEZONE_PERMISSION_DENIED") {
+    throw new StoreTimezoneError("STORE_TIMEZONE_PERMISSION_DENIED", {
+      storeId: store.id ?? null,
+      platform: normalizePlatform(store.platform),
+      attempts: result.attempts
+    });
+  }
+  return result.verified;
 }
 
 function parseMetadata(value: unknown): any {
@@ -193,13 +369,17 @@ export async function resolveVerifiedStoreTimezone(store: StoreTimezoneInput): P
     const log = await prisma.syncLog.findFirst({
       where: {
         storeId: store.id,
-        type: "sync_store_orders",
+        taskType: "sync_store_orders",
         status: "success"
       },
       orderBy: { startedAt: "desc" }
     });
     const evidence = metadataTimezoneEvidence(parseMetadata(log?.metadata));
-    if (evidence.timezone === persistedTimezone && evidence.timezoneSource === "platform_shop_api") {
+    if (
+      evidence.timezone === persistedTimezone &&
+      evidence.timezoneSource === "platform_shop_api" &&
+      evidence.timezoneVerifiedAt
+    ) {
       return {
         timezone: persistedTimezone,
         timezoneSource: "persisted_verified",

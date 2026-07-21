@@ -32,6 +32,9 @@ export interface StoreSyncResult {
   failedCount: number;
   errorMessage?: string;
   recordsUpdated?: number;
+  coverageComplete?: boolean;
+  truncated?: boolean;
+  failedSlices?: any[];
   diagnostics?: any;
   orderItems: Array<{
     id: string;
@@ -250,7 +253,31 @@ export async function syncStoreData(
           : store.shopline_token;
 
     if (!token) {
-      console.warn(`[Store Sync] Skipping store ${store.id} (${store.name}) because token is empty`);
+      const message = `STORE_TOKEN_MISSING:${store.id}`;
+      console.warn(`[Store Sync] ${message}`);
+      results[store.id] = {
+        storeId: store.id,
+        storeName: store.name,
+        platform,
+        timezone: store.timezone || "",
+        localStartDate: startDate,
+        localEndDate: endDate,
+        utcStartDate: "",
+        utcEndDate: "",
+        requestUrlSanitized: "",
+        pageCount: 0,
+        recordsFetched: 0,
+        recordsSaved: 0,
+        recordsSkipped: 0,
+        skippedReasons: [],
+        duplicateCount: 0,
+        failedCount: 1,
+        errorMessage: message,
+        coverageComplete: false,
+        truncated: false,
+        failedSlices: [{ storeId: store.id, platform, message }],
+        orderItems: []
+      };
       continue;
     }
 
@@ -298,6 +325,9 @@ export async function syncStoreData(
         skippedReasons: [],
         duplicateCount: writeStats.updated,
         failedCount: 0,
+        coverageComplete: canonical.coverageComplete,
+        truncated: canonical.truncated,
+        failedSlices: canonical.failedSlices,
         orderItems: canonical.orders.map(o => ({
           id: o.orderId,
           order_number: o.orderNumber || o.orderId,
@@ -315,7 +345,10 @@ export async function syncStoreData(
           timezone: verifiedTimezone.timezone,
           timezoneSource: verifiedTimezone.timezoneSource,
           timezoneVerifiedAt: verifiedTimezone.timezoneVerifiedAt,
-          platformTimezoneRaw: verifiedTimezone.platformTimezoneRaw
+          platformTimezoneRaw: verifiedTimezone.platformTimezoneRaw,
+          coverageComplete: canonical.coverageComplete,
+          truncated: canonical.truncated,
+          failedSlices: canonical.failedSlices
         }
       };
 
@@ -337,8 +370,11 @@ export async function syncStoreData(
         recordsSkipped: 0,
         skippedReasons: [],
         duplicateCount: 0,
-        failedCount: 0,
+        failedCount: 1,
         errorMessage: err?.message || String(err),
+        coverageComplete: false,
+        truncated: false,
+        failedSlices: [{ storeId: store.id, platform: store.platform || "unknown", message: err?.message || String(err) }],
         orderItems: []
       };
     }

@@ -40,8 +40,9 @@ describe("store sync verified timezone gate", () => {
 
     expect(fetchStoreOrdersCanonicalMock).not.toHaveBeenCalled();
     expect(saveCanonicalOrdersToDbMock).not.toHaveBeenCalled();
-    expect(result[1].failedCount).toBe(0);
+    expect(result[1].failedCount).toBe(1);
     expect(result[1].errorMessage).toBe("STORE_TIMEZONE_UNVERIFIED");
+    expect(result[1].coverageComplete).toBe(false);
   });
 
   it("passes verified timezone evidence into canonical order fetching", async () => {
@@ -53,6 +54,9 @@ describe("store sync verified timezone gate", () => {
     });
     fetchStoreOrdersCanonicalMock.mockResolvedValue({
       orders: [],
+      coverageComplete: true,
+      truncated: false,
+      failedSlices: [],
       diagnostics: {
         timezoneAfter: "America/Los_Angeles",
         requestStartAt: "2026-07-01T00:00:00-07:00",
@@ -78,5 +82,28 @@ describe("store sync verified timezone gate", () => {
       timezoneVerifiedAt: "2026-07-01T00:00:00.000Z",
       platformTimezoneRaw: "America/Los_Angeles"
     }));
+  });
+
+  it("returns a failed store result when the platform token is missing", async () => {
+    prismaMock.store.findMany.mockResolvedValue([{
+      id: 2,
+      name: "Shopify Store",
+      platform: "shopify",
+      domain: "shop.example.com",
+      shopify_token: null,
+      timezone: "America/New_York"
+    }]);
+
+    const result = await syncStoreData("2026-07-01", "2026-07-02", "2");
+
+    expect(resolveVerifiedStoreTimezoneMock).not.toHaveBeenCalled();
+    expect(fetchStoreOrdersCanonicalMock).not.toHaveBeenCalled();
+    expect(result[2]).toMatchObject({
+      platform: "shopify",
+      failedCount: 1,
+      errorMessage: "STORE_TOKEN_MISSING:2",
+      coverageComplete: false
+    });
+    expect(JSON.stringify(result[2])).not.toContain("GMT+8");
   });
 });
