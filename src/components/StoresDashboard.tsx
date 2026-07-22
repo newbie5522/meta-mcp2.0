@@ -1,11 +1,36 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Plus, Store, Link as LinkIcon, Trash2, RefreshCw, ChevronDown, Clock, AlertTriangle } from "lucide-react";
+import { Plus, Store, Link as LinkIcon, Trash2, RefreshCw, ChevronDown, Clock } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+
+export function getTimezoneSourceLabel(source: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    platform_shop_api: "平台 API 已验证",
+    persisted_verified: "历史验证记录",
+    manual_verified: "管理员人工确认",
+    unverified: "尚未验证"
+  };
+  return labels[source || "unverified"] || labels.unverified;
+}
+
+export function getTimestampEncodingLabel(diagnostics: any): string {
+  const timestampDiagnostics = diagnostics?.timestampDiagnostics;
+  if (!timestampDiagnostics) return "订单时间编码：UNKNOWN";
+  const offsets = Array.isArray(timestampDiagnostics.observedOffsets) && timestampDiagnostics.observedOffsets.length > 0
+    ? `（${timestampDiagnostics.observedOffsets.join(" / ")}）`
+    : "";
+  return `订单时间编码：${timestampDiagnostics.encoding}${offsets}`;
+}
+
+export function getTimestampConversionLabel(diagnostics: any): string {
+  const normalizedToTimezone = diagnostics?.timestampDiagnostics?.normalizedToTimezone || diagnostics?.normalizedTimezone || "-";
+  const localDateField = diagnostics?.timestampDiagnostics?.localDateField || "Order.store_local_date";
+  return `日期换算：已按 ${normalizedToTimezone} 换算为 ${localDateField}`;
+}
 
 export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endDate?: Date }) {
   const navigate = useNavigate();
@@ -313,8 +338,9 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
                       </button>
 
                       {store.timezoneDiagnostics.warnings?.length > 0 && (
-                        <span className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full font-bold">
-                          <AlertTriangle className="w-3 h-3 text-amber-500" />
+                        <span className="flex items-center gap-1 text-[0px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full font-bold">
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                          <span className="text-[10px]">需关注</span>
                           有警报
                         </span>
                       )}
@@ -348,10 +374,7 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
                         <div>
                           <span className="text-gray-400 block font-medium">4. timezoneSource 来源:</span>
                           <span className="font-bold text-indigo-600 block text-[11px] truncate">
-                            {store.timezoneDiagnostics.timezoneSource === "manual" && "手动配置 (manual)"}
-                            {store.timezoneDiagnostics.timezoneSource === "platform_shop_api" && "平台 API (platform_shop_api)"}
-                            {store.timezoneDiagnostics.timezoneSource === "normalized_alias" && "别名映射 (normalized_alias)"}
-                            {store.timezoneDiagnostics.timezoneSource === "system_default" && "系统兜底 (system_default)"}
+                            <span className="text-[11px]">{getTimezoneSourceLabel(store.timezoneDiagnostics.timezoneSource)}</span>
                           </span>
                         </div>
                       </div>
@@ -409,6 +432,14 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
                         </div>
                       )}
 
+                      {store.timezoneDiagnostics.timestampDiagnostics && (
+                        <div className="text-[11px] bg-blue-50 p-2.5 rounded border border-blue-100 text-blue-900 space-y-1">
+                          <div className="font-semibold">{getTimestampEncodingLabel(store.timezoneDiagnostics)}</div>
+                          <div>{getTimestampConversionLabel(store.timezoneDiagnostics)}</div>
+                          <div className="text-blue-700">{store.timezoneDiagnostics.timestampDiagnostics.message}</div>
+                        </div>
+                      )}
+
                       {store.timezoneDiagnostics.observedOrderOffsets && store.timezoneDiagnostics.observedOrderOffsets.length > 0 && (
                         <div className="text-[11px] bg-white p-2 rounded border border-gray-100">
                           <span className="font-semibold block text-slate-700 font-sans mb-1">订单中观测到的 offsets:</span>
@@ -426,7 +457,7 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
                         <div className="p-2.5 bg-amber-50 rounded border border-amber-200 text-[10.5px] text-amber-800 space-y-1 font-sans">
                           {store.timezoneDiagnostics.warnings.map((warn: string, idx: number) => (
                             <div key={idx} className="flex gap-1.5 align-top">
-                              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 text-amber-600 mt-0.5" />
+                              <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-amber-600 flex-shrink-0" />
                               <span className="leading-tight font-medium">{warn}</span>
                             </div>
                           ))}

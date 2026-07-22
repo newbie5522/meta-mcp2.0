@@ -86,7 +86,7 @@ function sanitizeStore(store: any) {
 function determineTimezoneSource(
   configuredTz: string | null | undefined,
   lastSyncLog: any
-): "persisted_verified" | "unverified" {
+): "platform_shop_api" | "persisted_verified" | "manual_verified" | "unverified" {
   const normalized = normalizeIanaTimezoneOrNull(configuredTz);
   if (!normalized || !lastSyncLog?.metadata) return "unverified";
   try {
@@ -94,19 +94,57 @@ function determineTimezoneSource(
     const diag = meta.diagnostics || meta;
     const evidenceTimezone = meta.timezone || diag.timezoneAfter || diag.timezone;
     const evidenceSource = meta.timezoneSource || diag.timezoneSource;
-    return evidenceTimezone === normalized && evidenceSource === "platform_shop_api"
-      ? "persisted_verified"
+    const evidenceVerifiedAt = meta.timezoneVerifiedAt || diag.timezoneVerifiedAt;
+    const verifiedSources = new Set(["platform_shop_api", "persisted_verified", "manual_verified"]);
+    return evidenceTimezone === normalized && verifiedSources.has(evidenceSource) && Boolean(evidenceVerifiedAt)
+      ? evidenceSource
       : "unverified";
   } catch {
     return "unverified";
   }
 }
 
-function parseOffsetHours(offsetStr: string): number {
-  if (!offsetStr) return 0;
-  const clean = offsetStr.replace("Z", "+00:00").replace("GMT", "");
-  const parts = clean.split(":");
-  return parseInt(parts[0], 10);
+function normalizeObservedOffset(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed === "Z") return "+00:00";
+  const withoutGmt = trimmed.replace(/^GMT/i, "");
+  return /^[+-]\d{2}:\d{2}$/.test(withoutGmt) ? withoutGmt : null;
+}
+
+function buildTimestampDiagnostics(observedOrderOffsets: string[], normalizedTimezone: string | null) {
+  const observedOffsets = Array.from(
+    new Set(observedOrderOffsets.map(normalizeObservedOffset).filter((offset): offset is string => Boolean(offset)))
+  );
+
+  let encoding: "UTC" | "OFFSET_AWARE" | "MIXED_OFFSET_AWARE" | "UNKNOWN";
+  if (observedOffsets.length === 0) {
+    encoding = "UNKNOWN";
+  } else if (observedOffsets.every(offset => offset === "+00:00")) {
+    encoding = "UTC";
+  } else if (observedOffsets.length === 1) {
+    encoding = "OFFSET_AWARE";
+  } else {
+    encoding = "MIXED_OFFSET_AWARE";
+  }
+
+  const message =
+    encoding === "UTC"
+      ? "平台订单时间使用 UTC 编码，系统会按店铺时区换算为订单本地日期。"
+      : encoding === "OFFSET_AWARE"
+        ? "平台订单时间包含明确 offset，系统会按店铺时区换算为订单本地日期。"
+        : encoding === "MIXED_OFFSET_AWARE"
+          ? "平台订单时间包含多个明确 offset，系统会按店铺时区统一换算为订单本地日期。"
+          : "最近一次同步未提供可识别的订单时间 offset 样本。";
+
+  return {
+    encoding,
+    observedOffsets,
+    normalizedToTimezone: normalizedTimezone,
+    localDateField: "Order.store_local_date",
+    message
+  };
 }
 
 function buildTimezoneDiagnostics(store: any, lastSyncLog: any) {
@@ -114,24 +152,35 @@ function buildTimezoneDiagnostics(store: any, lastSyncLog: any) {
   const normalizedTimezone = normalizeIanaTimezoneOrNull(configuredTimezone);
 
   let currentOffset: string | null = null;
-  let offsetStr: string | null = null;
   if (normalizedTimezone) {
-    offsetStr = dayjs().tz(normalizedTimezone).format("Z");
+    const offsetStr = dayjs().tz(normalizedTimezone).format("Z");
     const hours = parseInt(offsetStr.split(":")[0], 10);
     currentOffset = `GMT${hours >= 0 ? "+" : ""}${hours}`;
   }
 
   const timezoneSource = determineTimezoneSource(configuredTimezone, lastSyncLog);
-
   let lastSyncWindow: any = undefined;
   let observedOrderOffsets: string[] = [];
+  let coverageComplete: boolean | null = null;
+  let truncated: boolean | null = null;
+  let failedSlicesCount = 0;
 
-  if (lastSyncLog && lastSyncLog.metadata) {
+  if (lastSyncLog?.metadata) {
     try {
       const meta = JSON.parse(lastSyncLog.metadata);
       const diag = meta.diagnostics || meta;
-      
-      if (diag.requestStartAt || diag.expandedStartAt || diag.attributionField || diag.revenueField) {
+
+      if (Array.isArray(diag.observedOrderOffsets)) {
+        observedOrderOffsets = diag.observedOrderOffsets;
+      }
+
+      coverageComplete = diag.coverageComplete === undefined ? null : Boolean(diag.coverageComplete);
+      truncated = diag.truncated === undefined ? null : Boolean(diag.truncated);
+      failedSlicesCount = Array.isArray(diag.failedSlices)
+        ? diag.failedSlices.length
+        : Number(diag.failedSlicesCount || 0);
+
+      if (diag.requestStartAt || diag.expandedStartAt || diag.attributionField || diag.revenueField || coverageComplete !== null || truncated !== null || failedSlicesCount > 0) {
         lastSyncWindow = {
           requestStartAt: diag.requestStartAt || null,
           requestEndAt: diag.requestEndAt || null,
@@ -141,30 +190,24 @@ function buildTimezoneDiagnostics(store: any, lastSyncLog: any) {
           revenueField: diag.revenueField || null,
           pagesFetched: diag.pagesFetched != null ? Number(diag.pagesFetched) : null,
           validOrdersCount: diag.validOrdersCount != null ? Number(diag.validOrdersCount) : null,
-          validPaidTotal: diag.validPaidTotal != null ? Number(diag.validPaidTotal) : null
+          validPaidTotal: diag.validPaidTotal != null ? Number(diag.validPaidTotal) : null,
+          coverageComplete,
+          truncated,
+          paginationTermination: diag.paginationTermination || null,
+          failedSlicesCount
         };
       }
-      
-      if (diag.observedOrderOffsets && Array.isArray(diag.observedOrderOffsets)) {
-        observedOrderOffsets = diag.observedOrderOffsets;
-      }
-    } catch (e) {
-      // ignore
+    } catch {
+      // ignore malformed historical metadata
     }
   }
 
   const warnings: string[] = [];
-  const baseOffsetHours = offsetStr ? parseOffsetHours(offsetStr) : null;
-
-  if (baseOffsetHours !== null && observedOrderOffsets && observedOrderOffsets.length > 0) {
-    for (const offsetVal of observedOrderOffsets) {
-      const parsedHours = parseOffsetHours(offsetVal);
-      if (parsedHours !== baseOffsetHours) {
-        warnings.push("检测到订单时间戳 offset 与店铺时区不一致，请确认平台后台时区与 API 返回时间字段口径。");
-        break;
-      }
-    }
-  }
+  if (!normalizedTimezone) warnings.push("店铺时区尚未配置为有效的 IANA 时区。");
+  if (timezoneSource === "unverified") warnings.push("店铺时区尚未完成平台或人工验证。");
+  if (coverageComplete === false) warnings.push("最近一次订单同步未完整覆盖所选日期范围。");
+  if (truncated === true) warnings.push("最近一次订单同步达到分页安全上限，数据可能不完整。");
+  if (failedSlicesCount > 0) warnings.push("最近一次订单同步存在失败分片，请查看同步详情。");
 
   return {
     configuredTimezone,
@@ -174,6 +217,7 @@ function buildTimezoneDiagnostics(store: any, lastSyncLog: any) {
     timezoneVerified: timezoneSource !== "unverified",
     lastSyncWindow,
     observedOrderOffsets,
+    timestampDiagnostics: buildTimestampDiagnostics(observedOrderOffsets, normalizedTimezone),
     warnings
   };
 }
@@ -189,7 +233,7 @@ router.get("/", async (req, res) => {
         const lastSyncLog = await prisma.syncLog.findFirst({
           where: {
             storeId: store.id,
-            type: "sync_store_orders",
+            taskType: "sync_store_orders",
             status: "success"
           },
           orderBy: {
@@ -853,7 +897,7 @@ router.get("/:id", async (req, res) => {
     const lastSyncLog = await prisma.syncLog.findFirst({
       where: {
         storeId: store.id,
-        type: "sync_store_orders",
+        taskType: "sync_store_orders",
         status: "success"
       },
       orderBy: {
