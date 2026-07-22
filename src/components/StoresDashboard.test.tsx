@@ -36,6 +36,7 @@ describe("StoresDashboard timezone diagnostics display helpers", () => {
     expect(getTimezoneSourceLabel("platform_shop_api")).toBe("平台 API 已验证");
     expect(getTimezoneSourceLabel("persisted_verified")).toBe("历史验证记录");
     expect(getTimezoneSourceLabel("manual_verified")).toBe("管理员人工确认");
+    expect(getTimezoneSourceLabel("temporary_default_la")).toBe("临时按美西时区");
     expect(getTimezoneSourceLabel("unverified")).toBe("尚未验证");
   });
 });

@@ -86,7 +86,7 @@ function sanitizeStore(store: any) {
 function determineTimezoneSource(
   configuredTz: string | null | undefined,
   lastSyncLog: any
-): "platform_shop_api" | "persisted_verified" | "manual_verified" | "unverified" {
+): "platform_shop_api" | "persisted_verified" | "manual_verified" | "temporary_default_la" | "unverified" {
   const normalized = normalizeIanaTimezoneOrNull(configuredTz);
   if (!normalized || !lastSyncLog?.metadata) return "unverified";
   try {
@@ -95,7 +95,7 @@ function determineTimezoneSource(
     const evidenceTimezone = meta.timezone || diag.timezoneAfter || diag.timezone;
     const evidenceSource = meta.timezoneSource || diag.timezoneSource;
     const evidenceVerifiedAt = meta.timezoneVerifiedAt || diag.timezoneVerifiedAt;
-    const verifiedSources = new Set(["platform_shop_api", "persisted_verified", "manual_verified"]);
+    const verifiedSources = new Set(["platform_shop_api", "persisted_verified", "manual_verified", "temporary_default_la"]);
     return evidenceTimezone === normalized && verifiedSources.has(evidenceSource) && Boolean(evidenceVerifiedAt)
       ? evidenceSource
       : "unverified";
@@ -164,6 +164,8 @@ function buildTimezoneDiagnostics(store: any, lastSyncLog: any) {
   let coverageComplete: boolean | null = null;
   let truncated: boolean | null = null;
   let failedSlicesCount = 0;
+  let temporaryTimezoneFallback = false;
+  let temporaryTimezoneReason: string | null = null;
 
   if (lastSyncLog?.metadata) {
     try {
@@ -179,6 +181,8 @@ function buildTimezoneDiagnostics(store: any, lastSyncLog: any) {
       failedSlicesCount = Array.isArray(diag.failedSlices)
         ? diag.failedSlices.length
         : Number(diag.failedSlicesCount || 0);
+      temporaryTimezoneFallback = Boolean(meta.temporaryTimezoneFallback || diag.temporaryTimezoneFallback);
+      temporaryTimezoneReason = meta.temporaryTimezoneReason || diag.temporaryTimezoneReason || null;
 
       if (diag.requestStartAt || diag.expandedStartAt || diag.attributionField || diag.revenueField || coverageComplete !== null || truncated !== null || failedSlicesCount > 0) {
         lastSyncWindow = {
@@ -205,6 +209,7 @@ function buildTimezoneDiagnostics(store: any, lastSyncLog: any) {
   const warnings: string[] = [];
   if (!normalizedTimezone) warnings.push("店铺时区尚未配置为有效的 IANA 时区。");
   if (timezoneSource === "unverified") warnings.push("店铺时区尚未完成平台或人工验证。");
+  if (timezoneSource === "temporary_default_la") warnings.push("Shoplazza 当前未返回店铺时区，订单日期暂按 America/Los_Angeles 换算。");
   if (coverageComplete === false) warnings.push("最近一次订单同步未完整覆盖所选日期范围。");
   if (truncated === true) warnings.push("最近一次订单同步达到分页安全上限，数据可能不完整。");
   if (failedSlicesCount > 0) warnings.push("最近一次订单同步存在失败分片，请查看同步详情。");
@@ -214,7 +219,9 @@ function buildTimezoneDiagnostics(store: any, lastSyncLog: any) {
     normalizedTimezone,
     currentOffset,
     timezoneSource,
-    timezoneVerified: timezoneSource !== "unverified",
+    timezoneVerified: ["platform_shop_api", "persisted_verified", "manual_verified"].includes(timezoneSource),
+    temporaryTimezoneFallback: timezoneSource === "temporary_default_la" || temporaryTimezoneFallback,
+    temporaryTimezoneReason,
     lastSyncWindow,
     observedOrderOffsets,
     timestampDiagnostics: buildTimestampDiagnostics(observedOrderOffsets, normalizedTimezone),

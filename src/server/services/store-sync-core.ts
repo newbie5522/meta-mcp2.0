@@ -10,6 +10,7 @@ import {
 } from "../utils/timezone.js";
 import { extractOrderLedgerAmount } from "./store-ledger.service.js";
 import type { StoreTimezoneSource } from "./store-timezone.service.js";
+import { fetchShoplazzaOrderPages } from "./shoplazza-order-adapter.js";
 
 export type StorePlatform = "shopline" | "shopify" | "shoplazza";
 
@@ -45,8 +46,10 @@ const PLATFORM_ALLOWED_PAYMENT_STATUSES: Record<StorePlatform, ReadonlySet<strin
 
 const EXCLUDED_PAYMENT_STATUSES = new Set([
   "waiting",
+  "paying",
   "unpaid",
   "failed",
+  "opened",
   "cancelled",
   "canceled",
   "voided"
@@ -170,6 +173,45 @@ function sumMoney(values: number[]): number {
   return Number(values.reduce((s, v) => s + money(v), 0).toFixed(2));
 }
 
+function extractShoplazzaLedgerAmount(raw: any) {
+  const lineItems = Array.isArray(raw?.line_items) ? raw.line_items : [];
+  const lineItemsSum = money(lineItems.reduce((sum: number, li: any) => {
+    const qty = money(li.quantity || 1);
+    const unitPrice = money(li.price ?? li.unit_price);
+    const lineTotal = li.total_price !== null && li.total_price !== undefined && li.total_price !== ""
+      ? money(li.total_price)
+      : money(qty * unitPrice);
+    return sum + lineTotal;
+  }, 0));
+
+  const revenueCandidates = {
+    total_price: money(raw.total_price),
+    current_total_price: money(raw.current_total_price),
+    total_amount: money(raw.total_amount),
+    order_total: money(raw.order_total),
+    subtotal_price: money(raw.subtotal_price),
+    current_subtotal_price: money(raw.current_subtotal_price),
+    net_subtotal_less_discount: money(raw.net_subtotal_less_discount),
+    line_items_sum: lineItemsSum
+  };
+
+  const priority = [
+    { field: "total_price", value: revenueCandidates.total_price },
+    { field: "current_total_price", value: revenueCandidates.current_total_price },
+    { field: "total_amount", value: revenueCandidates.total_amount },
+    { field: "order_total", value: revenueCandidates.order_total },
+    { field: "line_items_sum", value: revenueCandidates.line_items_sum }
+  ];
+  const selected = priority.find(candidate => candidate.value > 0) || { field: "ZERO", value: 0 };
+
+  return {
+    orderTotal: selected.value,
+    orderTotalSource: selected.field,
+    revenueCandidates,
+    lineItemsSum
+  };
+}
+
 function getRawTimeByAttribution(co: any, attr: string): string | null {
   if (attr === "created_at") return co.rawCreatedAt || null;
   if (attr === "paid_at") return co.rawPaidAt || null;
@@ -262,32 +304,7 @@ async function fetchRawPlatformOrdersPage(params: {
   }
 
   if (params.platform === "shoplazza") {
-    headers["Access-Token"] = params.token;
-    // Autodetect version
-    let apiVersion = "2022-01";
-    let useJsonSuffix = false;
-    try {
-      const testUrl = `https://${domain}/openapi/2022-01/orders?limit=1`;
-      const testRes = await axios.get(testUrl, { headers, timeout: 5000 });
-      if (testRes.status === 200) {
-        apiVersion = "2022-01";
-      }
-    } catch (e) {
-      apiVersion = "2020-01";
-    }
-
-    const suffix = useJsonSuffix ? ".json" : "";
-    const url = `https://${domain}/openapi/${apiVersion}/orders${suffix}?created_at_min=${encodeURIComponent(params.startUtc)}&created_at_max=${encodeURIComponent(params.endUtc)}&limit=${params.pageSize}&page=${params.pageIndex}`;
-    
-    const requestUrlSanitized = sanitizeUrl(url);
-    console.log(`[Store Sync Core] GET ${requestUrlSanitized}`);
-    const res = await axios.get(url, { headers, timeout: 15000 });
-    const orders = res.data.orders || [];
-    
-    // Shoplazza uses page incrementing
-    const nextUrl = orders.length >= params.pageSize ? "has_more" : null;
-    
-    return { orders, nextUrl, responseHeaders: res.headers, rawBody: res.data, requestUrlSanitized };
+    throw new Error("SHOPLAZZA_ADAPTER_REQUIRED");
   }
 
   throw new Error(`Unsupported platform: ${params.platform}`);
@@ -352,8 +369,14 @@ export async function fetchStoreOrdersCanonical(params: {
     apiOrdersCount: number;
     validOrdersCount: number;
     validPaidTotal: number;
+    selectedApiVersion?: string | null;
+    selectedEndpointPath?: string | null;
+    responseOrderPath?: string | null;
+    paginationMode?: string | null;
+    cursorPages?: number;
     attributionField: string;
     revenueField: string;
+    orderTotalSource?: string | null;
     ledgerAmountPolicy: string;
     lineItemRevenueIsSales: boolean;
     requestUrlsSanitized: string[];
@@ -369,11 +392,13 @@ export async function fetchStoreOrdersCanonical(params: {
       net_subtotal_less_discount: number;
     };
     attributionFieldStats: Record<string, { count: number; total: number }>;
+    paymentStatusCounts?: Record<string, number>;
     observedOrderOffsets: string[];
     coverageComplete: boolean;
     truncated: boolean;
     paginationTermination: "NATURAL_END" | "EMPTY_PAGE" | "PAGE_LIMIT" | "ERROR";
     failedSlices: any[];
+    failedSlicesCount?: number;
   };
   coverageComplete: boolean;
   truncated: boolean;
@@ -406,7 +431,36 @@ export async function fetchStoreOrdersCanonical(params: {
   let truncated = false;
   let paginationTermination: "NATURAL_END" | "EMPTY_PAGE" | "PAGE_LIMIT" | "ERROR" = "NATURAL_END";
   const failedSlices: any[] = [];
+  let selectedApiVersion: string | null = null;
+  let selectedEndpointPath: string | null = null;
+  let responseOrderPath: string | null = null;
+  let paginationMode: string | null = null;
+  let cursorPages = 0;
 
+  if (params.platform === "shoplazza") {
+    const shoplazzaPages = await fetchShoplazzaOrderPages({
+      domain: params.domain,
+      token: params.token,
+      startUtc: expandedStartAt,
+      endUtc: expandedEndAt,
+      pageSize: 250,
+      maxPages: 50
+    });
+    rawOrders.push(...shoplazzaPages.rawOrders);
+    requestUrlsSanitized.push(...shoplazzaPages.requestUrlsSanitized);
+    shoplazzaPages.responseBodyKeys.forEach(k => responseBodyKeysSet.add(k));
+    shoplazzaPages.responseHeaderKeys.forEach(k => responseHeaderKeysSet.add(k));
+    pageOrderCounts.push(...shoplazzaPages.pageOrderCounts);
+    pagesFetched = shoplazzaPages.pagesFetched;
+    truncated = shoplazzaPages.truncated;
+    paginationTermination = shoplazzaPages.paginationTermination;
+    failedSlices.push(...shoplazzaPages.failedSlices);
+    selectedApiVersion = shoplazzaPages.selectedApiVersion;
+    selectedEndpointPath = shoplazzaPages.selectedEndpointPath;
+    responseOrderPath = shoplazzaPages.responseOrderPath;
+    paginationMode = shoplazzaPages.paginationMode;
+    cursorPages = shoplazzaPages.cursorPages;
+  } else {
   while (isFetching) {
     pagesFetched++;
     let pageResult;
@@ -469,43 +523,48 @@ export async function fetchStoreOrdersCanonical(params: {
       paginationTermination = "EMPTY_PAGE";
     }
   }
+  }
 
   const attributionCandidates = ["created_at", "paid_at", "processed_at", "completed_at", "updated_at"] as const;
   
   // Mapping intermediate order forms
   const convertedOrders = rawOrders.map(o => {
     const orderId = String(o.id);
-    const orderNumber = String(o.order_number || o.name || o.id);
-    const financialStatus = o.financial_status ? String(o.financial_status).toLowerCase() : null;
+    const orderNumber = String(o.number || o.order_number || o.name || o.id);
+    const financialStatus = (o.financial_status || o.payment_status) ? String(o.financial_status || o.payment_status).toLowerCase() : null;
     const fulfillmentStatus = o.fulfillment_status ? String(o.fulfillment_status).toLowerCase() : null;
 
     // Check custom notes attributes for store mappings
-    const isCancelled = !!(o.cancelled_at || o.cancel_reason);
-    const cancelledAt = o.cancelled_at || null;
+    const isCancelled = !!(o.cancelled_at || o.cancel_reason || String(o.status || "").toLowerCase() === "cancelled" || String(o.status || "").toLowerCase() === "canceled");
+    const cancelledAt = o.cancelled_at || (isCancelled ? (o.updated_at || o.created_at || "STATUS_CANCELLED") : null);
 
     const rawCreatedAt = o.created_at || null;
-    const rawPaidAt = o.paid_at || o.payment_details?.paid_at || null;
+    const rawPaidAt = o.placed_at || o.paid_at || o.payment_details?.paid_at || null;
     const rawProcessedAt = o.processed_at || null;
-    const rawCompletedAt = o.completed_at || o.closed_at || null;
+    const rawCompletedAt = o.finished_at || o.completed_at || o.closed_at || null;
     const rawUpdatedAt = o.updated_at || null;
 
     // Line items parser
     const lineItemsArray = Array.isArray(o.line_items) ? o.line_items : [];
     const lineItems = lineItemsArray.map((li: any) => {
-      const uPrice = money(li.price);
+      const uPrice = money(li.price ?? li.unit_price);
       const qty = parseInt(li.quantity || 1, 10);
       return {
         lineItemId: String(li.id),
         productId: li.product_id ? String(li.product_id) : null,
         sku: li.sku || null,
-        name: li.title || li.name || "Unknown Item",
+        name: li.product_title || li.title || li.name || "Unknown Item",
         quantity: qty,
         unitPrice: uPrice,
-        revenue: money(uPrice * qty)
+        revenue: li.total_price !== null && li.total_price !== undefined && li.total_price !== ""
+          ? money(li.total_price)
+          : money(uPrice * qty)
       };
     });
 
-    const ledgerAmount = extractOrderLedgerAmount(params.platform, o);
+    const ledgerAmount = params.platform === "shoplazza"
+      ? extractShoplazzaLedgerAmount(o)
+      : extractOrderLedgerAmount(params.platform, o);
     const revenueCandidates = ledgerAmount.revenueCandidates;
 
     return {
@@ -666,6 +725,12 @@ export async function fetchStoreOrdersCanonical(params: {
   const apiOrdersCount = targetOrders.length;
   const validOrdersCount = canonicalOrders.length;
   const validPaidTotal = canonicalOrders.reduce((s, o) => s + o.orderTotal, 0);
+  const paymentStatusCounts = targetOrders.reduce<Record<string, number>>((acc, order) => {
+    const status = String(order.paymentStatus || order.financialStatus || "unknown").toLowerCase();
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {});
+  const orderTotalSource = canonicalOrders[0]?.orderTotalSource || targetOrders[0]?.orderTotalSource || null;
 
   const observedOrderOffsetsSet = new Set<string>();
   for (const co of canonicalOrders) {
@@ -703,8 +768,14 @@ export async function fetchStoreOrdersCanonical(params: {
       apiOrdersCount,
       validOrdersCount,
       validPaidTotal,
+      selectedApiVersion,
+      selectedEndpointPath,
+      responseOrderPath,
+      paginationMode,
+      cursorPages,
       attributionField: bestAttributionField,
       revenueField: "extracted_order_total",
+      orderTotalSource,
       ledgerAmountPolicy: "platform_priority_order_total_not_baseline",
       lineItemRevenueIsSales: false,
       requestUrlsSanitized,
@@ -712,11 +783,13 @@ export async function fetchStoreOrdersCanonical(params: {
       responseHeaderKeys: Array.from(responseHeaderKeysSet),
       revenueFieldSums,
       attributionFieldStats,
+      paymentStatusCounts,
       observedOrderOffsets,
       coverageComplete,
       truncated,
       paginationTermination,
-      failedSlices
+      failedSlices,
+      failedSlicesCount: failedSlices.length
     }
   };
 }

@@ -80,4 +80,109 @@ describe("store sync core verified timezone contract", () => {
       timezone: "America/Los_Angeles"
     })).rejects.toThrow("network down");
   });
+
+  it("SHOPLAZZA-MAP-01/02/03/05/DATE-01 maps canonical Shoplazza fields and local date", async () => {
+    axiosGet.mockResolvedValue({
+      status: 200,
+      data: {
+        data: {
+          orders: [{
+            id: "slz-1",
+            number: "R-1001",
+            created_at: "2026-07-02T06:30:00Z",
+            placed_at: "2026-07-02T06:35:00Z",
+            payment_status: "paid",
+            status: "finished",
+            total_price: "42.50",
+            current_total_price: "99.99",
+            line_items: [{
+              id: "line-1",
+              product_id: "product-1",
+              product_title: "Real Shoplazza Product",
+              sku: "SKU-1",
+              quantity: 2,
+              price: "10.00",
+              total_price: "20.00"
+            }]
+          }],
+          cursor: ""
+        }
+      },
+      headers: {}
+    });
+
+    const result = await fetchStoreOrdersCanonical({
+      platform: "shoplazza",
+      storeId: 2,
+      domain: "lachry.myshoplaza.com",
+      token: "shoplazza-token",
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      timezone: "America/Los_Angeles",
+      timezoneSource: "temporary_default_la"
+    });
+
+    expect(result.coverageComplete).toBe(true);
+    expect(result.orders).toHaveLength(1);
+    expect(result.orders[0]).toMatchObject({
+      orderId: "slz-1",
+      orderNumber: "R-1001",
+      rawPaidAt: "2026-07-02T06:35:00Z",
+      paymentStatus: "paid",
+      orderTotal: 42.5,
+      orderTotalSource: "total_price",
+      storeLocalDate: "2026-07-01",
+      storeTimezone: "America/Los_Angeles"
+    });
+    expect(result.orders[0].lineItems[0]).toMatchObject({
+      productId: "product-1",
+      name: "Real Shoplazza Product",
+      revenue: 20
+    });
+    expect(result.diagnostics).toMatchObject({
+      selectedApiVersion: "2026-01",
+      selectedEndpointPath: "/openapi/2026-01/orders",
+      responseOrderPath: "data.orders",
+      paginationMode: "cursor",
+      orderTotalSource: "total_price",
+      timezoneSource: "temporary_default_la"
+    });
+  });
+
+  it("SHOPLAZZA-MAP-04 excludes status=cancelled even when payment_status is paid", async () => {
+    axiosGet.mockResolvedValue({
+      status: 200,
+      data: {
+        data: {
+          orders: [{
+            id: "slz-cancelled",
+            number: "R-VOID",
+            created_at: "2026-07-02T06:30:00Z",
+            placed_at: "2026-07-02T06:35:00Z",
+            payment_status: "paid",
+            status: "cancelled",
+            total_price: "42.50",
+            line_items: [{ id: "line-1", product_title: "Cancelled Product", quantity: 1, price: "42.50" }]
+          }],
+          cursor: ""
+        }
+      },
+      headers: {}
+    });
+
+    const result = await fetchStoreOrdersCanonical({
+      platform: "shoplazza",
+      storeId: 2,
+      domain: "lachry.myshoplaza.com",
+      token: "shoplazza-token",
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      timezone: "America/Los_Angeles"
+    });
+
+    expect(result.diagnostics.apiOrdersCount).toBe(1);
+    expect(result.diagnostics.paymentStatusCounts).toMatchObject({ paid: 1 });
+    expect(result.diagnostics.validOrdersCount).toBe(0);
+    expect(result.orders).toEqual([]);
+  });
 });

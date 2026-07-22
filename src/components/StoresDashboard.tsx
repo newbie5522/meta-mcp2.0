@@ -12,6 +12,7 @@ export function getTimezoneSourceLabel(source: string | null | undefined): strin
     platform_shop_api: "平台 API 已验证",
     persisted_verified: "历史验证记录",
     manual_verified: "管理员人工确认",
+    temporary_default_la: "临时按美西时区",
     unverified: "尚未验证"
   };
   return labels[source || "unverified"] || labels.unverified;
@@ -338,7 +339,7 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
                       </button>
 
                       {store.timezoneDiagnostics.warnings?.length > 0 && (
-                        <span className="flex items-center gap-1 text-[0px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full font-bold">
+                        <span className="flex items-center gap-1 text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full font-bold">
                           <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
                           <span className="text-[10px]">需关注</span>
                           有警报

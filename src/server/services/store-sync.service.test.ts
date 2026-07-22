@@ -84,6 +84,67 @@ describe("store sync verified timezone gate", () => {
     }));
   });
 
+  it("SHOPLAZZA-SYNC-01/02 passes temporary_default_la into canonical fetching and records write diagnostics", async () => {
+    prismaMock.store.findMany.mockResolvedValue([{
+      id: 2,
+      name: "Romanticed",
+      platform: "shoplazza",
+      domain: "lachry.myshoplaza.com",
+      shoplazza_token: "shoplazza-token",
+      timezone: "America/Los_Angeles"
+    }]);
+    resolveVerifiedStoreTimezoneMock.mockResolvedValue({
+      timezone: "America/Los_Angeles",
+      timezoneSource: "temporary_default_la",
+      timezoneVerifiedAt: "2026-07-01T00:00:00.000Z",
+      platformTimezoneRaw: null,
+      temporaryTimezoneFallback: true,
+      temporaryTimezoneReason: "SHOPLAZZA_TIMEZONE_FIELD_UNAVAILABLE"
+    });
+    fetchStoreOrdersCanonicalMock.mockResolvedValue({
+      orders: [{ orderId: "slz-1", orderNumber: "R-1001", attributionTimeRaw: "2026-07-02T06:30:00Z", rawCreatedAt: "2026-07-02T06:30:00Z", storeLocalDate: "2026-07-01", orderTotal: 42.5, paymentStatus: "paid", fulfillmentStatus: "fulfilled" }],
+      coverageComplete: true,
+      truncated: false,
+      failedSlices: [],
+      diagnostics: {
+        timezoneAfter: "America/Los_Angeles",
+        requestStartAt: "2026-07-01T00:00:00-07:00",
+        requestEndAt: "2026-07-01T23:59:59-07:00",
+        requestUrlsSanitized: ["https://lachry.myshoplaza.com/openapi/2026-01/orders?page_size=250"],
+        pagesFetched: 1,
+        apiOrdersCount: 1,
+        validOrdersCount: 1,
+        selectedApiVersion: "2026-01",
+        selectedEndpointPath: "/openapi/2026-01/orders"
+      }
+    });
+    saveCanonicalOrdersToDbMock.mockResolvedValue({
+      saved: 1,
+      updated: 0,
+      deletedRows: 0,
+      orderRowsWritten: 1
+    });
+
+    const result = await syncStoreData("2026-07-01", "2026-07-01", "2");
+
+    expect(fetchStoreOrdersCanonicalMock).toHaveBeenCalledWith(expect.objectContaining({
+      platform: "shoplazza",
+      timezone: "America/Los_Angeles",
+      timezoneSource: "temporary_default_la",
+      platformTimezoneRaw: null
+    }));
+    expect(saveCanonicalOrdersToDbMock).toHaveBeenCalled();
+    expect(result[2].recordsSaved).toBe(1);
+    expect(result[2].diagnostics).toMatchObject({
+      timezoneSource: "temporary_default_la",
+      temporaryTimezoneFallback: true,
+      temporaryTimezoneReason: "SHOPLAZZA_TIMEZONE_FIELD_UNAVAILABLE",
+      recordsSaved: 1,
+      recordsUpdated: 0,
+      orderRowsWritten: 1
+    });
+  });
+
   it("returns a failed store result when the platform token is missing", async () => {
     prismaMock.store.findMany.mockResolvedValue([{
       id: 2,

@@ -7,6 +7,7 @@ import timezone from "dayjs/plugin/timezone.js";
 import { normalizeIanaTimezoneOrNull, requireVerifiedIanaTimezone } from "../utils/timezone.js";
 import { fetchStoreOrdersCanonical, saveCanonicalOrdersToDb } from "./store-sync-core.js";
 import { resolveVerifiedStoreTimezone } from "./store-timezone.service.js";
+import { extractShoplazzaOrders } from "./shoplazza-order-adapter.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -346,9 +347,15 @@ export async function syncStoreData(
           timezoneSource: verifiedTimezone.timezoneSource,
           timezoneVerifiedAt: verifiedTimezone.timezoneVerifiedAt,
           platformTimezoneRaw: verifiedTimezone.platformTimezoneRaw,
+          temporaryTimezoneFallback: verifiedTimezone.temporaryTimezoneFallback === true,
+          temporaryTimezoneReason: verifiedTimezone.temporaryTimezoneReason || null,
+          recordsSaved: writeStats.saved,
+          recordsUpdated: writeStats.updated,
+          orderRowsWritten: writeStats.orderRowsWritten,
           coverageComplete: canonical.coverageComplete,
           truncated: canonical.truncated,
-          failedSlices: canonical.failedSlices
+          failedSlices: canonical.failedSlices,
+          failedSlicesCount: canonical.failedSlices.length
         }
       };
 
@@ -941,7 +948,7 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
   };
 
   let apiVersion = "2022-01";
-  let useJsonSuffix = false;
+  let jsonEndpointSelected = false;
 
   const candidateUrls = [
     { version: "2022-01", json: false, url: `https://${domain}/openapi/2022-01/orders?limit=1` },
@@ -955,14 +962,14 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
       const testRes = await axios.get(cand.url, { headers, timeout: 5000 });
       if (testRes.status === 200) {
         apiVersion = cand.version;
-        useJsonSuffix = cand.json;
-        console.log(`[Shoplazza Sync] Autodetected format: Version=${apiVersion}, JsonSuffix=${useJsonSuffix}`);
+        jsonEndpointSelected = cand.json;
+        console.log(`[Shoplazza Sync] Autodetected format: Version=${apiVersion}, JsonEndpoint=${jsonEndpointSelected}`);
         break;
       }
     } catch (err) {}
   }
 
-  const suffix = useJsonSuffix ? ".json" : "";
+  const suffix = jsonEndpointSelected ? ".json" : "";
   const limit = 50;
   let page = 1;
   let hasNextOrders = true;
@@ -987,7 +994,8 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
       break;
     }
 
-    const orders = res.data.orders || [];
+    const extractedOrders = extractShoplazzaOrders(res.data);
+    const orders = extractedOrders.orders || [];
     console.log(`[Shoplazza Sync] Page ${page} received ${orders.length} orders`);
     report.recordsFetched += orders.length;
 

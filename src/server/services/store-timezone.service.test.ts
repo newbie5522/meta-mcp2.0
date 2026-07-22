@@ -135,6 +135,79 @@ describe("verified store timezone service", () => {
     expect(result).toBeNull();
   });
 
+  it("TZ-TEMP-01 uses a temporary LA source for Shoplazza when Shop API has no timezone and Store.timezone is valid", async () => {
+    axiosGet.mockResolvedValue({ status: 200, data: { data: { shop: { name: "Romanticed" } } } });
+
+    const result = await resolveVerifiedStoreTimezone({
+      id: 2,
+      platform: "shoplazza",
+      domain: "lachry.myshoplaza.com",
+      timezone: "America/Los_Angeles",
+      shoplazza_token: "shoplazza-token"
+    });
+
+    expect(result).toMatchObject({
+      timezone: "America/Los_Angeles",
+      timezoneSource: "temporary_default_la",
+      platformTimezoneRaw: null,
+      temporaryTimezoneFallback: true,
+      temporaryTimezoneReason: "SHOPLAZZA_TIMEZONE_FIELD_UNAVAILABLE"
+    });
+  });
+
+  it("TZ-TEMP-02 uses fixed LA only when Shoplazza Store.timezone is empty or invalid", async () => {
+    axiosGet.mockResolvedValue({ status: 200, data: { data: { shop: { name: "Romanticed" } } } });
+
+    const result = await resolveVerifiedStoreTimezone({
+      id: 2,
+      platform: "shoplazza",
+      domain: "lachry.myshoplaza.com",
+      timezone: "",
+      shoplazza_token: "shoplazza-token"
+    });
+
+    expect(result).toMatchObject({
+      timezone: "America/Los_Angeles",
+      timezoneSource: "temporary_default_la"
+    });
+  });
+
+  it("TZ-TEMP-03 does not fallback to LA for Shoplazza 403", async () => {
+    axiosGet.mockRejectedValue({ response: { status: 403, data: { error: "forbidden" } } });
+
+    await expect(resolveVerifiedStoreTimezone({
+      id: 2,
+      platform: "shoplazza",
+      domain: "lachry.myshoplaza.com",
+      timezone: "America/Los_Angeles",
+      shoplazza_token: "shoplazza-token"
+    })).rejects.toMatchObject({ code: "STORE_TIMEZONE_PERMISSION_DENIED" });
+  });
+
+  it("TZ-TEMP-04 does not fallback to LA for non-Shoplazza platforms without timezone fields", async () => {
+    axiosGet.mockResolvedValue({ status: 200, data: { data: { shop: { name: "Baslayer" } } } });
+
+    await expect(resolveVerifiedStoreTimezone({
+      id: 1,
+      platform: "shopline",
+      domain: "baslayer.myshopline.com",
+      timezone: "America/Los_Angeles",
+      shopline_token: "shopline-token"
+    })).rejects.toMatchObject({ code: "STORE_TIMEZONE_UNVERIFIED" });
+  });
+
+  it("TZ-TEMP-05 does not fallback to LA for unknown Shoplazza network errors", async () => {
+    axiosGet.mockRejectedValue(new Error("network unavailable"));
+
+    await expect(resolveVerifiedStoreTimezone({
+      id: 2,
+      platform: "shoplazza",
+      domain: "lachry.myshoplaza.com",
+      timezone: "America/Los_Angeles",
+      shoplazza_token: "shoplazza-token"
+    })).rejects.toMatchObject({ code: "STORE_TIMEZONE_UNVERIFIED" });
+  });
+
   it("rejects changed platform timezone when existing orders would be affected", async () => {
     axiosGet.mockResolvedValue({ status: 200, data: { shop: { timezone: "America/New_York" } } });
     prismaMock.order.count.mockResolvedValue(5);

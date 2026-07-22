@@ -2,7 +2,11 @@ import axios from "axios";
 import prisma from "../../db/index.js";
 import { normalizeIanaTimezoneOrNull } from "../utils/timezone.js";
 
-export type StoreTimezoneSource = "platform_shop_api" | "persisted_verified";
+export type StoreTimezoneSource =
+  | "platform_shop_api"
+  | "persisted_verified"
+  | "manual_verified"
+  | "temporary_default_la";
 
 export type TimezoneProbeAttempt = {
   platform: string;
@@ -21,6 +25,8 @@ export type VerifiedStoreTimezone = {
   timezoneVerifiedAt: string;
   platformTimezoneRaw: string | null;
   attempts?: TimezoneProbeAttempt[];
+  temporaryTimezoneFallback?: boolean;
+  temporaryTimezoneReason?: string;
 };
 
 type StoreTimezoneInput = {
@@ -345,7 +351,17 @@ function metadataTimezoneEvidence(metadata: any) {
 }
 
 export async function resolveVerifiedStoreTimezone(store: StoreTimezoneInput): Promise<VerifiedStoreTimezone> {
-  const platformVerified = await fetchPlatformStoreTimezone(store);
+  const platform = normalizePlatform(store.platform);
+  const probeResult = await probePlatformStoreTimezone(store);
+  if (probeResult.finalErrorCode === "STORE_TIMEZONE_PERMISSION_DENIED") {
+    throw new StoreTimezoneError("STORE_TIMEZONE_PERMISSION_DENIED", {
+      storeId: store.id ?? null,
+      platform,
+      attempts: probeResult.attempts
+    });
+  }
+
+  const platformVerified = probeResult.verified;
   if (platformVerified) {
     const persistedTimezone = normalizeIanaTimezoneOrNull(store.timezone);
     if (store.id && persistedTimezone && persistedTimezone !== platformVerified.timezone) {
@@ -365,6 +381,19 @@ export async function resolveVerifiedStoreTimezone(store: StoreTimezoneInput): P
   }
 
   const persistedTimezone = normalizeIanaTimezoneOrNull(store.timezone);
+  if (platform === "shoplazza" && probeResult.finalErrorCode === "STORE_TIMEZONE_FIELD_UNAVAILABLE") {
+    const timezone = persistedTimezone || "America/Los_Angeles";
+    return {
+      timezone,
+      timezoneSource: "temporary_default_la",
+      timezoneVerifiedAt: new Date().toISOString(),
+      platformTimezoneRaw: null,
+      attempts: probeResult.attempts,
+      temporaryTimezoneFallback: true,
+      temporaryTimezoneReason: "SHOPLAZZA_TIMEZONE_FIELD_UNAVAILABLE"
+    };
+  }
+
   if (store.id && persistedTimezone) {
     const log = await prisma.syncLog.findFirst({
       where: {
@@ -391,7 +420,7 @@ export async function resolveVerifiedStoreTimezone(store: StoreTimezoneInput): P
 
   throw new StoreTimezoneError("STORE_TIMEZONE_UNVERIFIED", {
     storeId: store.id ?? null,
-    platform: normalizePlatform(store.platform),
+    platform,
     domain: normalizeDomain(store.domain),
     persistedTimezone: store.timezone || null
   });

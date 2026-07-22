@@ -234,4 +234,24 @@ describe("stores route timezone timestamp diagnostics", () => {
     }));
     expect(prismaMock.syncLog.findFirst.mock.calls[0][0].where.type).toBeUndefined();
   });
+
+  it("surfaces temporary_default_la as a non-verified Shoplazza timezone source with a visible reminder", async () => {
+    const diagnostics = await getDiagnostics(
+      {
+        observedOrderOffsets: ["+00:00"],
+        temporaryTimezoneFallback: true,
+        temporaryTimezoneReason: "SHOPLAZZA_TIMEZONE_FIELD_UNAVAILABLE"
+      },
+      {
+        timezoneSource: "temporary_default_la",
+        timezoneVerifiedAt: "2026-07-22T00:00:00.000Z",
+        platformTimezoneRaw: null
+      }
+    );
+
+    expect(diagnostics.timezoneSource).toBe("temporary_default_la");
+    expect(diagnostics.timezoneVerified).toBe(false);
+    expect(diagnostics.temporaryTimezoneFallback).toBe(true);
+    expect(diagnostics.warnings).toContain("Shoplazza 当前未返回店铺时区，订单日期暂按 America/Los_Angeles 换算。");
+  });
 });
