@@ -5,8 +5,11 @@ import { normalizeIanaTimezoneOrNull } from "../utils/timezone.js";
 export type StoreTimezoneSource =
   | "platform_shop_api"
   | "persisted_verified"
+  | "persisted_configured"
   | "manual_verified"
-  | "temporary_default_la";
+  | "system_default";
+
+const SYSTEM_TIMEZONE = "America/Los_Angeles";
 
 export type TimezoneProbeAttempt = {
   platform: string;
@@ -348,15 +351,11 @@ function parseMetadata(value: unknown): any {
 
 function metadataTimezoneEvidence(metadata: any) {
   const diagnostics = metadata?.diagnostics || {};
-  const manual = metadata?.timezoneVerification || diagnostics?.timezoneVerification || {};
   return {
     timezone: metadata?.timezone || diagnostics?.timezoneAfter || diagnostics?.timezone,
     timezoneSource: metadata?.timezoneSource || diagnostics?.timezoneSource,
     timezoneVerifiedAt: metadata?.timezoneVerifiedAt || diagnostics?.timezoneVerifiedAt,
-    platformTimezoneRaw: metadata?.platformTimezoneRaw || diagnostics?.platformTimezoneRaw || null,
-    manualTimezone: manual?.timezone,
-    manualSource: manual?.source,
-    manualVerifiedAt: manual?.verifiedAt
+    platformTimezoneRaw: metadata?.platformTimezoneRaw || diagnostics?.platformTimezoneRaw || null
   };
 }
 
@@ -392,6 +391,28 @@ export async function resolveVerifiedStoreTimezone(store: StoreTimezoneInput): P
 
   const persistedTimezone = canonicalIanaTimezoneOrNull(store.timezone);
 
+  if (platform === "shoplazza" && persistedTimezone) {
+    return {
+      timezone: persistedTimezone,
+      timezoneSource: "persisted_configured",
+      timezoneVerifiedAt: new Date().toISOString(),
+      platformTimezoneRaw: null,
+      attempts: probeResult.attempts
+    };
+  }
+
+  if (platform === "shoplazza") {
+    return {
+      timezone: SYSTEM_TIMEZONE,
+      timezoneSource: "system_default",
+      timezoneVerifiedAt: new Date().toISOString(),
+      platformTimezoneRaw: null,
+      attempts: probeResult.attempts,
+      temporaryTimezoneFallback: true,
+      temporaryTimezoneReason: "SHOPLAZZA_TIMEZONE_UNAVAILABLE_USING_SYSTEM_TIMEZONE"
+    };
+  }
+
   if (store.id && persistedTimezone) {
     const log = await prisma.syncLog.findFirst({
       where: {
@@ -413,21 +434,6 @@ export async function resolveVerifiedStoreTimezone(store: StoreTimezoneInput): P
         timezoneSource: "persisted_verified",
         timezoneVerifiedAt: String(evidence.timezoneVerifiedAt || log?.startedAt?.toISOString?.() || new Date().toISOString()),
         platformTimezoneRaw: evidence.platformTimezoneRaw || persistedTimezone
-      };
-    }
-    const manualTimezone = canonicalIanaTimezoneOrNull(evidence.manualTimezone);
-    if (
-      platform === "shoplazza" &&
-      probeResult.finalErrorCode === "STORE_TIMEZONE_FIELD_UNAVAILABLE" &&
-      manualTimezone === persistedTimezone &&
-      evidence.manualSource === "manual_verified" &&
-      evidence.manualVerifiedAt
-    ) {
-      return {
-        timezone: persistedTimezone,
-        timezoneSource: "manual_verified",
-        timezoneVerifiedAt: String(evidence.manualVerifiedAt),
-        platformTimezoneRaw: null
       };
     }
   }

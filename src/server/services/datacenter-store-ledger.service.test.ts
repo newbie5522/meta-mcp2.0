@@ -145,6 +145,58 @@ describe("data center store ledger Order projection", () => {
     }));
   });
 
+  it("LEDGER-SLZ-TZ-01 records system_default Shoplazza source evidence while projecting Orders into Ledger", async () => {
+    prismaMock.order.findMany.mockResolvedValue([
+      {
+        id: "line-1",
+        storeId: 1,
+        platform: "shoplazza",
+        orderId: "slz-1",
+        store_local_date: "2026-07-01",
+        store_timezone: "America/Los_Angeles",
+        orderTotal: 120,
+        revenue: 120,
+        paymentStatus: "paid"
+      }
+    ]);
+    prismaMock.syncLog.findUnique.mockResolvedValue({
+      id: "task-1",
+      storeId: 1,
+      status: "success",
+      rangeStart: new Date("2026-07-01T00:00:00.000Z"),
+      rangeEnd: new Date("2026-07-01T23:59:59.000Z"),
+      metadata: JSON.stringify({
+        timezone: "America/Los_Angeles",
+        timezoneSource: "system_default",
+        coverageComplete: true,
+        truncated: false,
+        failedSlices: []
+      })
+    });
+
+    const result = await refreshStoreDataCenterLedger({
+      storeId: 1,
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      rangeVerified: true,
+      sourceSyncTaskId: "task-1"
+    });
+
+    expect(result).toMatchObject({
+      timezone: "America/Los_Angeles",
+      timezoneSource: "system_default",
+      uniqueOrderCount: 1,
+      totalGrossSales: 120
+    });
+    expect(prismaMock.dataCenterStoreDaily.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        orderCount: 1,
+        grossSales: 120,
+        diagnosticsJson: expect.stringContaining("\"timezoneSource\":\"system_default\"")
+      })
+    }));
+  });
+
   it("does not create zero snapshots for unverified empty ranges", async () => {
     prismaMock.order.findMany.mockResolvedValue([]);
     await refreshStoreDataCenterLedger({

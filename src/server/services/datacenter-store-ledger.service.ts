@@ -100,6 +100,12 @@ export async function refreshStoreDataCenterLedger(params: {
     endDate: params.endDate,
     rows
   });
+  const sourceSyncLog = params.sourceSyncTaskId
+    ? await prisma.syncLog.findUnique({ where: { id: params.sourceSyncTaskId } })
+    : null;
+  const sourceSyncMetadata = parseMetadata(sourceSyncLog?.metadata);
+  const timezoneSource = sourceSyncMetadata?.timezoneSource || sourceSyncMetadata?.diagnostics?.timezoneSource || null;
+  const sourceTimezone = sourceSyncMetadata?.timezone || sourceSyncMetadata?.diagnostics?.timezoneAfter || store.timezone || "";
 
   const byDate = projectionDayMap(projection.days);
   const zeroCoverageAllowed = await canWriteZeroCoverageSnapshots(params);
@@ -136,7 +142,7 @@ export async function refreshStoreDataCenterLedger(params: {
         storeName: store.name,
         platform: store.platform,
         domain: store.domain,
-        timezone: store.timezone || "",
+        timezone: sourceTimezone,
         currency: "USD",
         orderCount,
         grossSales,
@@ -149,6 +155,8 @@ export async function refreshStoreDataCenterLedger(params: {
         diagnosticsJson: JSON.stringify({
           source: "Order",
           dateField: "Order.store_local_date",
+          timezone: sourceTimezone,
+          timezoneSource,
           rangeVerified: zeroCoverageAllowed,
           sourceSyncTaskId: params.sourceSyncTaskId || null,
           sourceSyncFinishedAt: params.sourceSyncFinishedAt?.toISOString?.() || null,
@@ -162,7 +170,7 @@ export async function refreshStoreDataCenterLedger(params: {
         platform: store.platform,
         domain: store.domain,
         date,
-        timezone: store.timezone || "",
+        timezone: sourceTimezone,
         currency: "USD",
         orderCount,
         grossSales,
@@ -175,6 +183,8 @@ export async function refreshStoreDataCenterLedger(params: {
         diagnosticsJson: JSON.stringify({
           source: "Order",
           dateField: "Order.store_local_date",
+          timezone: sourceTimezone,
+          timezoneSource,
           rangeVerified: zeroCoverageAllowed,
           sourceSyncTaskId: params.sourceSyncTaskId || null,
           sourceSyncFinishedAt: params.sourceSyncFinishedAt?.toISOString?.() || null,
@@ -191,7 +201,8 @@ export async function refreshStoreDataCenterLedger(params: {
     storeId: store.id,
     storeName: store.name,
     platform: String(store.platform || "unknown").toLowerCase(),
-    timezone: store.timezone || "",
+    timezone: sourceTimezone,
+    timezoneSource,
     source: "Order",
     dateField: "Order.store_local_date",
     totalFetched: rows.length,

@@ -201,6 +201,110 @@ describe("single canonical store data pipeline", () => {
     expect(receipt.status).toBe("NO_NEW_DATA");
   });
 
+  it("PIPE-SLZ-TZ-01 system_default with complete coverage still refreshes ledger", async () => {
+    const shoplazzaStore = { id: 2, name: "Romanticed", platform: "shoplazza", timezone: "" };
+    prismaMock.syncLog.findUnique.mockResolvedValue({
+      id: "task-1",
+      storeId: 2,
+      status: "success",
+      recordsFetched: 1,
+      recordsSaved: 1,
+      metadata: JSON.stringify({
+        recordsUpdated: 0,
+        timezone: "America/Los_Angeles",
+        timezoneSource: "system_default",
+        coverageComplete: true,
+        truncated: false,
+        failedSlices: [],
+        status: "SUCCESS"
+      }),
+      finishedAt: new Date("2026-07-02T01:00:00.000Z")
+    });
+
+    const receipt = await executeStoreDataPipeline({
+      store: shoplazzaStore,
+      chainId: "chain-1",
+      triggeredBy: "test",
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      days: 1
+    });
+
+    expect(refreshLedgerMock).toHaveBeenCalledWith(expect.objectContaining({
+      storeId: 2,
+      rangeVerified: true
+    }));
+    expect(receipt.status).toBe("SUCCESS");
+    expect(receipt.timezone).toBe("America/Los_Angeles");
+    expect(receipt.timezoneSource).toBe("system_default");
+  });
+
+  it("PIPE-SLZ-TZ-02 system_default with no new orders still refreshes ledger and returns NO_NEW_DATA", async () => {
+    const shoplazzaStore = { id: 2, name: "Romanticed", platform: "shoplazza", timezone: "" };
+    prismaMock.syncLog.findUnique.mockResolvedValue({
+      id: "task-1",
+      storeId: 2,
+      status: "success",
+      recordsFetched: 0,
+      recordsSaved: 0,
+      metadata: JSON.stringify({
+        timezone: "America/Los_Angeles",
+        timezoneSource: "system_default",
+        coverageComplete: true,
+        truncated: false,
+        failedSlices: [],
+        status: "NO_NEW_DATA"
+      }),
+      finishedAt: new Date("2026-07-02T01:00:00.000Z")
+    });
+
+    const receipt = await executeStoreDataPipeline({
+      store: shoplazzaStore,
+      chainId: "chain-1",
+      triggeredBy: "test",
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      days: 1
+    });
+
+    expect(refreshLedgerMock).toHaveBeenCalled();
+    expect(receipt.status).toBe("NO_NEW_DATA");
+    expect(receipt.ledger.status).toBe("SUCCESS");
+  });
+
+  it("PIPE-SLZ-TZ-03 system_default alone does not produce PARTIAL_SUCCESS", async () => {
+    const shoplazzaStore = { id: 2, name: "Romanticed", platform: "shoplazza", timezone: "" };
+    prismaMock.syncLog.findUnique.mockResolvedValue({
+      id: "task-1",
+      storeId: 2,
+      status: "success",
+      recordsFetched: 1,
+      recordsSaved: 1,
+      metadata: JSON.stringify({
+        timezone: "America/Los_Angeles",
+        timezoneSource: "system_default",
+        coverageComplete: true,
+        truncated: false,
+        failedSlices: [],
+        status: "SUCCESS"
+      }),
+      finishedAt: new Date("2026-07-02T01:00:00.000Z")
+    });
+
+    const receipt = await executeStoreDataPipeline({
+      store: shoplazzaStore,
+      chainId: "chain-1",
+      triggeredBy: "test",
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      days: 1
+    });
+
+    expect(receipt.timezoneSource).toBe("system_default");
+    expect(receipt.status).not.toBe("PARTIAL_SUCCESS");
+    expect(receipt.status).toBe("SUCCESS");
+  });
+
   it("returns FAILED for true order sync exceptions without wrapping as no data", async () => {
     syncStoreOrdersMock.mockRejectedValue(new Error("orders unavailable"));
 

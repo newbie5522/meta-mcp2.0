@@ -15,6 +15,7 @@ vi.mock("../utils.js", () => ({ normalizeMetaAccountId: (value: string) => value
 import {
   audienceMetaMetric,
   buildStoreApiDisplayMetrics,
+  buildStoreTimezoneDisplay,
   buildAudienceMetaSummaryFromVisibleRows,
   createCreativeAnalyzeHandler,
   createDataCenterHierarchyHandler,
@@ -258,6 +259,71 @@ describe("Store API display metrics", () => {
     expect(allowed.roas).toBe(2);
     expect(blocked.visibleOrderCount).toBeNull();
     expect(blocked.roas).toBeNull();
+  });
+
+  it("STORE-SLZ-TZ-01/02/03 system_default keeps real order, grossSales, and AOV values visible", () => {
+    const metrics = buildStoreApiDisplayMetrics({
+      orderCount: 2,
+      revenue: 80,
+      adSpend: 20,
+      storeCoverage: { status: "READY" },
+      metaCoverage: { status: "READY" }
+    });
+    const timezone = buildStoreTimezoneDisplay({
+      store: { id: 2, name: "Romanticed", timezone: "" },
+      storeRows: [{
+        timezone: "America/Los_Angeles",
+        diagnosticsJson: JSON.stringify({
+          timezone: "America/Los_Angeles",
+          timezoneSource: "system_default"
+        }),
+        apiFetchedAt: new Date("2026-07-02T00:00:00.000Z")
+      }]
+    });
+
+    expect(metrics.visibleOrderCount).toBe(2);
+    expect(metrics.visibleRevenue).toBe(80);
+    expect(metrics.visibleAov).toBe(40);
+    expect(timezone).toMatchObject({
+      timezone: "America/Los_Angeles",
+      timezoneSource: "system_default",
+      temporaryTimezoneFallback: true
+    });
+  });
+
+  it("STORE-SLZ-TZ-04 system_default does not turn syncStatus into failed or partial", () => {
+    const coverage = { status: "READY" };
+    const metrics = buildStoreApiDisplayMetrics({
+      orderCount: 1,
+      revenue: 50,
+      adSpend: 25,
+      storeCoverage: coverage,
+      metaCoverage: { status: "READY" }
+    });
+    const timezone = buildStoreTimezoneDisplay({
+      store: { timezone: "" },
+      storeRows: [{ diagnosticsJson: JSON.stringify({ timezoneSource: "system_default" }) }]
+    });
+
+    expect(metrics.visibleOrderCount).toBe(1);
+    expect(timezone.timezoneSource).toBe("system_default");
+    expect(coverage.status).toBe("READY");
+    expect(coverage.status).not.toBe("FAILED");
+    expect(coverage.status).not.toBe("PARTIAL_COVERAGE");
+  });
+
+  it("STORE-SLZ-TZ-05 true permission coverage errors remain unavailable", () => {
+    const metrics = buildStoreApiDisplayMetrics({
+      orderCount: 1,
+      revenue: 50,
+      adSpend: 25,
+      storeCoverage: { status: "ERROR", error: "STORE_TIMEZONE_PERMISSION_DENIED" },
+      metaCoverage: { status: "READY" }
+    });
+
+    expect(metrics.visibleOrderCount).toBeNull();
+    expect(metrics.visibleRevenue).toBeNull();
+    expect(metrics.roas).toBeNull();
   });
 });
 

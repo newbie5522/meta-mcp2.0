@@ -60,6 +60,9 @@ interface StoreMetric {
   lastSyncTime: string | null;
   syncStatus: string;
   syncError: string | null;
+  timezoneSource?: string | null;
+  temporaryTimezoneFallback?: boolean;
+  timezoneNotice?: string | null;
 }
 
 interface UnmappedAccountsSummary {
@@ -127,6 +130,17 @@ export function getStoreSyncStatusLabel(status: string | null | undefined) {
   if (normalized === "FAILED" || normalized === "ERROR") return "同步失败";
   if (normalized === "NONE" || !normalized) return "未同步";
   return "状态待确认";
+}
+
+export function getStoreTimezoneNotice(row: {
+  timezoneSource?: string | null;
+  temporaryTimezoneFallback?: boolean | null;
+  timezoneNotice?: string | null;
+}) {
+  if (row.timezoneSource === "system_default" || row.temporaryTimezoneFallback === true) {
+    return row.timezoneNotice || "店铺未提供时区，当前按系统时区统计。";
+  }
+  return null;
 }
 
 interface ReconciliationData {
@@ -958,6 +972,11 @@ setAiReport(reportText || "未返回分析报告");
                                   {getStoreSyncStatusLabel(store.syncStatus)}
                                 </span>
                               </div>
+                              {getStoreTimezoneNotice(store) && (
+                                <p className="max-w-[160px] text-[10px] leading-snug text-slate-500 text-center">
+                                  {getStoreTimezoneNotice(store)}
+                                </p>
+                              )}
                             </div>
                           </TableCell>
 

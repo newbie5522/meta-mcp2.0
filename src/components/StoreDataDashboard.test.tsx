@@ -4,6 +4,7 @@ import {
   formatStoreAovText,
   formatStoreOrderText,
   formatStoreSalesText,
+  getStoreTimezoneNotice,
   getStoreSyncStatusLabel
 } from "./StoreDataDashboard";
 
@@ -105,5 +106,35 @@ describe("Store page request contract", () => {
 
   it("NO_NEW_DATA uses a neutral synced status label", () => {
     expect(getStoreSyncStatusLabel("NO_NEW_DATA")).toBe("已同步，无新数据");
+  });
+
+  it("UI-SLZ-TZ-01 system_default with orders shows real order, sales, and AOV values", () => {
+    const row = { orderCount: 2, grossSales: 80, aov: 40 };
+
+    expect(formatStoreOrderText(row)).toBe("2 单");
+    expect(formatStoreSalesText(row)).toBe("$80.00");
+    expect(formatStoreAovText(row)).toBe("$40.00");
+  });
+
+  it("UI-SLZ-TZ-02 system_default shows neutral timezone notice without error keys", () => {
+    const notice = getStoreTimezoneNotice({
+      timezoneSource: "system_default",
+      temporaryTimezoneFallback: true
+    });
+
+    expect(notice).toContain("系统时区");
+    expect(notice).not.toContain("system_default");
+    expect(notice).not.toContain("STORE_TIMEZONE_UNVERIFIED");
+    expect(notice).not.toContain("SHOPLAZZA_TIMEZONE_UNAVAILABLE_USING_SYSTEM_TIMEZONE");
+    expect(getStoreSyncStatusLabel("READY")).not.toBe("同步失败");
+  });
+
+  it("UI-SLZ-TZ-03 true permission errors still display sync failure", () => {
+    expect(getStoreSyncStatusLabel("FAILED")).toBe("同步失败");
+  });
+
+  it("UI-SLZ-TZ-04 keeps zero orders distinct from unsynced values", () => {
+    expect(formatStoreOrderText({ orderCount: 0 })).toBe("0 单");
+    expect(formatStoreOrderText({ orderCount: null })).toBe("未同步");
   });
 });

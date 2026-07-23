@@ -189,6 +189,51 @@ describe("store sync core verified timezone contract", () => {
     expect(result.orders).toEqual([]);
   });
 
+  it("SLZ-TZ-CORE-01 system_default still derives Order.store_local_date from America/Los_Angeles", async () => {
+    axiosGet.mockResolvedValue({
+      status: 200,
+      data: {
+        data: {
+          orders: [{
+            id: "slz-system-tz",
+            number: "R-SYSTEM-TZ",
+            created_at: "2026-07-02T06:30:00Z",
+            placed_at: "2026-07-02T06:30:00Z",
+            payment_status: "paid",
+            status: "finished",
+            total_price: "80.00",
+            line_items: [{ id: "line-1", product_title: "System TZ Product", quantity: 1, price: "80.00" }]
+          }],
+          cursor: ""
+        }
+      },
+      headers: {}
+    });
+
+    const result = await fetchStoreOrdersCanonical({
+      platform: "shoplazza",
+      storeId: 2,
+      domain: "lachry.myshoplaza.com",
+      token: "shoplazza-token",
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      timezone: "America/Los_Angeles",
+      timezoneSource: "system_default"
+    });
+
+    expect(result.orders[0]).toMatchObject({
+      orderId: "slz-system-tz",
+      attributionField: "placed_at",
+      attributionTimeRaw: "2026-07-02T06:30:00Z",
+      storeLocalDate: "2026-07-01",
+      storeTimezone: "America/Los_Angeles"
+    });
+    expect(result.diagnostics).toMatchObject({
+      timezoneAfter: "America/Los_Angeles",
+      timezoneSource: "system_default"
+    });
+  });
+
   it("SHOPLAZZA-DATE-02/06 includes placed_at in-range orders and derives store_local_date from the canonical attribution time", async () => {
     axiosGet
       .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} })

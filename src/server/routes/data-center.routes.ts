@@ -112,6 +112,16 @@ function coverageMetric(coverage: any, value: number) {
     : null;
 }
 
+function parseJsonObject(value: unknown): any {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(String(value));
+  } catch {
+    return {};
+  }
+}
+
 function storeMetric(coverage: any, value: number) {
   const status = String(coverage?.status || "").toUpperCase();
   if (["READY", "COVERED", "PARTIAL_COVERAGE", "PARTIAL_SUCCESS", "TRUE_EMPTY"].includes(status)) return value;
@@ -147,6 +157,32 @@ export function buildStoreApiDisplayMetrics(input: {
     visibleAdSpend,
     roas,
     hasOrders: visibleOrderCount === null ? null : visibleOrderCount > 0
+  };
+}
+
+export function buildStoreTimezoneDisplay(input: {
+  store: any;
+  storeRows: any[];
+}) {
+  const rows = Array.isArray(input.storeRows) ? input.storeRows : [];
+  const latestRow = rows
+    .slice()
+    .sort((a, b) => new Date(b?.apiFetchedAt || 0).getTime() - new Date(a?.apiFetchedAt || 0).getTime())[0] || null;
+  const diagnostics = parseJsonObject(latestRow?.diagnosticsJson);
+  const timezone = diagnostics?.timezone || diagnostics?.diagnostics?.timezoneAfter || latestRow?.timezone || input.store?.timezone || null;
+  const timezoneSource = diagnostics?.timezoneSource || diagnostics?.diagnostics?.timezoneSource || null;
+  const temporaryTimezoneFallback =
+    diagnostics?.temporaryTimezoneFallback === true ||
+    diagnostics?.diagnostics?.temporaryTimezoneFallback === true ||
+    timezoneSource === "system_default";
+
+  return {
+    timezone,
+    timezoneSource,
+    temporaryTimezoneFallback,
+    timezoneNotice: temporaryTimezoneFallback
+      ? "店铺未提供时区，当前按系统时区统计。"
+      : null
   };
 }
 
@@ -1800,6 +1836,7 @@ router.get("/stores", async (req, res) => {
         storeCoverage: storePageCoverage.storeCoverage,
         metaCoverage: storePageCoverage.metaCoverage
       });
+      const timezoneDisplay = buildStoreTimezoneDisplay({ store, storeRows });
 
       return {
         id: store.id,
@@ -1808,16 +1845,21 @@ router.get("/stores", async (req, res) => {
         storeName: store.name,
         platform: store.platform,
         domain: store.domain,
-        timezone: store.timezone,
+        timezone: timezoneDisplay.timezone,
+        timezoneSource: timezoneDisplay.timezoneSource,
+        temporaryTimezoneFallback: timezoneDisplay.temporaryTimezoneFallback,
+        timezoneNotice: timezoneDisplay.timezoneNotice,
         orderCount: visibleOrderCount,
         ordersCount: visibleOrderCount,
         revenue: visibleRevenue,
+        grossSales: visibleRevenue,
         sales: visibleRevenue,
         totalSales: visibleRevenue,
         totalRefunded: null,
         avgOrderValue: visibleAov,
         aov: visibleAov,
         adSpend: visibleAdSpend,
+        mappedAdSpend: visibleAdSpend,
         roas,
         realRoas: roas,
         hasOrders,
@@ -1832,6 +1874,7 @@ router.get("/stores", async (req, res) => {
         hasMappedAccounts: uniqueMappedIds.length > 0,
         needsRefresh: storeRows.length === 0,
         syncStatus: storePageCoverage.storeCoverage.status,
+        dataCoverage: storePageCoverage.storeCoverage,
         reconciliation: {
           status: "derived_from_datacenter_ledger",
           match: null,
