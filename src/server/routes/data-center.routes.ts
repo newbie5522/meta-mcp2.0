@@ -119,6 +119,16 @@ function scopedStoreOrderKey(storeId: number, order: any) {
   return orderId ? `store:${Number(storeId)}:order:${orderId}` : "";
 }
 
+function scopedStoreOrderSnapshotKey(storeId: number, date: unknown, orderId: unknown) {
+  const normalizedDate = String(date || "").trim();
+  const normalizedOrderId = String(orderId || "").trim();
+  if (!normalizedOrderId) return "";
+  const scopedOrderId = normalizedOrderId.startsWith(`store:${Number(storeId)}:order:`)
+    ? normalizedOrderId
+    : `store:${Number(storeId)}:order:${normalizedOrderId}`;
+  return normalizedDate ? `store:${Number(storeId)}:date:${normalizedDate}:order:${scopedOrderId}` : scopedOrderId;
+}
+
 function parseLedgerOrderIds(value: unknown): string[] {
   if (!value) return [];
   try {
@@ -2156,8 +2166,9 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
     }>();
 
     ordersInDb.forEach(o => {
-      const oId = scopedStoreOrderKey(store.id, o);
-      if (!oId) return;
+      const displayOrderId = scopedStoreOrderKey(store.id, o);
+      const oId = scopedStoreOrderSnapshotKey(store.id, o.store_local_date, displayOrderId);
+      if (!oId || !displayOrderId) return;
       const paymentStatus = o.paymentStatus ? String(o.paymentStatus).toLowerCase() : "";
       let includedByOrderFactRule = true;
       let excludeReason: string | null = null;
@@ -2170,8 +2181,8 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
 
       if (!orderFactMap.has(oId)) {
         orderFactMap.set(oId, {
-          orderId: oId,
-          orderNumber: o.orderId || oId,
+          orderId: displayOrderId,
+          orderNumber: o.orderId || displayOrderId,
           orderTotal,
           lineRevenueSum: o.revenue || 0,
           storeLocalDate: o.store_local_date || "",
@@ -2207,13 +2218,6 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
     const canonicalLedgerGrossSales = roundCurrency(
       ledgers.reduce((sum, row) => sum + Number(row.grossSales || 0), 0)
     );
-    const ledgerOrderIdsFromRows = Array.from(new Set(
-      ledgers.flatMap(row => [
-        ...parseLedgerOrderIds(row.orderIdsJson),
-        ...parseLedgerOrderIds(row.rawDigestJson)
-      ])
-    )).sort();
-
     const ledgerOrderMap = new Map<string, {
       orderId: string;
       amount: number;
@@ -2223,23 +2227,28 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       includedByLedgerRule: boolean;
     }>();
 
-    ledgerOrderIdsFromRows.forEach(oId => {
-      if (oId) {
+    ledgers.forEach(row => {
+      parseLedgerOrderIds(row.orderIdsJson).forEach(rawOrderId => {
+        const oId = scopedStoreOrderSnapshotKey(store.id, row.date, rawOrderId);
+        if (!oId) return;
+        const displayOrderId = String(rawOrderId || "");
         ledgerOrderMap.set(oId, {
-          orderId: oId,
+          orderId: displayOrderId,
           amount: 0,
           source: "DataCenterStoreDaily.orderIdsJson",
           rawTime: "",
           status: "",
           includedByLedgerRule: true
         });
-      }
+      });
     });
     if (ledgerOrderMap.size === 0) {
       ledgers.forEach(l => {
-        parseLedgerOrderIds(l.rawDigestJson).forEach(oId => {
+        parseLedgerOrderIds(l.rawDigestJson).forEach(rawOrderId => {
+          const oId = scopedStoreOrderSnapshotKey(store.id, l.date, rawOrderId);
+          if (!oId) return;
           ledgerOrderMap.set(oId, {
-            orderId: oId,
+            orderId: String(rawOrderId || ""),
             amount: 0,
             source: "DataCenterStoreDaily.rawDigestJson",
             rawTime: "",
@@ -2259,7 +2268,8 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
     const buildDiffItem = (oId: string, reasonOverride?: string) => {
       const fact = orderFactMap.get(oId);
       const ledg = ledgerOrderMap.get(oId);
-      const api = apiOrderMap.get(oId);
+      const displayOrderId = fact?.orderId || ledg?.orderId || oId;
+      const api = apiOrderMap.get(displayOrderId) || apiOrderMap.get(oId);
 
       let reason = reasonOverride || "UNKNOWN";
       if (!reasonOverride) {
@@ -2280,8 +2290,8 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       }
 
       return {
-        orderId: oId,
-        orderNumber: fact?.orderNumber || api?.order_number || oId,
+        orderId: displayOrderId,
+        orderNumber: fact?.orderNumber || api?.order_number || displayOrderId,
         orderFactAmount: fact ? fact.orderTotal : null,
         ledgerAmount: ledg ? ledg.amount : null,
         apiAmount: api ? api.totalAmount : null,
@@ -2419,7 +2429,7 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       utcStartDate: auditReport.utcStartDate,
       utcEndDate: auditReport.utcEndDate,
       platformUnsupported: false,
-      platformMessage: "自动直连平台 API 已完成深度对账审计，上面表格为原始详细订单链路状态。",
+      platformMessage: "Read-only platform API reconciliation completed; order items show source order chain status.",
       ledgerRefresh: ledgerRefreshResult
     });
 

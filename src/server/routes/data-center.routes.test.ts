@@ -595,6 +595,61 @@ describe("Data Center store reconciliation route", () => {
     expect(response.body.status).toBe("TRUE_EMPTY");
     expect(response.body.canonicalLedger).toMatchObject({ rowCount: 0, orderCount: 0, grossSales: 0 });
   });
+
+  it("RECON-09 compares multi-day ledger snapshots without globally deduping repeated order ids", async () => {
+    prismaMock.order.findMany.mockResolvedValueOnce([
+      {
+        id: "line-1",
+        storeId: 2,
+        orderId: "repeat-order",
+        store_local_date: "2026-07-01",
+        createdAt: new Date("2026-07-01T12:00:00.000Z"),
+        created_at_utc: new Date("2026-07-01T12:00:00.000Z"),
+        orderTotal: 100,
+        revenue: 100,
+        paymentStatus: "paid",
+        fulfillmentStatus: "shipped"
+      },
+      {
+        id: "line-2",
+        storeId: 2,
+        orderId: "repeat-order",
+        store_local_date: "2026-07-02",
+        createdAt: new Date("2026-07-02T12:00:00.000Z"),
+        created_at_utc: new Date("2026-07-02T12:00:00.000Z"),
+        orderTotal: 102.99,
+        revenue: 102.99,
+        paymentStatus: "paid",
+        fulfillmentStatus: "shipped"
+      }
+    ]);
+    prismaMock.dataCenterStoreDaily.findMany.mockResolvedValueOnce([
+      {
+        storeId: 2,
+        date: "2026-07-01",
+        orderCount: 1,
+        grossSales: 100,
+        orderIdsJson: JSON.stringify(["store:2:order:repeat-order"])
+      },
+      {
+        storeId: 2,
+        date: "2026-07-02",
+        orderCount: 1,
+        grossSales: 102.99,
+        orderIdsJson: JSON.stringify(["store:2:order:repeat-order"])
+      }
+    ]);
+
+    const response = await invokeDataCenterRoute("/stores/:storeId/reconciliation", {
+      params: { storeId: "2" },
+      query: { startDate: "2026-07-01", endDate: "2026-07-02" }
+    });
+
+    expect(response.body.status).toBe("MATCHED");
+    expect(response.body.orderFact.uniqueOrderCount).toBe(2);
+    expect(response.body.canonicalLedger.orderCount).toBe(2);
+    expect(response.body.difference.orderCount).toBe(0);
+  });
 });
 
 describe("Data Center canonical hierarchy handlers", () => {
