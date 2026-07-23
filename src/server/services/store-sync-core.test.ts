@@ -119,7 +119,7 @@ describe("store sync core verified timezone contract", () => {
       startDate: "2026-07-01",
       endDate: "2026-07-01",
       timezone: "America/Los_Angeles",
-      timezoneSource: "temporary_default_la"
+      timezoneSource: "manual_verified"
     });
 
     expect(result.coverageComplete).toBe(true);
@@ -127,7 +127,10 @@ describe("store sync core verified timezone contract", () => {
     expect(result.orders[0]).toMatchObject({
       orderId: "slz-1",
       orderNumber: "R-1001",
-      rawPaidAt: "2026-07-02T06:35:00Z",
+      rawPlacedAt: "2026-07-02T06:35:00Z",
+      rawPaidAt: null,
+      attributionField: "placed_at",
+      attributionTimeRaw: "2026-07-02T06:35:00Z",
       paymentStatus: "paid",
       orderTotal: 42.5,
       orderTotalSource: "total_price",
@@ -145,7 +148,7 @@ describe("store sync core verified timezone contract", () => {
       responseOrderPath: "data.orders",
       paginationMode: "cursor",
       orderTotalSource: "total_price",
-      timezoneSource: "temporary_default_la"
+      timezoneSource: "manual_verified"
     });
   });
 
@@ -217,19 +220,77 @@ describe("store sync core verified timezone contract", () => {
       startDate: "2026-07-01",
       endDate: "2026-07-01",
       timezone: "America/Los_Angeles",
-      timezoneSource: "temporary_default_la"
+      timezoneSource: "manual_verified"
     });
 
     expect(result.orders).toHaveLength(1);
     expect(result.orders[0]).toMatchObject({
       orderId: "paid-in-range",
-      attributionField: "paid_at",
+      attributionField: "placed_at",
       attributionTimeRaw: "2026-07-02T06:30:00Z",
       storeLocalDate: "2026-07-01"
     });
     expect(result.diagnostics.queryDateFields).toEqual(["created_at", "placed_at"]);
     expect(result.diagnostics.deduplicatedOrderCount).toBe(1);
     expect(result.coverageComplete).toBe(true);
+  });
+
+  it("SHOPLAZZA-DATE-07 applies attribution per order instead of using a batch-level best field", async () => {
+    axiosGet
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          data: {
+            orders: [{
+              id: "created-only",
+              number: "R-CREATED",
+              created_at: "2026-07-02T06:30:00Z",
+              payment_status: "paid",
+              status: "finished",
+              total_price: "22.00",
+              line_items: [{ id: "line-1", product_title: "Created Product", quantity: 1, price: "22.00" }]
+            }],
+            cursor: ""
+          }
+        },
+        headers: {}
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          data: {
+            orders: [{
+              id: "placed-only",
+              number: "R-PLACED",
+              created_at: "2026-06-20T12:00:00Z",
+              placed_at: "2026-07-02T06:30:00Z",
+              payment_status: "paid",
+              status: "finished",
+              total_price: "35.00",
+              line_items: [{ id: "line-1", product_title: "Placed Product", quantity: 1, price: "35.00" }]
+            }],
+            cursor: ""
+          }
+        },
+        headers: {}
+      });
+
+    const result = await fetchStoreOrdersCanonical({
+      platform: "shoplazza",
+      storeId: 2,
+      domain: "lachry.myshoplaza.com",
+      token: "shoplazza-token",
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      timezone: "America/Los_Angeles",
+      timezoneSource: "manual_verified"
+    });
+
+    expect(result.orders.map(order => [order.orderId, order.attributionField, order.storeLocalDate])).toEqual([
+      ["created-only", "created_at", "2026-07-01"],
+      ["placed-only", "placed_at", "2026-07-01"]
+    ]);
+    expect(result.diagnostics.attributionField).toBe("per_order");
   });
 
   it("SHOPLAZZA-DATE-05 fixes attribution to created_at when only created_at is available", async () => {
@@ -262,7 +323,7 @@ describe("store sync core verified timezone contract", () => {
       startDate: "2026-07-01",
       endDate: "2026-07-01",
       timezone: "America/Los_Angeles",
-      timezoneSource: "temporary_default_la"
+      timezoneSource: "manual_verified"
     });
 
     expect(result.orders).toHaveLength(1);

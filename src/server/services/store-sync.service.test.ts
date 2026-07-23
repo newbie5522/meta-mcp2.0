@@ -84,7 +84,7 @@ describe("store sync verified timezone gate", () => {
     }));
   });
 
-  it("SHOPLAZZA-SYNC-01/02 passes temporary_default_la into canonical fetching and records write diagnostics", async () => {
+  it("SHOPLAZZA-SYNC-01/02 passes manual_verified Shoplazza timezone into canonical fetching and records write diagnostics", async () => {
     prismaMock.store.findMany.mockResolvedValue([{
       id: 2,
       name: "Romanticed",
@@ -95,11 +95,9 @@ describe("store sync verified timezone gate", () => {
     }]);
     resolveVerifiedStoreTimezoneMock.mockResolvedValue({
       timezone: "America/Los_Angeles",
-      timezoneSource: "temporary_default_la",
+      timezoneSource: "manual_verified",
       timezoneVerifiedAt: "2026-07-01T00:00:00.000Z",
-      platformTimezoneRaw: null,
-      temporaryTimezoneFallback: true,
-      temporaryTimezoneReason: "SHOPLAZZA_TIMEZONE_FIELD_UNAVAILABLE"
+      platformTimezoneRaw: null
     });
     fetchStoreOrdersCanonicalMock.mockResolvedValue({
       orders: [{ orderId: "slz-1", orderNumber: "R-1001", attributionTimeRaw: "2026-07-02T06:30:00Z", rawCreatedAt: "2026-07-02T06:30:00Z", storeLocalDate: "2026-07-01", orderTotal: 42.5, paymentStatus: "paid", fulfillmentStatus: "fulfilled" }],
@@ -130,15 +128,13 @@ describe("store sync verified timezone gate", () => {
     expect(fetchStoreOrdersCanonicalMock).toHaveBeenCalledWith(expect.objectContaining({
       platform: "shoplazza",
       timezone: "America/Los_Angeles",
-      timezoneSource: "temporary_default_la",
+      timezoneSource: "manual_verified",
       platformTimezoneRaw: null
     }));
     expect(saveCanonicalOrdersToDbMock).toHaveBeenCalled();
     expect(result[2].recordsSaved).toBe(1);
     expect(result[2].diagnostics).toMatchObject({
-      timezoneSource: "temporary_default_la",
-      temporaryTimezoneFallback: true,
-      temporaryTimezoneReason: "SHOPLAZZA_TIMEZONE_FIELD_UNAVAILABLE",
+      timezoneSource: "manual_verified",
       recordsSaved: 1,
       recordsUpdated: 0,
       orderRowsWritten: 1

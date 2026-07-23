@@ -2,7 +2,6 @@ import axios from "axios";
 import prisma from "../../db/index.js";
 import dayjs from "dayjs";
 import { 
-  normalizeTimezone, 
   getTzOffset, 
   getStoreLocalDate, 
   getStoreLocalDatetime,
@@ -101,12 +100,13 @@ export type CanonicalOrder = {
   currency: string | null;
 
   rawCreatedAt: string | null;
+  rawPlacedAt: string | null;
   rawPaidAt: string | null;
   rawProcessedAt: string | null;
   rawCompletedAt: string | null;
   rawUpdatedAt: string | null;
 
-  attributionField: "created_at" | "paid_at" | "processed_at" | "completed_at" | "updated_at";
+  attributionField: "created_at" | "placed_at" | "paid_at" | "processed_at" | "completed_at" | "updated_at";
   attributionTimeRaw: string;
   storeTimezone: string;
   storeLocalDate: string;
@@ -214,11 +214,31 @@ function extractShoplazzaLedgerAmount(raw: any) {
 
 function getRawTimeByAttribution(co: any, attr: string): string | null {
   if (attr === "created_at") return co.rawCreatedAt || null;
+  if (attr === "placed_at") return co.rawPlacedAt || null;
   if (attr === "paid_at") return co.rawPaidAt || null;
   if (attr === "processed_at") return co.rawProcessedAt || null;
   if (attr === "completed_at") return co.rawCompletedAt || null;
   if (attr === "updated_at") return co.rawUpdatedAt || null;
   return null;
+}
+
+function selectAttributionForOrder(
+  platform: StorePlatform,
+  co: any,
+  preferredField: "created_at" | "placed_at" | "paid_at" | "processed_at" | "completed_at" | "updated_at"
+) {
+  if (platform === "shoplazza") {
+    if (co.rawPlacedAt) {
+      return { field: "placed_at" as const, rawTime: co.rawPlacedAt };
+    }
+    return { field: "created_at" as const, rawTime: co.rawCreatedAt || "" };
+  }
+
+  const preferredRaw = getRawTimeByAttribution(co, preferredField);
+  if (preferredRaw) {
+    return { field: preferredField, rawTime: preferredRaw };
+  }
+  return { field: "created_at" as const, rawTime: co.rawCreatedAt || "" };
 }
 
 /**
@@ -331,6 +351,12 @@ export function determineTimezoneSource(
   return "persisted_verified";
 }
 
+function canonicalStoreTimezone(value: string | null | undefined): string {
+  const normalized = requireVerifiedIanaTimezone(value);
+  if (normalized === "US/Pacific") return "America/Los_Angeles";
+  return normalized;
+}
+
 /**
  * High quality Canonical Store synchronization Core.
  */
@@ -410,7 +436,7 @@ export async function fetchStoreOrdersCanonical(params: {
   failedSlices: any[];
 }> {
   const timezoneBefore = params.timezone;
-  const storeTimezone = requireVerifiedIanaTimezone(timezoneBefore);
+  const storeTimezone = canonicalStoreTimezone(timezoneBefore);
   
   const offset = getTzOffset(storeTimezone, params.startDate);
   
@@ -558,7 +584,7 @@ export async function fetchStoreOrdersCanonical(params: {
   }
   }
 
-  const attributionCandidates = ["created_at", "paid_at", "processed_at", "completed_at", "updated_at"] as const;
+  const attributionCandidates = ["created_at", "placed_at", "paid_at", "processed_at", "completed_at", "updated_at"] as const;
   
   // Mapping intermediate order forms
   const convertedOrders = rawOrders.map(o => {
@@ -572,7 +598,8 @@ export async function fetchStoreOrdersCanonical(params: {
     const cancelledAt = o.cancelled_at || (isCancelled ? (o.updated_at || o.created_at || "STATUS_CANCELLED") : null);
 
     const rawCreatedAt = o.created_at || null;
-    const rawPaidAt = o.placed_at || o.paid_at || o.payment_details?.paid_at || null;
+    const rawPlacedAt = o.placed_at || null;
+    const rawPaidAt = o.paid_at || o.payment_details?.paid_at || null;
     const rawProcessedAt = o.processed_at || null;
     const rawCompletedAt = o.finished_at || o.completed_at || o.closed_at || null;
     const rawUpdatedAt = o.updated_at || null;
@@ -605,6 +632,7 @@ export async function fetchStoreOrdersCanonical(params: {
       orderNumber,
       currency: o.currency || "USD",
       rawCreatedAt,
+      rawPlacedAt,
       rawPaidAt,
       rawProcessedAt,
       rawCompletedAt,
@@ -650,7 +678,7 @@ export async function fetchStoreOrdersCanonical(params: {
   };
 
   const convertedOrdersInSelectedRange = convertedOrders.filter(co => {
-    const rawTime = getRawTimeByAttribution(co, bestAttributionField);
+    const { rawTime } = selectAttributionForOrder(params.platform, co, bestAttributionField);
     if (!rawTime) return false;
     const localDate = getStoreLocalDate(rawTime, storeTimezone);
     return localDate >= params.startDate && localDate <= params.endDate && classifyPlatformOrderValidity({
@@ -674,6 +702,7 @@ export async function fetchStoreOrdersCanonical(params: {
 
   const attributionFieldStats: Record<string, any> = {
     created_at: {},
+    placed_at: {},
     paid_at: {},
     processed_at: {},
     completed_at: {},
@@ -708,7 +737,8 @@ export async function fetchStoreOrdersCanonical(params: {
 
   // Construct final array of CanonicalOrders adhering strict to the target field selected
   const targetOrders = convertedOrders.map(co => {
-    const rawTime = co[bestAttributionField === "created_at" ? "rawCreatedAt" : bestAttributionField === "paid_at" ? "rawPaidAt" : bestAttributionField === "processed_at" ? "rawProcessedAt" : bestAttributionField === "completed_at" ? "rawCompletedAt" : "rawUpdatedAt"] || co.rawCreatedAt;
+    const attribution = selectAttributionForOrder(params.platform, co, bestAttributionField);
+    const rawTime = attribution.rawTime || co.rawCreatedAt;
     const storeLocalDate = getStoreLocalDate(rawTime || "", storeTimezone);
     const storeLocalDatetime = getStoreLocalDatetime(rawTime || "", storeTimezone);
     const orderTotal = co.orderTotal || 0;
@@ -720,11 +750,12 @@ export async function fetchStoreOrdersCanonical(params: {
       orderNumber: co.orderNumber,
       currency: co.currency,
       rawCreatedAt: co.rawCreatedAt,
+      rawPlacedAt: co.rawPlacedAt,
       rawPaidAt: co.rawPaidAt,
       rawProcessedAt: co.rawProcessedAt,
       rawCompletedAt: co.rawCompletedAt,
       rawUpdatedAt: co.rawUpdatedAt,
-      attributionField: bestAttributionField,
+      attributionField: attribution.field,
       attributionTimeRaw: rawTime || "",
       storeTimezone,
       storeLocalDate,
@@ -767,7 +798,7 @@ export async function fetchStoreOrdersCanonical(params: {
 
   const observedOrderOffsetsSet = new Set<string>();
   for (const co of canonicalOrders) {
-    const rawTimes = [co.rawCreatedAt, co.rawProcessedAt, co.rawPaidAt, co.rawCompletedAt, co.rawUpdatedAt];
+    const rawTimes = [co.rawCreatedAt, co.rawPlacedAt, co.rawProcessedAt, co.rawPaidAt, co.rawCompletedAt, co.rawUpdatedAt];
     for (const rt of rawTimes) {
       const offsetStr = extractOffset(rt);
       if (offsetStr) {
@@ -811,7 +842,7 @@ export async function fetchStoreOrdersCanonical(params: {
       placedAtSlice,
       deduplicatedOrderCount,
       duplicateAcrossSlicesCount,
-      attributionField: bestAttributionField,
+      attributionField: params.platform === "shoplazza" ? "per_order" : bestAttributionField,
       revenueField: "extracted_order_total",
       orderTotalSource,
       ledgerAmountPolicy: "platform_priority_order_total_not_baseline",
