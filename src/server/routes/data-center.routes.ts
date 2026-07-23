@@ -119,12 +119,6 @@ function scopedStoreOrderKey(storeId: number, order: any) {
   return orderId ? `store:${Number(storeId)}:order:${orderId}` : "";
 }
 
-function displayOrderIdFromScopedKey(key: string) {
-  const marker = ":order:";
-  const index = key.indexOf(marker);
-  return index >= 0 ? key.slice(index + marker.length) : key;
-}
-
 function parseLedgerOrderIds(value: unknown): string[] {
   if (!value) return [];
   try {
