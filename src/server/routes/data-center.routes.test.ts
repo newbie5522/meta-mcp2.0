@@ -5,7 +5,10 @@ const { prismaMock } = vi.hoisted(() => ({
     campaign: { findMany: vi.fn() },
     adSet: { findMany: vi.fn() },
     ad: { findMany: vi.fn() },
-    factMetaPerformance: { findMany: vi.fn() }
+    factMetaPerformance: { findMany: vi.fn() },
+    store: { findUnique: vi.fn(), findMany: vi.fn() },
+    order: { findMany: vi.fn() },
+    dataCenterStoreDaily: { findMany: vi.fn() }
   }
 }));
 
@@ -22,6 +25,7 @@ import {
   reconcileCoverageWithVisibleRows,
   reconcileAudienceCoverageWithFactRows
 } from "./data-center.routes";
+import dataCenterRouter from "./data-center.routes";
 
 function responseMock() {
   const response: any = {
@@ -42,6 +46,18 @@ function responseMock() {
 async function invoke(handler: any, query: any) {
   const response = responseMock();
   await handler({ query }, response);
+  return response;
+}
+
+function getRouteHandler(path: string) {
+  const layer = (dataCenterRouter as any).stack.find((item: any) => item.route?.path === path);
+  if (!layer) throw new Error(`Route not found: ${path}`);
+  return layer.route.stack[0].handle;
+}
+
+async function invokeDataCenterRoute(path: string, input: { query?: any; params?: any }) {
+  const response = responseMock();
+  await getRouteHandler(path)({ query: input.query || {}, params: input.params || {} }, response);
   return response;
 }
 
@@ -324,6 +340,260 @@ describe("Store API display metrics", () => {
     expect(metrics.visibleOrderCount).toBeNull();
     expect(metrics.visibleRevenue).toBeNull();
     expect(metrics.roas).toBeNull();
+  });
+});
+
+describe("Data Center store-orders route", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prismaMock.store.findMany.mockResolvedValue([
+      { id: 2, name: "Romanticed", platform: "shoplazza", timezone: "America/Los_Angeles" }
+    ]);
+    prismaMock.order.findMany.mockResolvedValue([
+      {
+        id: "line-2",
+        storeId: 2,
+        orderId: "order-1",
+        store_local_date: "2026-07-02",
+        store_local_datetime: "2026-07-02T10:00:00",
+        createdAt: new Date("2026-07-03T00:00:00.000Z"),
+        created_at_utc: new Date("2026-07-02T17:00:00.000Z"),
+        store_timezone: "America/Los_Angeles",
+        orderTotal: 100,
+        revenue: 40,
+        profit: 0,
+        refunded: false,
+        paymentStatus: "paid",
+        fulfillmentStatus: "shipped",
+        shippingCountryCode: "US",
+        billingCountryCode: "US",
+        countrySource: "shipping",
+        raw_payload: "{\"token\":\"secret\"}"
+      }
+    ]);
+  });
+
+  it("STORE-ORDERS-01 returns 200 without relying on an Order.store relation", async () => {
+    const response = await invokeDataCenterRoute("/store-orders", {
+      query: { startDate: "2026-07-01", endDate: "2026-07-02", storeId: "2" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(prismaMock.order.findMany).toHaveBeenCalledWith(expect.not.objectContaining({
+      include: expect.anything()
+    }));
+    expect(response.body.rows).toHaveLength(1);
+  });
+
+  it("STORE-ORDERS-02 hydrates Store fields through a separate Store query", async () => {
+    const response = await invokeDataCenterRoute("/store-orders", {
+      query: { startDate: "2026-07-01", endDate: "2026-07-02", storeId: "2" }
+    });
+
+    expect(prismaMock.store.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: { in: [2] } },
+      select: expect.objectContaining({ name: true, platform: true, timezone: true })
+    }));
+    expect(response.body.rows[0]).toMatchObject({
+      storeName: "Romanticed",
+      platform: "shoplazza",
+      timezone: "America/Los_Angeles"
+    });
+  });
+
+  it("STORE-ORDERS-03 filters dates only by Order.store_local_date", async () => {
+    await invokeDataCenterRoute("/store-orders", {
+      query: { startDate: "2026-07-01", endDate: "2026-07-02", storeId: "2" }
+    });
+
+    expect(prismaMock.order.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        store_local_date: { gte: "2026-07-01", lte: "2026-07-02" },
+        storeId: 2
+      }
+    }));
+    expect(JSON.stringify(prismaMock.order.findMany.mock.calls[0][0].where)).not.toContain("createdAt");
+  });
+
+  it("STORE-ORDERS-04 applies storeId without crossing stores", async () => {
+    await invokeDataCenterRoute("/store-orders", {
+      query: { startDate: "2026-07-01", endDate: "2026-07-02", storeId: "2" }
+    });
+
+    expect(prismaMock.order.findMany.mock.calls[0][0].where.storeId).toBe(2);
+  });
+
+  it("STORE-ORDERS-05 builds summary from the same filtered rows", async () => {
+    const response = await invokeDataCenterRoute("/store-orders", {
+      query: { startDate: "2026-07-01", endDate: "2026-07-02", storeId: "2" }
+    });
+
+    expect(response.body.summary).toMatchObject({
+      rowCount: response.body.rows.length,
+      orderCount: 1,
+      grossSales: 100
+    });
+  });
+
+  it("STORE-ORDERS-06 uses the same filtered rows for pagination total", async () => {
+    const response = await invokeDataCenterRoute("/store-orders", {
+      query: { startDate: "2026-07-01", endDate: "2026-07-02", storeId: "2" }
+    });
+
+    expect(response.body.pagination.total).toBe(response.body.rows.length);
+    expect(response.body.count).toBe(response.body.rows.length);
+  });
+
+  it("STORE-ORDERS-07 returns a true error when the database query fails", async () => {
+    prismaMock.order.findMany.mockRejectedValueOnce(new Error("DB_DOWN"));
+    const response = await invokeDataCenterRoute("/store-orders", {
+      query: { startDate: "2026-07-01", endDate: "2026-07-02", storeId: "2" }
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.body.details).toBe("DB_DOWN");
+  });
+
+  it("STORE-ORDERS-08 does not expose tokens, raw payloads, or raw customer PII in rows", async () => {
+    const response = await invokeDataCenterRoute("/store-orders", {
+      query: { startDate: "2026-07-01", endDate: "2026-07-02", storeId: "2" }
+    });
+    const serialized = JSON.stringify(response.body.rows);
+
+    expect(serialized).not.toContain("token");
+    expect(serialized).not.toContain("raw_payload");
+    expect(response.body.rows[0]).not.toHaveProperty("customerName");
+  });
+});
+
+describe("Data Center store reconciliation route", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prismaMock.store.findUnique.mockResolvedValue({
+      id: 2,
+      name: "Romanticed",
+      platform: "shoplazza",
+      timezone: "America/Los_Angeles"
+    });
+    prismaMock.order.findMany.mockResolvedValue([
+      {
+        id: "line-1",
+        storeId: 2,
+        orderId: "order-1",
+        store_local_date: "2026-07-02",
+        createdAt: new Date("2026-07-02T12:00:00.000Z"),
+        created_at_utc: new Date("2026-07-02T12:00:00.000Z"),
+        orderTotal: 100,
+        revenue: 100,
+        paymentStatus: "paid",
+        fulfillmentStatus: "shipped"
+      }
+    ]);
+    prismaMock.dataCenterStoreDaily.findMany.mockResolvedValue([
+      {
+        storeId: 2,
+        date: "2026-07-02",
+        orderCount: 1,
+        grossSales: 100,
+        orderIdsJson: JSON.stringify(["store:2:order:order-1"]),
+        rawDigestJson: JSON.stringify({ source: "Order", orderIds: ["store:2:order:order-1"] })
+      }
+    ]);
+  });
+
+  it("RECON-01 returns canonicalLedger and MATCHED when Order and Ledger agree", async () => {
+    const response = await invokeDataCenterRoute("/stores/:storeId/reconciliation", {
+      params: { storeId: "2" },
+      query: { startDate: "2026-07-02", endDate: "2026-07-02" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.status).toBe("MATCHED");
+    expect(response.body.canonicalLedger).toMatchObject({ rowCount: 1, orderCount: 1, grossSales: 100 });
+  });
+
+  it("RECON-02 does not return 0/0 when DataCenterStoreDaily has data", async () => {
+    const response = await invokeDataCenterRoute("/stores/:storeId/reconciliation", {
+      params: { storeId: "2" },
+      query: { startDate: "2026-07-02", endDate: "2026-07-02" }
+    });
+
+    expect(response.body.canonicalLedger.orderCount).toBe(1);
+    expect(response.body.canonicalLedger.grossSales).toBe(100);
+  });
+
+  it("RECON-03 normalizes string storeId to numeric Prisma filters", async () => {
+    await invokeDataCenterRoute("/stores/:storeId/reconciliation", {
+      params: { storeId: "2" },
+      query: { startDate: "2026-07-02", endDate: "2026-07-02" }
+    });
+
+    expect(prismaMock.store.findUnique).toHaveBeenCalledWith({ where: { id: 2 } });
+    expect(prismaMock.dataCenterStoreDaily.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { storeId: 2, date: { gte: "2026-07-02", lte: "2026-07-02" } }
+    }));
+  });
+
+  it("RECON-04 uses the same date range for Order and Ledger", async () => {
+    await invokeDataCenterRoute("/stores/:storeId/reconciliation", {
+      params: { storeId: "2" },
+      query: { startDate: "2026-07-01", endDate: "2026-07-03" }
+    });
+
+    expect(prismaMock.order.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { storeId: 2, store_local_date: { gte: "2026-07-01", lte: "2026-07-03" } }
+    }));
+    expect(prismaMock.dataCenterStoreDaily.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { storeId: 2, date: { gte: "2026-07-01", lte: "2026-07-03" } }
+    }));
+  });
+
+  it("RECON-05 returns COUNT_MISMATCH for count differences", async () => {
+    prismaMock.dataCenterStoreDaily.findMany.mockResolvedValueOnce([
+      { orderCount: 2, grossSales: 100, orderIdsJson: JSON.stringify(["store:2:order:order-1", "store:2:order:order-2"]) }
+    ]);
+    const response = await invokeDataCenterRoute("/stores/:storeId/reconciliation", {
+      params: { storeId: "2" },
+      query: { startDate: "2026-07-02", endDate: "2026-07-02" }
+    });
+
+    expect(response.body.status).toBe("COUNT_MISMATCH");
+  });
+
+  it("RECON-06 returns SALES_MISMATCH for gross sales differences", async () => {
+    prismaMock.dataCenterStoreDaily.findMany.mockResolvedValueOnce([
+      { orderCount: 1, grossSales: 120, orderIdsJson: JSON.stringify(["store:2:order:order-1"]) }
+    ]);
+    const response = await invokeDataCenterRoute("/stores/:storeId/reconciliation", {
+      params: { storeId: "2" },
+      query: { startDate: "2026-07-02", endDate: "2026-07-02" }
+    });
+
+    expect(response.body.status).toBe("SALES_MISMATCH");
+  });
+
+  it("RECON-07 returns ERROR when the Ledger query fails", async () => {
+    prismaMock.dataCenterStoreDaily.findMany.mockRejectedValueOnce(new Error("LEDGER_DOWN"));
+    const response = await invokeDataCenterRoute("/stores/:storeId/reconciliation", {
+      params: { storeId: "2" },
+      query: { startDate: "2026-07-02", endDate: "2026-07-02" }
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.body.status).toBe("ERROR");
+    expect(response.body.details).toBe("LEDGER_DOWN");
+  });
+
+  it("RECON-08 returns TRUE_EMPTY only when Order and Ledger are both empty", async () => {
+    prismaMock.order.findMany.mockResolvedValueOnce([]);
+    prismaMock.dataCenterStoreDaily.findMany.mockResolvedValueOnce([]);
+    const response = await invokeDataCenterRoute("/stores/:storeId/reconciliation", {
+      params: { storeId: "2" },
+      query: { startDate: "2026-07-02", endDate: "2026-07-02" }
+    });
+
+    expect(response.body.status).toBe("TRUE_EMPTY");
+    expect(response.body.canonicalLedger).toMatchObject({ rowCount: 0, orderCount: 0, grossSales: 0 });
   });
 });
 

@@ -5,7 +5,8 @@ import {
   formatStoreOrderText,
   formatStoreSalesText,
   getStoreTimezoneNotice,
-  getStoreSyncStatusLabel
+  getStoreSyncStatusLabel,
+  hasReconciliationMismatch
 } from "./StoreDataDashboard";
 
 function deferred<T>() {
@@ -136,5 +137,51 @@ describe("Store page request contract", () => {
   it("UI-SLZ-TZ-04 keeps zero orders distinct from unsynced values", () => {
     expect(formatStoreOrderText({ orderCount: 0 })).toBe("0 单");
     expect(formatStoreOrderText({ orderCount: null })).toBe("未同步");
+  });
+});
+describe("Store reconciliation UI helpers", () => {
+  it("STORE-ORDERS-UI-01 keeps failed order detail requests distinct from zero orders", () => {
+    expect(getStoreSyncStatusLabel("ERROR")).not.toBe(getStoreSyncStatusLabel("NO_NEW_DATA"));
+    expect(formatStoreOrderText({ orderCount: null })).not.toBe(formatStoreOrderText({ orderCount: 0 }));
+  });
+
+  it("RECON-UI-01 does not warn for MATCHED reconciliation", () => {
+    expect(hasReconciliationMismatch({
+      status: "MATCHED",
+      difference: { orderCount: 0, grossSales: 0 },
+      canonicalLedger: { orderCount: 94, grossSales: 4669.02, orderIds: [] },
+      orderFact: { uniqueOrderCount: 94, orderTotalSum: 4669.02, orderIds: [] }
+    })).toBe(false);
+  });
+
+  it("RECON-UI-02 warns on mismatch status and sales-only differences", () => {
+    expect(hasReconciliationMismatch({
+      status: "SALES_MISMATCH",
+      difference: { orderCount: 0, grossSales: 10 },
+      canonicalLedger: { orderCount: 94, grossSales: 4679.02, orderIds: [] },
+      orderFact: { uniqueOrderCount: 94, orderTotalSum: 4669.02, orderIds: [] }
+    })).toBe(true);
+  });
+
+  it("RECON-UI-03 keeps switched store/date reconciliation payloads out through request keys", () => {
+    const current = buildDataViewRequestKey({
+      page: "store-reconciliation",
+      storeId: 2,
+      startDate: "2026-07-01",
+      endDate: "2026-07-30"
+    });
+    const stale = buildDataViewRequestKey({
+      page: "store-reconciliation",
+      storeId: 1,
+      startDate: "2026-06-01",
+      endDate: "2026-06-30"
+    });
+
+    expect(shouldApplyLatestRequest({
+      requestId: 1,
+      latestRequestId: 2,
+      sourceRequestKey: stale,
+      latestRequestKey: current
+    })).toBe(false);
   });
 });

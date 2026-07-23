@@ -106,6 +106,47 @@ function buildDateRange(startStr: string, endStr: string) {
   };
 }
 
+function normalizeStoreIdFilter(value: unknown): number | null {
+  if (value === undefined || value === null || value === "" || value === "all") return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function scopedStoreOrderKey(storeId: number, order: any) {
+  const orderId = order?.orderId !== null && order?.orderId !== undefined && String(order.orderId).trim()
+    ? String(order.orderId).trim()
+    : String(order?.id || "").trim();
+  return orderId ? `store:${Number(storeId)}:order:${orderId}` : "";
+}
+
+function displayOrderIdFromScopedKey(key: string) {
+  const marker = ":order:";
+  const index = key.indexOf(marker);
+  return index >= 0 ? key.slice(index + marker.length) : key;
+}
+
+function parseLedgerOrderIds(value: unknown): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(String(value));
+    if (Array.isArray(parsed)) return parsed.map(id => String(id)).filter(Boolean);
+    if (Array.isArray(parsed?.orderIds)) return parsed.orderIds.map((id: unknown) => String(id)).filter(Boolean);
+    if (Array.isArray(parsed?.orders)) {
+      return parsed.orders
+        .map((order: any) => order?.orderId || order?.id)
+        .filter(Boolean)
+        .map((id: unknown) => String(id));
+    }
+  } catch {
+    return [];
+  }
+  return [];
+}
+
+function roundCurrency(value: number) {
+  return Number(Number(value || 0).toFixed(2));
+}
+
 function coverageMetric(coverage: any, value: number) {
   return ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(String(coverage?.status || ""))
     ? value
@@ -2056,7 +2097,7 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       if (paymentStatus && ["waiting", "unpaid", "pending", "cancelled", "voided"].includes(paymentStatus)) {
         return;
       }
-      const oId = o.orderId || o.id;
+      const oId = scopedStoreOrderKey(store.id, o);
       if (!uniqueOrdersMap.has(oId)) {
         uniqueOrdersMap.set(oId, {
           orderTotal: o.orderTotal != null && o.orderTotal > 0 ? o.orderTotal : (o.revenue || 0),
@@ -2121,7 +2162,8 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
     }>();
 
     ordersInDb.forEach(o => {
-      const oId = String(o.orderId || o.id);
+      const oId = scopedStoreOrderKey(store.id, o);
+      if (!oId) return;
       const paymentStatus = o.paymentStatus ? String(o.paymentStatus).toLowerCase() : "";
       let includedByOrderFactRule = true;
       let excludeReason: string | null = null;
@@ -2165,7 +2207,19 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
     const orderFactTotalSum = Number(orderFactUniqueList.reduce((sum, o) => sum + (o.includedByOrderFactRule ? o.orderTotal : 0), 0).toFixed(2));
     const orderFactOrderIds = orderFactUniqueList.filter(o => o.includedByOrderFactRule).map(o => o.orderId);
 
-    // C. DataCenterStoreDaily Ledger items
+    // C. DataCenterStoreDaily Ledger totals and order ids
+    const canonicalLedgerRowCount = ledgers.length;
+    const canonicalLedgerOrderCount = ledgers.reduce((sum, row) => sum + Number(row.orderCount || 0), 0);
+    const canonicalLedgerGrossSales = roundCurrency(
+      ledgers.reduce((sum, row) => sum + Number(row.grossSales || 0), 0)
+    );
+    const ledgerOrderIdsFromRows = Array.from(new Set(
+      ledgers.flatMap(row => [
+        ...parseLedgerOrderIds(row.orderIdsJson),
+        ...parseLedgerOrderIds(row.rawDigestJson)
+      ])
+    )).sort();
+
     const ledgerOrderMap = new Map<string, {
       orderId: string;
       amount: number;
@@ -2175,35 +2229,36 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       includedByLedgerRule: boolean;
     }>();
 
-    ledgers.forEach(l => {
-      let digestObj: any = { orders: [] };
-      try {
-        if (l.rawDigestJson) {
-          digestObj = JSON.parse(l.rawDigestJson);
-        }
-      } catch (e) {
-        console.error("Failed to parse rawDigestJson in ledger row:", e);
+    ledgerOrderIdsFromRows.forEach(oId => {
+      if (oId) {
+        ledgerOrderMap.set(oId, {
+          orderId: oId,
+          amount: 0,
+          source: "DataCenterStoreDaily.orderIdsJson",
+          rawTime: "",
+          status: "",
+          includedByLedgerRule: true
+        });
       }
-
-      const orders = digestObj.orders || [];
-      orders.forEach((o: any) => {
-        const oId = String(o.orderId || o.id || "");
-        if (oId) {
+    });
+    if (ledgerOrderMap.size === 0) {
+      ledgers.forEach(l => {
+        parseLedgerOrderIds(l.rawDigestJson).forEach(oId => {
           ledgerOrderMap.set(oId, {
             orderId: oId,
-            amount: Number(o.amount || 0),
-            source: o.source || "",
-            rawTime: o.rawTime || "",
-            status: o.status || "",
+            amount: 0,
+            source: "DataCenterStoreDaily.rawDigestJson",
+            rawTime: "",
+            status: "",
             includedByLedgerRule: true
           });
-        }
+        });
       });
-    });
+    }
 
     const ledgerOrdersList = Array.from(ledgerOrderMap.values());
-    const ledgerOrderCount = ledgerOrdersList.length;
-    const ledgerGrossSales = Number(ledgerOrdersList.reduce((sum, o) => sum + o.amount, 0).toFixed(2));
+    const ledgerOrderCount = canonicalLedgerOrderCount;
+    const ledgerGrossSales = canonicalLedgerGrossSales;
     const ledgerOrderIds = ledgerOrdersList.map(o => o.orderId);
 
     // Helper to build diff items
@@ -2285,7 +2340,7 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
     const amountMismatch = [];
     for (const [oId, ledg] of ledgerOrderMap.entries()) {
       const fact = orderFactMap.get(oId);
-      if (fact && fact.includedByOrderFactRule && Math.abs(fact.orderTotal - ledg.amount) > 0.01) {
+      if (fact && fact.includedByOrderFactRule && ledg.amount > 0 && Math.abs(fact.orderTotal - ledg.amount) > 0.01) {
         amountMismatch.push(buildDiffItem(oId, "AMOUNT_FIELD_MISMATCH"));
       }
     }
@@ -2295,10 +2350,27 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       orderFactNotInLedger.length === 0 &&
       ledgerNotInOrderFact.length === 0 &&
       amountMismatch.length === 0;
+    const countDifference = ledgerOrderCount - orderFactUniqueCount;
+    const salesDifference = roundCurrency(ledgerGrossSales - orderFactTotalSum);
+    const countMatches = countDifference === 0;
+    const salesMatches = Math.abs(salesDifference) <= 0.01;
+    const reconciliationStatus =
+      ledgerOrderCount === 0 && orderFactUniqueCount === 0 && ledgerGrossSales === 0 && orderFactTotalSum === 0
+        ? "TRUE_EMPTY"
+        : countMatches && salesMatches && orderFactNotInLedger.length === 0 && ledgerNotInOrderFact.length === 0 && amountMismatch.length === 0
+          ? "MATCHED"
+          : !countMatches && !salesMatches
+            ? "COUNT_AND_SALES_MISMATCH"
+            : !countMatches
+              ? "COUNT_MISMATCH"
+              : "SALES_MISMATCH";
 
     res.json({
       startDate: startStr,
       endDate: endStr,
+      storeId: store.id,
+      appliedFilters: buildAppliedFilters({ startStr, endStr, storeId: store.id }),
+      dateRange: buildDateRange(startStr, endStr),
       storeName: store.name,
       platform: store.platform,
       timezone: store.timezone,
@@ -2307,7 +2379,9 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       systemSalesAmount: ledgerGrossSales,
       legacyOrderFactOrdersCount: orderFactUniqueCount,
       legacyOrderFactSalesAmount: orderFactTotalSum,
+      status: reconciliationStatus,
       canonicalLedger: {
+        rowCount: canonicalLedgerRowCount,
         orderCount: ledgerOrderCount,
         grossSales: ledgerGrossSales,
         orderIds: ledgerOrderIds
@@ -2315,7 +2389,12 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       reconciliation: {
         readOnly: true,
         match: reconciliationMatch,
+        status: reconciliationStatus,
         comparedFields: ["orderCount", "grossSales", "orderIds", "amountMismatch"]
+      },
+      difference: {
+        orderCount: countDifference,
+        grossSales: salesDifference
       },
       orderFact: {
         uniqueOrderCount: orderFactUniqueCount,
@@ -2352,7 +2431,7 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
 
   } catch (error: any) {
     console.error("[Reconciliation API] Error:", error);
-    res.status(500).json({ error: "Failed to calculate reconciliation stats", details: error.message });
+    res.status(500).json({ status: "ERROR", error: "Failed to calculate reconciliation stats", details: error.message });
   }
 });
 
@@ -3223,34 +3302,92 @@ router.get("/store-orders", async (req, res) => {
   try {
     const startStr = startDate ? String(startDate) : dayjs().subtract(30, "day").format("YYYY-MM-DD");
     const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const normalizedStoreId = normalizeStoreIdFilter(storeId);
 
     let whereClause: any = {
       store_local_date: { gte: startStr, lte: endStr }
     };
-    if (storeId && storeId !== "all") {
-      whereClause.storeId = Number(storeId);
+    if (normalizedStoreId) {
+      whereClause.storeId = normalizedStoreId;
     }
 
     const orders = await prisma.order.findMany({
       where: whereClause,
-      include: { store: true },
-      orderBy: { createdAt: "desc" }
+      orderBy: [
+        { store_local_date: "desc" },
+        { id: "desc" }
+      ]
     });
+    const storeIds = Array.from(new Set(
+      orders
+        .map(order => Number(order.storeId))
+        .filter(Number.isFinite)
+    ));
+    const stores = storeIds.length > 0
+      ? await prisma.store.findMany({
+          where: { id: { in: storeIds } },
+          select: {
+            id: true,
+            name: true,
+            platform: true,
+            timezone: true
+          }
+        })
+      : [];
+    const storeMap = new Map(stores.map(store => [store.id, store]));
+    const uniqueOrders = new Map<string, any>();
+    for (const order of orders) {
+      const key = scopedStoreOrderKey(order.storeId, order);
+      if (key && !uniqueOrders.has(key)) uniqueOrders.set(key, order);
+    }
+    const storeOrderRows = orders.map(o => ({
+      id: o.id,
+      orderId: o.orderId,
+      storeId: o.storeId,
+      storeName: storeMap.get(Number(o.storeId))?.name || `Store ${o.storeId}`,
+      platform: storeMap.get(Number(o.storeId))?.platform || null,
+      timezone: o.store_timezone || storeMap.get(Number(o.storeId))?.timezone || null,
+      createdAt: o.createdAt,
+      createdAtUtc: o.created_at_utc,
+      storeLocalDate: o.store_local_date,
+      storeLocalDatetime: o.store_local_datetime,
+      total: o.orderTotal != null && o.orderTotal > 0 ? o.orderTotal : (o.revenue || 0),
+      lineRevenue: o.revenue || 0,
+      profit: o.profit || 0,
+      refunded: Boolean(o.refunded),
+      currency: "USD",
+      paymentStatus: o.paymentStatus || "paid",
+      fulfillmentStatus: o.fulfillmentStatus || "unfulfilled",
+      shippingCountryCode: o.shippingCountryCode || null,
+      billingCountryCode: o.billingCountryCode || null,
+      countrySource: o.countrySource || null
+    }));
+    const storeOrderSummary = {
+      startDate: startStr,
+      endDate: endStr,
+      storeId: normalizedStoreId || "all",
+      rowCount: storeOrderRows.length,
+      orderCount: uniqueOrders.size,
+      grossSales: roundCurrency(
+        Array.from(uniqueOrders.values()).reduce((sum, order) => {
+          return sum + Number(order.orderTotal != null && order.orderTotal > 0 ? order.orderTotal : (order.revenue || 0));
+        }, 0)
+      ),
+      lineRevenue: roundCurrency(storeOrderRows.reduce((sum, row) => sum + Number(row.lineRevenue || 0), 0))
+    };
 
     res.json({
-      count: orders.length,
-      orders: orders.map(o => ({
-        id: o.id,
-        orderId: o.orderId,
-        customerName: o.contactEmail || o.contactPhone || "Anonymous Customer",
-        createdAt: o.createdAt,
-        storeLocalDate: o.store_local_date,
-        total: o.orderTotal != null && o.orderTotal > 0 ? o.orderTotal : (o.revenue || 0),
-        currency: o.currency || "USD",
-        paymentStatus: o.paymentStatus || "paid",
-        fulfillmentStatus: o.fulfillmentStatus || "unfulfilled",
-        storeName: o.store?.name || "常规店铺"
-      }))
+      count: storeOrderRows.length,
+      rows: storeOrderRows,
+      summary: storeOrderSummary,
+      pagination: {
+        total: storeOrderRows.length,
+        page: 1,
+        pageSize: storeOrderRows.length
+      },
+      appliedFilters: buildAppliedFilters({ startStr, endStr, storeId: normalizedStoreId || "all" }),
+      dateRange: buildDateRange(startStr, endStr),
+      orders: storeOrderRows
     });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to load store orders", details: error.message });

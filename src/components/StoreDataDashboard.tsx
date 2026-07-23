@@ -156,6 +156,11 @@ interface ReconciliationData {
   lastSyncError: string | null;
   platformUnsupported: boolean;
   platformMessage: string;
+  status?: string;
+  difference?: {
+    orderCount?: number;
+    grossSales?: number;
+  };
   skippedCount?: number;
   duplicateCount?: number;
   failedCount?: number;
@@ -183,6 +188,22 @@ interface ReconciliationData {
     isSaved: boolean;
     skipReason: string;
   }>;
+}
+
+export function hasReconciliationMismatch(data: Pick<ReconciliationData, "status" | "difference" | "diff" | "canonicalLedger" | "orderFact"> | null | undefined) {
+  if (!data) return false;
+  const status = String(data.status || "").toUpperCase();
+  if (status && status !== "MATCHED" && status !== "TRUE_EMPTY") return true;
+  if (Math.abs(Number(data.difference?.orderCount || 0)) > 0) return true;
+  if (Math.abs(Number(data.difference?.grossSales || 0)) > 0.01) return true;
+  if (data.orderFact && data.canonicalLedger && data.orderFact.uniqueOrderCount !== data.canonicalLedger.orderCount) return true;
+  const diff: any = data.diff || {};
+  return (
+    (diff.orderFactNotInLedger?.length || 0) > 0 ||
+    (diff.ledgerNotInOrderFact?.length || 0) > 0 ||
+    (diff.apiSavedNotInLedger?.length || 0) > 0 ||
+    (diff.amountMismatch?.length || 0) > 0
+  );
 }
 
 interface StoreDataDashboardProps {
@@ -1141,10 +1162,10 @@ setAiReport(reportText || "未返回分析报告");
               </div>
 
               {/* Mismatch warnings banner */}
-              {(reconData.orderFact?.uniqueOrderCount !== reconData.canonicalLedger?.orderCount && reconData.canonicalLedger) && (
+              {hasReconciliationMismatch(reconData) && (
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 text-slate-500 shrink-0" />
-                  <span>发现 Order 表与账目快照存在 {Math.abs((reconData.orderFact?.uniqueOrderCount || 0) - (reconData.canonicalLedger?.orderCount || 0))} 单差异，已列入差异明细。</span>
+                  <span>发现 Order 表与账目快照存在差异，状态：{reconData.status || "MISMATCH"}，已列入差异明细。</span>
                 </div>
               )}
 
