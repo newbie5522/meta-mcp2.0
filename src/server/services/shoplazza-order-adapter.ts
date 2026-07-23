@@ -1,6 +1,7 @@
 import axios from "axios";
 
 export type ShoplazzaPaginationTermination = "NATURAL_END" | "EMPTY_PAGE" | "PAGE_LIMIT" | "ERROR";
+export type ShoplazzaDateFilter = "created_at" | "placed_at";
 
 export type ShoplazzaOrderExtraction = {
   orders: any[] | null;
@@ -19,6 +20,7 @@ export type ShoplazzaOrderEndpoint = {
 };
 
 export type ShoplazzaOrderPagesResult = {
+  dateFilter: ShoplazzaDateFilter;
   rawOrders: any[];
   pagesFetched: number;
   pageOrderCounts: number[];
@@ -34,6 +36,14 @@ export type ShoplazzaOrderPagesResult = {
   truncated: boolean;
   paginationTermination: ShoplazzaPaginationTermination;
   failedSlices: any[];
+};
+
+export type ShoplazzaOrderSlicesResult = ShoplazzaOrderPagesResult & {
+  queryDateFields: ShoplazzaDateFilter[];
+  createdAtSlice: ShoplazzaOrderPagesResult;
+  placedAtSlice: ShoplazzaOrderPagesResult;
+  deduplicatedOrderCount: number;
+  duplicateAcrossSlicesCount: number;
 };
 
 export const SHOPLAZZA_ORDER_ENDPOINTS: ShoplazzaOrderEndpoint[] = [
@@ -161,14 +171,15 @@ function buildInitialUrl(input: {
   startUtc: string;
   endUtc: string;
   pageSize: number;
+  dateFilter: ShoplazzaDateFilter;
 }): string {
   const url = new URL(`https://${input.domain}${input.endpoint.path}`);
   url.searchParams.set(input.endpoint.mode === "cursor" ? "page_size" : "limit", String(input.pageSize));
   if (input.endpoint.mode === "legacy_page") {
     url.searchParams.set("page", "1");
   }
-  url.searchParams.set("created_at_min", input.startUtc);
-  url.searchParams.set("created_at_max", input.endUtc);
+  url.searchParams.set(`${input.dateFilter}_min`, input.startUtc);
+  url.searchParams.set(`${input.dateFilter}_max`, input.endUtc);
   return url.toString();
 }
 
@@ -181,12 +192,14 @@ export async function fetchShoplazzaOrderPages(input: {
   token: string;
   startUtc: string;
   endUtc: string;
+  dateFilter?: ShoplazzaDateFilter;
   pageSize?: number;
   maxPages?: number;
 }): Promise<ShoplazzaOrderPagesResult> {
   const domain = input.domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
   const pageSize = input.pageSize ?? 250;
   const maxPages = input.maxPages ?? 50;
+  const dateFilter = input.dateFilter ?? "created_at";
   const headers = {
     "access-token": input.token,
     "Accept": "application/json",
@@ -199,7 +212,7 @@ export async function fetchShoplazzaOrderPages(input: {
 
   for (const endpoint of SHOPLAZZA_ORDER_ENDPOINTS) {
     const selectedEndpointFailureStart = failedSlices.length;
-    let currentUrl = buildInitialUrl({ domain, endpoint, startUtc: input.startUtc, endUtc: input.endUtc, pageSize });
+    let currentUrl = buildInitialUrl({ domain, endpoint, startUtc: input.startUtc, endUtc: input.endUtc, pageSize, dateFilter });
     let page = 1;
     let cursorPages = 0;
     const rawOrders: any[] = [];
@@ -217,6 +230,7 @@ export async function fetchShoplazzaOrderPages(input: {
         failedSlices.push({ apiVersion: endpoint.apiVersion, endpointPath: endpoint.path, reason: "SHOPLAZZA_ORDER_DUPLICATE_URL" });
         const selectedEndpointFailures = failedSlices.slice(selectedEndpointFailureStart);
         return {
+          dateFilter,
           rawOrders,
           pagesFetched: pageOrderCounts.length,
           pageOrderCounts,
@@ -278,6 +292,7 @@ export async function fetchShoplazzaOrderPages(input: {
         failedSlices.push({ apiVersion: endpoint.apiVersion, endpointPath: endpoint.path, reason: "SHOPLAZZA_ORDER_DUPLICATE_ORDER_PAGE" });
         const selectedEndpointFailures = failedSlices.slice(selectedEndpointFailureStart);
         return {
+          dateFilter,
           rawOrders,
           pagesFetched: pageOrderCounts.length,
           pageOrderCounts,
@@ -304,6 +319,7 @@ export async function fetchShoplazzaOrderPages(input: {
           failedSlices.push({ apiVersion: endpoint.apiVersion, endpointPath: endpoint.path, reason: "SHOPLAZZA_ORDER_DUPLICATE_CURSOR" });
           const selectedEndpointFailures = failedSlices.slice(selectedEndpointFailureStart);
           return {
+            dateFilter,
             rawOrders,
             pagesFetched: pageOrderCounts.length,
             pageOrderCounts,
@@ -328,6 +344,7 @@ export async function fetchShoplazzaOrderPages(input: {
       if (!next.nextUrl) {
         const selectedEndpointFailures = failedSlices.slice(selectedEndpointFailureStart);
         return {
+          dateFilter,
           rawOrders,
           pagesFetched: pageOrderCounts.length,
           pageOrderCounts,
@@ -350,6 +367,7 @@ export async function fetchShoplazzaOrderPages(input: {
         failedSlices.push({ apiVersion: endpoint.apiVersion, endpointPath: endpoint.path, reason: "PAGE_LIMIT", truncated: true });
         const selectedEndpointFailures = failedSlices.slice(selectedEndpointFailureStart);
         return {
+          dateFilter,
           rawOrders,
           pagesFetched: pageOrderCounts.length,
           pageOrderCounts,
@@ -374,6 +392,7 @@ export async function fetchShoplazzaOrderPages(input: {
   }
 
   return {
+    dateFilter,
     rawOrders: [],
     pagesFetched: 0,
     pageOrderCounts: [],
@@ -391,5 +410,78 @@ export async function fetchShoplazzaOrderPages(input: {
     failedSlices: failedSlices.length > 0
       ? failedSlices
       : [{ reason: "SHOPLAZZA_ORDER_RESPONSE_UNRECOGNIZED" }]
+  };
+}
+
+function orderDedupeKey(order: any): string {
+  return String(order?.id ?? order?.order_id ?? order?.order_number ?? order?.number ?? "");
+}
+
+export async function fetchShoplazzaOrderSlices(input: {
+  domain: string;
+  token: string;
+  startUtc: string;
+  endUtc: string;
+  pageSize?: number;
+  maxPages?: number;
+}): Promise<ShoplazzaOrderSlicesResult> {
+  const createdAtSlice = await fetchShoplazzaOrderPages({
+    ...input,
+    dateFilter: "created_at"
+  });
+  const placedAtSlice = await fetchShoplazzaOrderPages({
+    ...input,
+    dateFilter: "placed_at"
+  });
+
+  const byOrderId = new Map<string, any>();
+  let duplicateAcrossSlicesCount = 0;
+  for (const order of [...createdAtSlice.rawOrders, ...placedAtSlice.rawOrders]) {
+    const key = orderDedupeKey(order);
+    if (key && byOrderId.has(key)) {
+      duplicateAcrossSlicesCount += 1;
+      continue;
+    }
+    byOrderId.set(key || `__missing_${byOrderId.size}`, order);
+  }
+
+  const failedSlices = [
+    ...createdAtSlice.failedSlices.map(slice => ({ ...slice, dateFilter: "created_at" })),
+    ...placedAtSlice.failedSlices.map(slice => ({ ...slice, dateFilter: "placed_at" }))
+  ];
+  if (!createdAtSlice.coverageComplete) {
+    failedSlices.push({ dateFilter: "created_at", reason: "SHOPLAZZA_CREATED_AT_SLICE_INCOMPLETE" });
+  }
+  if (!placedAtSlice.coverageComplete) {
+    failedSlices.push({ dateFilter: "placed_at", reason: "SHOPLAZZA_PLACED_AT_SLICE_INCOMPLETE" });
+  }
+
+  const rawOrders = Array.from(byOrderId.values());
+  const coverageComplete =
+    createdAtSlice.coverageComplete === true &&
+    placedAtSlice.coverageComplete === true &&
+    createdAtSlice.truncated !== true &&
+    placedAtSlice.truncated !== true &&
+    failedSlices.length === 0;
+
+  return {
+    ...createdAtSlice,
+    dateFilter: "created_at",
+    rawOrders,
+    pagesFetched: createdAtSlice.pagesFetched + placedAtSlice.pagesFetched,
+    pageOrderCounts: [...createdAtSlice.pageOrderCounts, ...placedAtSlice.pageOrderCounts],
+    requestUrlsSanitized: [...createdAtSlice.requestUrlsSanitized, ...placedAtSlice.requestUrlsSanitized],
+    responseBodyKeys: Array.from(new Set([...createdAtSlice.responseBodyKeys, ...placedAtSlice.responseBodyKeys])),
+    responseHeaderKeys: Array.from(new Set([...createdAtSlice.responseHeaderKeys, ...placedAtSlice.responseHeaderKeys])),
+    cursorPages: createdAtSlice.cursorPages + placedAtSlice.cursorPages,
+    coverageComplete,
+    truncated: createdAtSlice.truncated || placedAtSlice.truncated,
+    paginationTermination: coverageComplete ? "NATURAL_END" : "ERROR",
+    failedSlices,
+    queryDateFields: ["created_at", "placed_at"],
+    createdAtSlice,
+    placedAtSlice,
+    deduplicatedOrderCount: rawOrders.length,
+    duplicateAcrossSlicesCount
   };
 }

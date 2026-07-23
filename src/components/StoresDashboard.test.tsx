@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   getTimestampConversionLabel,
   getTimestampEncodingLabel,
-  getTimezoneSourceLabel
+  getTimezoneSourceLabel,
+  getWarningsBadgeLabel
 } from "./StoresDashboard";
 
 describe("StoresDashboard timezone diagnostics display helpers", () => {
@@ -29,7 +30,9 @@ describe("StoresDashboard timezone diagnostics display helpers", () => {
   it("uses the attention label only when warnings are present", () => {
     const warnings = ["最近一次订单同步未完整覆盖所选日期范围。"];
 
-    expect(warnings.length > 0 ? "需关注" : "").toBe("需关注");
+    expect(getWarningsBadgeLabel(warnings)).toBe("需关注");
+    expect(getWarningsBadgeLabel(warnings)).not.toBe("有警报");
+    expect(getWarningsBadgeLabel([])).toBe("");
   });
 
   it("maps all canonical timezoneSource values to user-facing Chinese labels", () => {

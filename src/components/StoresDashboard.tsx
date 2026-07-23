@@ -33,6 +33,10 @@ export function getTimestampConversionLabel(diagnostics: any): string {
   return `日期换算：已按 ${normalizedToTimezone} 换算为 ${localDateField}`;
 }
 
+export function getWarningsBadgeLabel(warnings: unknown): string {
+  return Array.isArray(warnings) && warnings.length > 0 ? "需关注" : "";
+}
+
 export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endDate?: Date }) {
   const navigate = useNavigate();
   const [stores, setStores] = useState<any[]>([]);
@@ -341,8 +345,7 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
                       {store.timezoneDiagnostics.warnings?.length > 0 && (
                         <span className="flex items-center gap-1 text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full font-bold">
                           <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                          <span className="text-[10px]">需关注</span>
-                          有警报
+                          <span className="text-[10px]">{getWarningsBadgeLabel(store.timezoneDiagnostics.warnings)}</span>
                         </span>
                       )}
                     </div>

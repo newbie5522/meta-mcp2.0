@@ -185,4 +185,93 @@ describe("store sync core verified timezone contract", () => {
     expect(result.diagnostics.validOrdersCount).toBe(0);
     expect(result.orders).toEqual([]);
   });
+
+  it("SHOPLAZZA-DATE-02/06 includes placed_at in-range orders and derives store_local_date from the canonical attribution time", async () => {
+    axiosGet
+      .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          data: {
+            orders: [{
+              id: "paid-in-range",
+              number: "R-PAID",
+              created_at: "2026-06-20T12:00:00Z",
+              placed_at: "2026-07-02T06:30:00Z",
+              payment_status: "paid",
+              status: "finished",
+              total_price: "35.00",
+              line_items: [{ id: "line-1", product_title: "Paid Product", quantity: 1, price: "35.00" }]
+            }],
+            cursor: ""
+          }
+        },
+        headers: {}
+      });
+
+    const result = await fetchStoreOrdersCanonical({
+      platform: "shoplazza",
+      storeId: 2,
+      domain: "lachry.myshoplaza.com",
+      token: "shoplazza-token",
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      timezone: "America/Los_Angeles",
+      timezoneSource: "temporary_default_la"
+    });
+
+    expect(result.orders).toHaveLength(1);
+    expect(result.orders[0]).toMatchObject({
+      orderId: "paid-in-range",
+      attributionField: "paid_at",
+      attributionTimeRaw: "2026-07-02T06:30:00Z",
+      storeLocalDate: "2026-07-01"
+    });
+    expect(result.diagnostics.queryDateFields).toEqual(["created_at", "placed_at"]);
+    expect(result.diagnostics.deduplicatedOrderCount).toBe(1);
+    expect(result.coverageComplete).toBe(true);
+  });
+
+  it("SHOPLAZZA-DATE-05 fixes attribution to created_at when only created_at is available", async () => {
+    axiosGet
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          data: {
+            orders: [{
+              id: "created-only",
+              number: "R-CREATED",
+              created_at: "2026-07-02T06:30:00Z",
+              payment_status: "paid",
+              status: "finished",
+              total_price: "22.00",
+              line_items: [{ id: "line-1", product_title: "Created Product", quantity: 1, price: "22.00" }]
+            }],
+            cursor: ""
+          }
+        },
+        headers: {}
+      })
+      .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} });
+
+    const result = await fetchStoreOrdersCanonical({
+      platform: "shoplazza",
+      storeId: 2,
+      domain: "lachry.myshoplaza.com",
+      token: "shoplazza-token",
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      timezone: "America/Los_Angeles",
+      timezoneSource: "temporary_default_la"
+    });
+
+    expect(result.orders).toHaveLength(1);
+    expect(result.orders[0]).toMatchObject({
+      orderId: "created-only",
+      attributionField: "created_at",
+      attributionTimeRaw: "2026-07-02T06:30:00Z",
+      storeLocalDate: "2026-07-01"
+    });
+    expect(result.coverageComplete).toBe(true);
+  });
 });

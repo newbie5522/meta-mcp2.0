@@ -10,7 +10,7 @@ import {
 } from "../utils/timezone.js";
 import { extractOrderLedgerAmount } from "./store-ledger.service.js";
 import type { StoreTimezoneSource } from "./store-timezone.service.js";
-import { fetchShoplazzaOrderPages } from "./shoplazza-order-adapter.js";
+import { fetchShoplazzaOrderSlices } from "./shoplazza-order-adapter.js";
 
 export type StorePlatform = "shopline" | "shopify" | "shoplazza";
 
@@ -374,6 +374,11 @@ export async function fetchStoreOrdersCanonical(params: {
     responseOrderPath?: string | null;
     paginationMode?: string | null;
     cursorPages?: number;
+    queryDateFields?: string[];
+    createdAtSlice?: any;
+    placedAtSlice?: any;
+    deduplicatedOrderCount?: number;
+    duplicateAcrossSlicesCount?: number;
     attributionField: string;
     revenueField: string;
     orderTotalSource?: string | null;
@@ -436,9 +441,14 @@ export async function fetchStoreOrdersCanonical(params: {
   let responseOrderPath: string | null = null;
   let paginationMode: string | null = null;
   let cursorPages = 0;
+  let queryDateFields: string[] | undefined;
+  let createdAtSlice: any;
+  let placedAtSlice: any;
+  let deduplicatedOrderCount: number | undefined;
+  let duplicateAcrossSlicesCount: number | undefined;
 
   if (params.platform === "shoplazza") {
-    const shoplazzaPages = await fetchShoplazzaOrderPages({
+    const shoplazzaPages = await fetchShoplazzaOrderSlices({
       domain: params.domain,
       token: params.token,
       startUtc: expandedStartAt,
@@ -460,6 +470,29 @@ export async function fetchStoreOrdersCanonical(params: {
     responseOrderPath = shoplazzaPages.responseOrderPath;
     paginationMode = shoplazzaPages.paginationMode;
     cursorPages = shoplazzaPages.cursorPages;
+    queryDateFields = shoplazzaPages.queryDateFields;
+    createdAtSlice = {
+      selectedApiVersion: shoplazzaPages.createdAtSlice.selectedApiVersion,
+      selectedEndpointPath: shoplazzaPages.createdAtSlice.selectedEndpointPath,
+      responseOrderPath: shoplazzaPages.createdAtSlice.responseOrderPath,
+      paginationMode: shoplazzaPages.createdAtSlice.paginationMode,
+      rawOrdersCount: shoplazzaPages.createdAtSlice.rawOrders.length,
+      coverageComplete: shoplazzaPages.createdAtSlice.coverageComplete,
+      truncated: shoplazzaPages.createdAtSlice.truncated,
+      failedSlicesCount: shoplazzaPages.createdAtSlice.failedSlices.length
+    };
+    placedAtSlice = {
+      selectedApiVersion: shoplazzaPages.placedAtSlice.selectedApiVersion,
+      selectedEndpointPath: shoplazzaPages.placedAtSlice.selectedEndpointPath,
+      responseOrderPath: shoplazzaPages.placedAtSlice.responseOrderPath,
+      paginationMode: shoplazzaPages.placedAtSlice.paginationMode,
+      rawOrdersCount: shoplazzaPages.placedAtSlice.rawOrders.length,
+      coverageComplete: shoplazzaPages.placedAtSlice.coverageComplete,
+      truncated: shoplazzaPages.placedAtSlice.truncated,
+      failedSlicesCount: shoplazzaPages.placedAtSlice.failedSlices.length
+    };
+    deduplicatedOrderCount = shoplazzaPages.deduplicatedOrderCount;
+    duplicateAcrossSlicesCount = shoplazzaPages.duplicateAcrossSlicesCount;
   } else {
   while (isFetching) {
     pagesFetched++;
@@ -773,6 +806,11 @@ export async function fetchStoreOrdersCanonical(params: {
       responseOrderPath,
       paginationMode,
       cursorPages,
+      queryDateFields,
+      createdAtSlice,
+      placedAtSlice,
+      deduplicatedOrderCount,
+      duplicateAcrossSlicesCount,
       attributionField: bestAttributionField,
       revenueField: "extracted_order_total",
       orderTotalSource,
