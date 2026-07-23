@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { buildDataViewRequestKey, isDateRangeMismatch, shouldApplyLatestRequest } from "../lib/data-view-state";
+import {
+  formatStoreAovText,
+  formatStoreOrderText,
+  formatStoreSalesText,
+  getStoreSyncStatusLabel
+} from "./StoreDataDashboard";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -73,5 +79,31 @@ describe("Store page request contract", () => {
     expect(key).toContain("page:stores");
     expect(key).not.toContain("search");
     expect(key).not.toContain("sort");
+  });
+
+  it("Romanticed partial rows keep real order, sales, and AOV values", () => {
+    const row = { orderCount: 3, grossSales: 150, aov: 50, syncStatus: "PARTIAL_SUCCESS" };
+
+    expect(formatStoreOrderText(row)).toBe("3 单");
+    expect(formatStoreSalesText(row)).toBe("$150.00");
+    expect(formatStoreAovText(row)).toBe("$50.00");
+    expect(getStoreSyncStatusLabel(row.syncStatus)).toBe("部分完成");
+  });
+
+  it("distinguishes zero orders from unsynced order fields", () => {
+    expect(formatStoreOrderText({ orderCount: 0 })).toBe("0 单");
+    expect(formatStoreSalesText({ grossSales: 0 })).toBe("$0.00");
+    expect(formatStoreAovText({ aov: 0 })).toBe("$0.00");
+    expect(formatStoreOrderText({ orderCount: null })).toBe("未同步");
+    expect(formatStoreSalesText({ grossSales: null })).toBe("未同步");
+  });
+
+  it("FAILED is not displayed as no orders", () => {
+    expect(getStoreSyncStatusLabel("FAILED")).toBe("同步失败");
+    expect(formatStoreOrderText({ orderCount: null })).toBe("未同步");
+  });
+
+  it("NO_NEW_DATA uses a neutral synced status label", () => {
+    expect(getStoreSyncStatusLabel("NO_NEW_DATA")).toBe("已同步，无新数据");
   });
 });

@@ -59,12 +59,36 @@ export function shouldApplyAudienceSourceResult(sourceRequestKey: string, curren
   return sourceRequestKey === currentRequestKey;
 }
 
+export function buildAudienceScopeKey(input: {
+  startDate: string;
+  endDate: string;
+  storeId: string;
+  accountId: string;
+  dimension: string;
+  minSpend: string;
+}) {
+  return JSON.stringify({
+    startDate: input.startDate,
+    endDate: input.endDate,
+    storeId: input.storeId,
+    accountId: input.accountId,
+    dimension: input.dimension,
+    minSpend: input.minSpend
+  });
+}
+
+export function shouldApplyAudienceScopedResponse(responseScopeKey: string | null | undefined, currentScopeKey: string) {
+  return !responseScopeKey || responseScopeKey === currentScopeKey;
+}
+
 export function audienceMetaRowsAllowed(coverage: any) {
   const status = String(coverage?.status || "").toUpperCase();
   return (
+    status === "COVERED" ||
     status === "READY" ||
     status === "PARTIAL_COVERAGE" ||
-    (status === "SYNC_RUNNING" && coverage?.allowCurrentFactsWhileRunning === true)
+    status === "PARTIAL_SUCCESS" ||
+    ((status === "SYNC_RUNNING" || status === "RUNNING") && coverage?.allowCurrentFactsWhileRunning === true)
   );
 }
 
@@ -134,6 +158,13 @@ export function resolveAudienceMetaSourceResult(input: {
   const { payload, error, context, lastGoodData } = input;
 
   if (error) {
+    const errData = error?.response?.data;
+    const errorMessage =
+      errData?.message ||
+      errData?.details ||
+      errData?.error ||
+      error?.message ||
+      "Current audience request failed; old data was not reused.";
     return {
       data: [],
       metaSummary: null,
@@ -141,10 +172,10 @@ export function resolveAudienceMetaSourceResult(input: {
       dataHealth: {
         status: "ERROR",
         reason: "FETCH_FAILED_FOR_CURRENT_REQUEST",
-        message: "Current audience request failed; old data was not reused.",
+        message: errorMessage,
         dateRange: { startDate: context.startStr, endDate: context.endStr, timezone: "America/Los_Angeles" }
       },
-      viewNotice: "Current audience request failed; old data was not displayed.",
+      viewNotice: errorMessage,
       responseDateRange: null,
       nextLastGoodData: lastGoodData,
       toastError: true
@@ -208,7 +239,7 @@ export function resolveAudienceMetaSourceResult(input: {
       lastGoodData,
       context,
       reason: "ROWS_VISIBLE_WHILE_COVERAGE_NOT_READY",
-      message: "Audience response coverage and rows are inconsistent; possible stale rows were not displayed."
+      message: "当前范围数据状态未就绪，已隐藏可能不属于当前筛选条件的受众数据。"
     });
   }
 
@@ -219,7 +250,7 @@ export function resolveAudienceMetaSourceResult(input: {
       lastGoodData,
       context,
       reason: "ROWS_VISIBLE_WITHOUT_CURRENT_SUMMARY",
-      message: "Audience response returned rows without a current Meta summary; possible stale rows were not displayed."
+      message: "当前范围缺少可核对的 Meta KPI 汇总，已隐藏可能不完整的受众数据。"
     });
   }
 
@@ -235,7 +266,7 @@ export function resolveAudienceMetaSourceResult(input: {
     metaSummary,
     metaCoverage,
     dataHealth: payload.dataHealth || null,
-    viewNotice: String(metaCoverage?.status || "").toUpperCase() === "PARTIAL_COVERAGE" ? metaCoverage?.message || null : null,
+    viewNotice: ["PARTIAL_COVERAGE", "PARTIAL_SUCCESS"].includes(String(metaCoverage?.status || "").toUpperCase()) ? metaCoverage?.message || null : null,
     responseDateRange,
     nextLastGoodData
   };

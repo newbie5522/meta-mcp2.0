@@ -348,11 +348,15 @@ function parseMetadata(value: unknown): any {
 
 function metadataTimezoneEvidence(metadata: any) {
   const diagnostics = metadata?.diagnostics || {};
+  const manual = metadata?.timezoneVerification || diagnostics?.timezoneVerification || {};
   return {
     timezone: metadata?.timezone || diagnostics?.timezoneAfter || diagnostics?.timezone,
     timezoneSource: metadata?.timezoneSource || diagnostics?.timezoneSource,
     timezoneVerifiedAt: metadata?.timezoneVerifiedAt || diagnostics?.timezoneVerifiedAt,
-    platformTimezoneRaw: metadata?.platformTimezoneRaw || diagnostics?.platformTimezoneRaw || null
+    platformTimezoneRaw: metadata?.platformTimezoneRaw || diagnostics?.platformTimezoneRaw || null,
+    manualTimezone: manual?.timezone,
+    manualSource: manual?.source,
+    manualVerifiedAt: manual?.verifiedAt
   };
 }
 
@@ -411,16 +415,21 @@ export async function resolveVerifiedStoreTimezone(store: StoreTimezoneInput): P
         platformTimezoneRaw: evidence.platformTimezoneRaw || persistedTimezone
       };
     }
-  }
-
-  if (platform === "shoplazza" && probeResult.finalErrorCode === "STORE_TIMEZONE_FIELD_UNAVAILABLE" && persistedTimezone) {
-    return {
-      timezone: persistedTimezone,
-      timezoneSource: "manual_verified",
-      timezoneVerifiedAt: new Date().toISOString(),
-      platformTimezoneRaw: null,
-      attempts: probeResult.attempts
-    };
+    const manualTimezone = canonicalIanaTimezoneOrNull(evidence.manualTimezone);
+    if (
+      platform === "shoplazza" &&
+      probeResult.finalErrorCode === "STORE_TIMEZONE_FIELD_UNAVAILABLE" &&
+      manualTimezone === persistedTimezone &&
+      evidence.manualSource === "manual_verified" &&
+      evidence.manualVerifiedAt
+    ) {
+      return {
+        timezone: persistedTimezone,
+        timezoneSource: "manual_verified",
+        timezoneVerifiedAt: String(evidence.manualVerifiedAt),
+        platformTimezoneRaw: null
+      };
+    }
   }
 
   throw new StoreTimezoneError("STORE_TIMEZONE_UNVERIFIED", {

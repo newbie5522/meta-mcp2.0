@@ -92,7 +92,7 @@ describe("single canonical store data pipeline", () => {
     expect(receipt.ledger.status).toBe("FAILED");
   });
 
-  it("PIPE-03 truncated sync does not pass rangeVerified to ledger", async () => {
+  it("PIPE-03 truncated sync skips ledger refresh and returns PARTIAL_SUCCESS", async () => {
     prismaMock.syncLog.findUnique.mockResolvedValue({
       id: "task-1",
       status: "success",
@@ -115,10 +115,9 @@ describe("single canonical store data pipeline", () => {
       days: 2
     });
 
-    expect(refreshLedgerMock).toHaveBeenCalledWith(expect.objectContaining({
-      rangeVerified: false
-    }));
+    expect(refreshLedgerMock).not.toHaveBeenCalled();
     expect(receipt.status).toBe("PARTIAL_SUCCESS");
+    expect(receipt.ledger.status).toBe("SKIPPED");
   });
 
   it("PIPE-04 failedSlices prevent verified range ledger coverage", async () => {
@@ -144,10 +143,9 @@ describe("single canonical store data pipeline", () => {
       days: 2
     });
 
-    expect(refreshLedgerMock).toHaveBeenCalledWith(expect.objectContaining({
-      rangeVerified: false
-    }));
+    expect(refreshLedgerMock).not.toHaveBeenCalled();
     expect(receipt.status).toBe("PARTIAL_SUCCESS");
+    expect(receipt.ledger.status).toBe("SKIPPED");
     expect(receipt.failedSlices).toEqual([{ page: 2 }]);
   });
 
@@ -201,5 +199,22 @@ describe("single canonical store data pipeline", () => {
       rangeVerified: true
     }));
     expect(receipt.status).toBe("NO_NEW_DATA");
+  });
+
+  it("returns FAILED for true order sync exceptions without wrapping as no data", async () => {
+    syncStoreOrdersMock.mockRejectedValue(new Error("orders unavailable"));
+
+    const receipt = await executeStoreDataPipeline({
+      store,
+      chainId: "chain-1",
+      triggeredBy: "test",
+      startDate: "2026-07-01",
+      endDate: "2026-07-02",
+      days: 2
+    });
+
+    expect(receipt.status).toBe("FAILED");
+    expect(receipt.orderSync.error).toBe("orders unavailable");
+    expect(refreshLedgerMock).not.toHaveBeenCalled();
   });
 });

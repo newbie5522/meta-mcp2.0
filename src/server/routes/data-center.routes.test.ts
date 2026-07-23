@@ -14,8 +14,11 @@ vi.mock("../utils.js", () => ({ normalizeMetaAccountId: (value: string) => value
 
 import {
   audienceMetaMetric,
+  buildStoreApiDisplayMetrics,
+  buildAudienceMetaSummaryFromVisibleRows,
   createCreativeAnalyzeHandler,
   createDataCenterHierarchyHandler,
+  reconcileCoverageWithVisibleRows,
   reconcileAudienceCoverageWithFactRows
 } from "./data-center.routes";
 
@@ -85,6 +88,176 @@ describe("Audience coverage route helpers", () => {
     const coverage = reconcileAudienceCoverageWithFactRows({ status: "PARTIAL_COVERAGE" }, [row("2026-07-18"), row("2026-07-19")]);
     expect(coverage.earliestAvailableDate).toBe("2026-07-18");
     expect(coverage.latestAvailableDate).toBe("2026-07-19");
+  });
+
+  it("AUD-COV-01 never leaves current visible rows under NOT_SYNCED coverage", () => {
+    const coverage = reconcileCoverageWithVisibleRows({ status: "NOT_SYNCED" }, [{ dimensionValue: "US", spend: 10 }], {
+      coverageBasis: "FACT_ROWS_ONLY",
+      message: "current rows exist"
+    });
+
+    expect(coverage.status).toBe("PARTIAL_COVERAGE");
+    expect(coverage.status).not.toBe("NOT_SYNCED");
+    expect(coverage.rangeRowCount).toBe(1);
+  });
+
+  it("AUD-SUM-01 builds Meta KPI summary only from currently visible rows", () => {
+    const visibleRows = [
+      { spend: 10, impressions: 100, clicks: 5, purchases: 1, purchaseValue: 30 },
+      { spend: 20, impressions: 300, clicks: 15, purchases: 2, purchaseValue: 90 }
+    ];
+
+    const summary = buildAudienceMetaSummaryFromVisibleRows(visibleRows, { status: "READY" }, true);
+
+    expect(summary.meta).toMatchObject({
+      spend: 30,
+      impressions: 400,
+      clicks: 20,
+      purchases: 3,
+      purchaseValue: 120,
+      ctr: 0.05,
+      cpc: 1.5,
+      cpm: 75,
+      cpa: 10,
+      roas: 4
+    });
+  });
+
+  it("AUD-FILTER-01 does not include filtered-out rows in Meta KPI summary", () => {
+    const allRows = [
+      { spend: 5, impressions: 100, clicks: 10, purchases: 1, purchaseValue: 20 },
+      { spend: 50, impressions: 500, clicks: 25, purchases: 5, purchaseValue: 200 }
+    ];
+    const visibleRows = allRows.filter(row => row.spend >= 10);
+
+    const summary = buildAudienceMetaSummaryFromVisibleRows(visibleRows, { status: "READY" }, true);
+
+    expect(summary.meta.spend).toBe(50);
+    expect(summary.meta.purchaseValue).toBe(200);
+    expect(summary.meta.purchases).toBe(5);
+  });
+
+  it("AUD-ERR-01 true error coverage keeps metrics unavailable instead of wrapping as empty data", () => {
+    const coverage = reconcileCoverageWithVisibleRows({ status: "ERROR" }, [{ dimensionValue: "US", spend: 10 }], {
+      coverageBasis: "FACT_ROWS_ONLY",
+      message: "current rows exist"
+    });
+    const summary = buildAudienceMetaSummaryFromVisibleRows([{ spend: 10, impressions: 100, clicks: 5, purchases: 1, purchaseValue: 30 }], coverage, true);
+
+    expect(coverage.status).toBe("ERROR");
+    expect(summary.meta.spend).toBeNull();
+  });
+
+  it("COUNTRY-COV-01 reconciles country rows with NOT_SYNCED coverage before response", () => {
+    const coverage = reconcileCoverageWithVisibleRows({ status: "NOT_SYNCED" }, [{ country: "US", orderCount: 2, revenue: 50 }], {
+      coverageBasis: "ORDER_COUNTRY_ROWS_ONLY",
+      message: "country rows exist"
+    });
+
+    expect(coverage.status).toBe("PARTIAL_COVERAGE");
+    expect(coverage.rangeRowCount).toBe(1);
+  });
+});
+
+describe("Store API display metrics", () => {
+  it("STORE-SLZ-01 preserves Shoplazza ledger order and sales values under partial coverage", () => {
+    const metrics = buildStoreApiDisplayMetrics({
+      orderCount: 3,
+      revenue: 150,
+      adSpend: 50,
+      storeCoverage: { status: "PARTIAL_COVERAGE" },
+      metaCoverage: { status: "READY" }
+    });
+
+    expect(metrics).toMatchObject({
+      visibleOrderCount: 3,
+      visibleRevenue: 150,
+      visibleAov: 50,
+      visibleAdSpend: 50,
+      roas: 3,
+      hasOrders: true
+    });
+  });
+
+  it("STORE-SLZ-02 distinguishes zero orders from unavailable store facts", () => {
+    const trueEmpty = buildStoreApiDisplayMetrics({
+      orderCount: 0,
+      revenue: 0,
+      adSpend: 0,
+      storeCoverage: { status: "TRUE_EMPTY" },
+      metaCoverage: { status: "TRUE_EMPTY" }
+    });
+    const notSynced = buildStoreApiDisplayMetrics({
+      orderCount: 0,
+      revenue: 0,
+      adSpend: 0,
+      storeCoverage: { status: "NOT_SYNCED" },
+      metaCoverage: { status: "NOT_SYNCED" }
+    });
+
+    expect(trueEmpty.visibleOrderCount).toBe(0);
+    expect(trueEmpty.visibleRevenue).toBe(0);
+    expect(trueEmpty.visibleAov).toBe(0);
+    expect(trueEmpty.hasOrders).toBe(false);
+    expect(notSynced.visibleOrderCount).toBeNull();
+    expect(notSynced.visibleRevenue).toBeNull();
+    expect(notSynced.visibleAov).toBeNull();
+    expect(notSynced.hasOrders).toBeNull();
+  });
+
+  it("STORE-SLZ-03 does not wrap true coverage errors as empty store data", () => {
+    const metrics = buildStoreApiDisplayMetrics({
+      orderCount: 2,
+      revenue: 80,
+      adSpend: 20,
+      storeCoverage: { status: "ERROR" },
+      metaCoverage: { status: "READY" }
+    });
+
+    expect(metrics.visibleOrderCount).toBeNull();
+    expect(metrics.visibleRevenue).toBeNull();
+    expect(metrics.visibleAov).toBeNull();
+    expect(metrics.roas).toBeNull();
+  });
+
+  it("STORE-SLZ-04 only calculates ROAS when both store revenue and mapped ad spend are visible", () => {
+    expect(buildStoreApiDisplayMetrics({
+      orderCount: 2,
+      revenue: 100,
+      adSpend: 25,
+      storeCoverage: { status: "READY" },
+      metaCoverage: { status: "READY" }
+    }).roas).toBe(4);
+
+    expect(buildStoreApiDisplayMetrics({
+      orderCount: 2,
+      revenue: 100,
+      adSpend: 25,
+      storeCoverage: { status: "READY" },
+      metaCoverage: { status: "NOT_SYNCED" }
+    }).roas).toBeNull();
+  });
+
+  it("STORE-SLZ-05 treats running coverage as visible only when current facts are explicitly allowed", () => {
+    const allowed = buildStoreApiDisplayMetrics({
+      orderCount: 1,
+      revenue: 20,
+      adSpend: 10,
+      storeCoverage: { status: "RUNNING", allowCurrentFactsWhileRunning: true },
+      metaCoverage: { status: "RUNNING", allowCurrentFactsWhileRunning: true }
+    });
+    const blocked = buildStoreApiDisplayMetrics({
+      orderCount: 1,
+      revenue: 20,
+      adSpend: 10,
+      storeCoverage: { status: "RUNNING" },
+      metaCoverage: { status: "RUNNING" }
+    });
+
+    expect(allowed.visibleOrderCount).toBe(1);
+    expect(allowed.roas).toBe(2);
+    expect(blocked.visibleOrderCount).toBeNull();
+    expect(blocked.roas).toBeNull();
   });
 });
 

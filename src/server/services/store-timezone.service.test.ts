@@ -135,8 +135,30 @@ describe("verified store timezone service", () => {
     expect(result).toBeNull();
   });
 
-  it("TZ-SHOPLAZZA-MANUAL-01 uses explicit Store.timezone for Shoplazza when Shop API has no timezone field", async () => {
+  it("TZ-SHOPLAZZA-MANUAL-01 rejects legal Store.timezone without auditable manual evidence", async () => {
     axiosGet.mockResolvedValue({ status: 200, data: { data: { shop: { name: "Romanticed" } } } });
+
+    await expect(resolveVerifiedStoreTimezone({
+      id: 2,
+      platform: "shoplazza",
+      domain: "lachry.myshoplaza.com",
+      timezone: "America/Los_Angeles",
+      shoplazza_token: "shoplazza-token"
+    })).rejects.toMatchObject({ code: "STORE_TIMEZONE_UNVERIFIED" });
+  });
+
+  it("TZ-SHOPLAZZA-MANUAL-03 uses explicit Store.timezone only with auditable manual evidence", async () => {
+    axiosGet.mockResolvedValue({ status: 200, data: { data: { shop: { name: "Romanticed" } } } });
+    prismaMock.syncLog.findFirst.mockResolvedValue({
+      startedAt: new Date("2026-07-01T00:00:00.000Z"),
+      metadata: JSON.stringify({
+        timezoneVerification: {
+          source: "manual_verified",
+          timezone: "America/Los_Angeles",
+          verifiedAt: "2026-07-01T00:00:00.000Z"
+        }
+      })
+    });
 
     const result = await resolveVerifiedStoreTimezone({
       id: 2,
@@ -149,6 +171,7 @@ describe("verified store timezone service", () => {
     expect(result).toMatchObject({
       timezone: "America/Los_Angeles",
       timezoneSource: "manual_verified",
+      timezoneVerifiedAt: "2026-07-01T00:00:00.000Z",
       platformTimezoneRaw: null
     });
     expect(result.temporaryTimezoneFallback).toBeUndefined();

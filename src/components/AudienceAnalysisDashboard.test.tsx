@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAudienceClearedState,
+  buildAudienceScopeKey,
   buildAudienceSourceRequestParams,
   resolveAudienceMetaSourceResult,
   resolveAudienceStoreSourceResult,
+  shouldApplyAudienceScopedResponse,
   shouldApplyAudienceSourceResult,
   type AudienceRequestContext
 } from "./audience-dashboard-orchestrator";
@@ -119,6 +121,35 @@ describe("Audience source orchestration contract", () => {
     expect(meta.viewNotice).toBe("partial");
   });
 
+  it("keeps current Meta KPI values when rows are returned", () => {
+    const meta = resolveAudienceMetaSourceResult({
+      payload: metaPayload,
+      context: context(),
+      lastGoodData: null
+    });
+
+    expect(meta.data).toEqual(metaPayload.rows);
+    expect(meta.metaSummary).toMatchObject({
+      spend: 10,
+      impressions: 100,
+      clicks: 5,
+      purchases: 1,
+      purchaseValue: 20
+    });
+  });
+
+  it("PARTIAL_SUCCESS shows a warning but keeps current rows and summary", () => {
+    const meta = resolveAudienceMetaSourceResult({
+      payload: { ...metaPayload, metaCoverage: { status: "PARTIAL_SUCCESS", message: "部分完成" } },
+      context: context(),
+      lastGoodData: null
+    });
+
+    expect(meta.data).toEqual(metaPayload.rows);
+    expect(meta.metaSummary.spend).toBe(10);
+    expect(meta.viewNotice).toBe("部分完成");
+  });
+
   it("AUD-ORCH-04 rows + null summary fails closed", () => {
     const meta = resolveAudienceMetaSourceResult({
       payload: { ...metaPayload, summary: null },
@@ -128,6 +159,44 @@ describe("Audience source orchestration contract", () => {
 
     expect(meta.data).toEqual([]);
     expect(meta.dataHealth.reason).toBe("ROWS_VISIBLE_WITHOUT_CURRENT_SUMMARY");
+  });
+
+  it("NOT_SYNCED displays unavailable KPI state instead of zero", () => {
+    const meta = resolveAudienceMetaSourceResult({
+      payload: { rows: [], summary: null, metaCoverage: { status: "NOT_SYNCED" }, dateRange: metaPayload.dateRange },
+      context: context(),
+      lastGoodData: null
+    });
+
+    expect(meta.data).toEqual([]);
+    expect(meta.metaSummary).toEqual({
+      spend: null,
+      impressions: null,
+      clicks: null,
+      purchases: null,
+      purchaseValue: null,
+      ctr: null,
+      cpc: null,
+      cpm: null,
+      cpa: null,
+      roas: null
+    });
+  });
+
+  it("ERROR displays the real current request error and does not reuse old rows", () => {
+    const meta = resolveAudienceMetaSourceResult({
+      error: { response: { data: { message: "Meta audience query failed" } } },
+      context: context(),
+      lastGoodData: {
+        requestKey: context().requestKey,
+        rows: [{ dimensionValue: "OLD", spend: 99 }],
+        metaSummary: { spend: 99 }
+      }
+    });
+
+    expect(meta.data).toEqual([]);
+    expect(meta.metaSummary).toBeNull();
+    expect(meta.viewNotice).toBe("Meta audience query failed");
   });
 
   it("AUD-ORCH-05 Store date mismatch clears Store rows and summary", () => {
@@ -206,6 +275,28 @@ describe("Audience source orchestration contract", () => {
 
     expect(meta.data).toEqual([]);
     expect((meta as any).preservedLastGoodData).toBeUndefined();
+  });
+
+  it("rejects scoped responses from a different date, store, account, dimension, or minSpend", () => {
+    const currentScopeKey = buildAudienceScopeKey({
+      startDate: "2026-07-01",
+      endDate: "2026-07-07",
+      storeId: "1",
+      accountId: "act_1",
+      dimension: "country",
+      minSpend: "10"
+    });
+    const oldScopeKey = buildAudienceScopeKey({
+      startDate: "2026-07-01",
+      endDate: "2026-07-07",
+      storeId: "2",
+      accountId: "act_1",
+      dimension: "country",
+      minSpend: "10"
+    });
+
+    expect(shouldApplyAudienceScopedResponse(oldScopeKey, currentScopeKey)).toBe(false);
+    expect(shouldApplyAudienceScopedResponse(currentScopeKey, currentScopeKey)).toBe(true);
   });
 
   it("AUD-ORCH-12 same-key running reuse requires allowStaleWhileRunning", () => {

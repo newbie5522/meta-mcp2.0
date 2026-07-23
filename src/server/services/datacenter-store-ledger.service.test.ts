@@ -74,6 +74,77 @@ describe("data center store ledger Order projection", () => {
     });
   });
 
+  it("projects Shoplazza orders by store_local_date without mixing other stores or duplicate lines", async () => {
+    prismaMock.order.findMany.mockResolvedValue([
+      {
+        id: "line-1",
+        storeId: 1,
+        platform: "shoplazza",
+        orderId: "slz-1",
+        store_local_date: "2026-07-01",
+        orderTotal: 120,
+        revenue: 60,
+        paymentStatus: "paid"
+      },
+      {
+        id: "line-2",
+        storeId: 1,
+        platform: "shoplazza",
+        orderId: "slz-1",
+        store_local_date: "2026-07-01",
+        orderTotal: 120,
+        revenue: 60,
+        paymentStatus: "paid"
+      },
+      {
+        id: "other-store-line",
+        storeId: 2,
+        platform: "shoplazza",
+        orderId: "slz-2",
+        store_local_date: "2026-07-01",
+        orderTotal: 999,
+        revenue: 999,
+        paymentStatus: "paid"
+      },
+      {
+        id: "outside-date",
+        storeId: 1,
+        platform: "shoplazza",
+        orderId: "slz-3",
+        store_local_date: "2026-07-03",
+        orderTotal: 300,
+        revenue: 300,
+        paymentStatus: "paid"
+      }
+    ]);
+
+    const result = await refreshStoreDataCenterLedger({
+      storeId: 1,
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      rangeVerified: true
+    });
+
+    expect(prismaMock.order.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        storeId: 1,
+        store_local_date: {
+          gte: "2026-07-01",
+          lte: "2026-07-01"
+        }
+      }
+    }));
+    expect(result.uniqueOrderCount).toBe(1);
+    expect(result.totalGrossSales).toBe(120);
+    expect(prismaMock.dataCenterStoreDaily.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        orderCount: 1,
+        grossSales: 120,
+        orderIdsJson: JSON.stringify(["store:1:order:slz-1"])
+      })
+    }));
+  });
+
   it("does not create zero snapshots for unverified empty ranges", async () => {
     prismaMock.order.findMany.mockResolvedValue([]);
     await refreshStoreDataCenterLedger({

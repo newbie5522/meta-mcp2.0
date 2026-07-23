@@ -112,6 +112,44 @@ function coverageMetric(coverage: any, value: number) {
     : null;
 }
 
+function storeMetric(coverage: any, value: number) {
+  const status = String(coverage?.status || "").toUpperCase();
+  if (["READY", "COVERED", "PARTIAL_COVERAGE", "PARTIAL_SUCCESS", "TRUE_EMPTY"].includes(status)) return value;
+  if ((status === "SYNC_RUNNING" || status === "RUNNING") && coverage?.allowCurrentFactsWhileRunning === true) return value;
+  return null;
+}
+
+export function buildStoreApiDisplayMetrics(input: {
+  orderCount: number;
+  revenue: number;
+  adSpend: number;
+  storeCoverage: any;
+  metaCoverage: any;
+}) {
+  const visibleOrderCount = storeMetric(input.storeCoverage, input.orderCount);
+  const visibleRevenue = storeMetric(input.storeCoverage, Number(input.revenue.toFixed(2)));
+  const visibleAdSpend = storeMetric(input.metaCoverage, Number(input.adSpend.toFixed(2)));
+  const visibleAov =
+    visibleOrderCount === null || visibleRevenue === null
+      ? null
+      : visibleOrderCount > 0
+        ? Number((visibleRevenue / visibleOrderCount).toFixed(2))
+        : 0;
+  const roas =
+    visibleRevenue !== null && visibleAdSpend !== null && visibleAdSpend > 0
+      ? Number((visibleRevenue / visibleAdSpend).toFixed(4))
+      : null;
+
+  return {
+    visibleOrderCount,
+    visibleRevenue,
+    visibleAov,
+    visibleAdSpend,
+    roas,
+    hasOrders: visibleOrderCount === null ? null : visibleOrderCount > 0
+  };
+}
+
 export function reconcileAudienceCoverageWithFactRows(coverage: any, dbRows: any[]) {
   const rows = Array.isArray(dbRows) ? dbRows : [];
   const rowDates = rows
@@ -175,26 +213,115 @@ export function reconcileAudienceCoverageWithFactRows(coverage: any, dbRows: any
   };
 }
 
+export function reconcileCoverageWithVisibleRows(coverage: any, visibleRows: any[], options: {
+  coverageBasis: string;
+  message: string;
+}) {
+  const rows = Array.isArray(visibleRows) ? visibleRows : [];
+  const status = String(coverage?.status || "").toUpperCase();
+  const base = {
+    ...(coverage || {}),
+    rangeRowCount: rows.length
+  };
+
+  if (rows.length <= 0 || status === "ERROR") {
+    return {
+      ...base,
+      allowCurrentFactsWhileRunning: false
+    };
+  }
+
+  if (status === "NOT_SYNCED" || status === "TRUE_EMPTY" || !status) {
+    return {
+      ...base,
+      status: "PARTIAL_COVERAGE",
+      coverageComplete: false,
+      coverageBasis: options.coverageBasis,
+      message: options.message,
+      allowCurrentFactsWhileRunning: false
+    };
+  }
+
+  if (status === "SYNC_RUNNING" || status === "RUNNING") {
+    return {
+      ...base,
+      message: coverage?.message || "Current facts are available while sync is running.",
+      allowCurrentFactsWhileRunning: true
+    };
+  }
+
+  return {
+    ...base,
+    allowCurrentFactsWhileRunning: false
+  };
+}
+
 function audienceRowsRenderable(coverage: any, hasCurrentFacts: boolean) {
   const status = String(coverage?.status || "").toUpperCase();
   if (!hasCurrentFacts) return false;
-  if (status === "READY" || status === "PARTIAL_COVERAGE") return true;
-  if (status === "SYNC_RUNNING") return coverage?.allowCurrentFactsWhileRunning === true;
+  if (status === "READY" || status === "COVERED" || status === "PARTIAL_COVERAGE" || status === "PARTIAL_SUCCESS") return true;
+  if (status === "SYNC_RUNNING" || status === "RUNNING") return coverage?.allowCurrentFactsWhileRunning === true;
   return false;
 }
 
 export function audienceMetaMetric(
   coverage: any,
   hasCurrentFacts: boolean,
-  value: number,
+  value: number | null,
   mode: "additive" | "ratio" = "additive"
 ) {
   const status = String(coverage?.status || "").toUpperCase();
   if (status === "TRUE_EMPTY") return mode === "additive" ? 0 : null;
   if (!hasCurrentFacts) return null;
-  if (status === "READY" || status === "PARTIAL_COVERAGE") return value;
-  if (status === "SYNC_RUNNING" && coverage?.allowCurrentFactsWhileRunning === true) return value;
+  if (value === null || value === undefined) return null;
+  if (status === "READY" || status === "COVERED" || status === "PARTIAL_COVERAGE" || status === "PARTIAL_SUCCESS") return value;
+  if ((status === "SYNC_RUNNING" || status === "RUNNING") && coverage?.allowCurrentFactsWhileRunning === true) return value;
   return null;
+}
+
+export function buildAudienceMetaSummaryFromVisibleRows(
+  visibleRows: any[],
+  coverage: any,
+  hasCurrentFacts: boolean
+) {
+  const rows = Array.isArray(visibleRows) ? visibleRows : [];
+  const spend = Number(rows.reduce((sum, row) => sum + Number(row.spend || 0), 0).toFixed(4));
+  const impressions = rows.reduce((sum, row) => sum + Number(row.impressions || 0), 0);
+  const clicks = rows.reduce((sum, row) => sum + Number(row.clicks || 0), 0);
+  const purchases = rows.reduce((sum, row) => sum + Number(row.purchases || 0), 0);
+  const purchaseValue = Number(rows.reduce((sum, row) => sum + Number(row.purchaseValue || 0), 0).toFixed(4));
+  const ctr = impressions > 0 ? Number((clicks / impressions).toFixed(6)) : null;
+  const cpc = clicks > 0 ? Number((spend / clicks).toFixed(4)) : null;
+  const cpm = impressions > 0 ? Number(((spend / impressions) * 1000).toFixed(4)) : null;
+  const cpa = purchases > 0 ? Number((spend / purchases).toFixed(4)) : null;
+  const roas = spend > 0 ? Number((purchaseValue / spend).toFixed(4)) : null;
+
+  const meta = {
+    spend: audienceMetaMetric(coverage, hasCurrentFacts, spend, "additive"),
+    impressions: audienceMetaMetric(coverage, hasCurrentFacts, impressions, "additive"),
+    clicks: audienceMetaMetric(coverage, hasCurrentFacts, clicks, "additive"),
+    purchases: audienceMetaMetric(coverage, hasCurrentFacts, purchases, "additive"),
+    purchaseValue: audienceMetaMetric(coverage, hasCurrentFacts, purchaseValue, "additive"),
+    roas: audienceMetaMetric(coverage, hasCurrentFacts, roas, "ratio"),
+    ctr: audienceMetaMetric(coverage, hasCurrentFacts, ctr, "ratio"),
+    cpc: audienceMetaMetric(coverage, hasCurrentFacts, cpc, "ratio"),
+    cpm: audienceMetaMetric(coverage, hasCurrentFacts, cpm, "ratio"),
+    cpa: audienceMetaMetric(coverage, hasCurrentFacts, cpa, "ratio")
+  };
+
+  return {
+    totalSpend: meta.spend,
+    totalImpressions: meta.impressions,
+    totalClicks: meta.clicks,
+    totalPurchases: meta.purchases,
+    totalPurchaseValue: meta.purchaseValue,
+    ctr: meta.ctr,
+    cpc: meta.cpc,
+    cpm: meta.cpm,
+    cpa: meta.cpa,
+    roas: meta.roas,
+    meta
+  };
 }
 
 function countryMetaMetric(
@@ -1101,42 +1228,9 @@ router.get("/audience", async (req, res) => {
     const totalItems = canReturnMetaRows ? rawTotalItems : 0;
     const responseTotalPages = canReturnMetaRows ? totalPages : 0;
 
-    // 9. Aggregated overall Summary
-    const summarySpend = filteredRows.reduce((s, r) => s + r.spend, 0);
-    const summaryImpressions = filteredRows.reduce((s, r) => s + r.impressions, 0);
-    const summaryClicks = filteredRows.reduce((s, r) => s + r.clicks, 0);
-    const summaryPurchases = filteredRows.reduce((s, r) => s + r.purchases, 0);
-    const summaryPurchaseValue = filteredRows.reduce((s, r) => s + r.purchaseValue, 0);
-
-    const summaryCtr = summaryImpressions > 0 ? (summaryClicks / summaryImpressions) : 0;
-    const summaryCpc = summaryClicks > 0 ? (summarySpend / summaryClicks) : 0;
-    const summaryCpm = summaryImpressions > 0 ? (summarySpend / summaryImpressions) * 1000 : 0;
-    const summaryCpa = summaryPurchases > 0 ? (summarySpend / summaryPurchases) : 0;
-    const summaryRoas = summarySpend > 0 ? (summaryPurchaseValue / summarySpend) : 0;
-
+    // 9. Aggregated overall Summary. KPI summary is derived only from the same rows returned to the client.
     const summary = {
-      totalSpend: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summarySpend.toFixed(4)), "additive"),
-      totalImpressions: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, summaryImpressions, "additive"),
-      totalClicks: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, summaryClicks, "additive"),
-      totalPurchases: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, summaryPurchases, "additive"),
-      totalPurchaseValue: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryPurchaseValue.toFixed(4)), "additive"),
-      ctr: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCtr.toFixed(6)), "ratio"),
-      cpc: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCpc.toFixed(4)), "ratio"),
-      cpm: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCpm.toFixed(4)), "ratio"),
-      cpa: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCpa.toFixed(4)), "ratio"),
-      roas: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryRoas.toFixed(4)), "ratio"),
-      meta: {
-        spend: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summarySpend.toFixed(4)), "additive"),
-        impressions: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, summaryImpressions, "additive"),
-        clicks: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, summaryClicks, "additive"),
-        purchases: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, summaryPurchases, "additive"),
-        purchaseValue: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryPurchaseValue.toFixed(4)), "additive"),
-        roas: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryRoas.toFixed(4)), "ratio"),
-        ctr: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCtr.toFixed(6)), "ratio"),
-        cpc: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCpc.toFixed(4)), "ratio"),
-        cpm: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCpm.toFixed(4)), "ratio"),
-        cpa: audienceMetaMetric(effectiveMetaCoverage, hasCurrentMetaFacts, Number(summaryCpa.toFixed(4)), "ratio")
-      },
+      ...buildAudienceMetaSummaryFromVisibleRows(responseRows, effectiveMetaCoverage, hasCurrentMetaFacts && canReturnMetaRows),
       store: buildStoreSummary()
     };
 
@@ -1317,44 +1411,59 @@ router.get("/countries", async (req, res) => {
       minO,
       incUnmapped
     );
-    const visibleCountryRows = (Array.isArray(result.rows) ? result.rows : []).map((row: any) => ({
+    const currentCountryRows = Array.isArray(result.rows) ? result.rows : [];
+    const orderFactRows = currentCountryRows.filter((row: any) =>
+      Number(row?.orderCount || row?.totalOrderCount || row?.orders || 0) > 0 ||
+      Number(row?.revenue || row?.orderRevenue || row?.totalOrderRevenue || 0) > 0
+    );
+    const metaFactRows = currentCountryRows.filter((row: any) => row?.hasMetaFacts === true);
+    const effectiveStoreCoverage = reconcileCoverageWithVisibleRows(countryCoverage.storeCoverage, orderFactRows, {
+      coverageBasis: "ORDER_COUNTRY_ROWS_ONLY",
+      message: "Store country order facts exist for this request; coverage was reconciled to partial coverage."
+    });
+    const effectiveCountryMetaCoverage = reconcileCoverageWithVisibleRows(countryCoverage.metaCoverage, metaFactRows, {
+      coverageBasis: "META_COUNTRY_ROWS_ONLY",
+      message: "Meta country facts exist for this request; coverage was reconciled to partial coverage."
+    });
+
+    const visibleCountryRows = currentCountryRows.map((row: any) => ({
       ...row,
-      metaSpend: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.metaSpend),
-      metaImpressions: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.metaImpressions),
-      metaClicks: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.metaClicks),
-      metaPurchases: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.metaPurchases),
-      metaPurchaseValue: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.metaPurchaseValue),
-      metaRoas: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.metaRoas),
-      ctr: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.ctr),
-      cpc: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.cpc),
-      cpm: countryMetaMetric(countryCoverage.metaCoverage, row.hasMetaFacts, row.cpm)
+      metaSpend: countryMetaMetric(effectiveCountryMetaCoverage, row.hasMetaFacts, row.metaSpend),
+      metaImpressions: countryMetaMetric(effectiveCountryMetaCoverage, row.hasMetaFacts, row.metaImpressions),
+      metaClicks: countryMetaMetric(effectiveCountryMetaCoverage, row.hasMetaFacts, row.metaClicks),
+      metaPurchases: countryMetaMetric(effectiveCountryMetaCoverage, row.hasMetaFacts, row.metaPurchases),
+      metaPurchaseValue: countryMetaMetric(effectiveCountryMetaCoverage, row.hasMetaFacts, row.metaPurchaseValue),
+      metaRoas: countryMetaMetric(effectiveCountryMetaCoverage, row.hasMetaFacts, row.metaRoas),
+      ctr: countryMetaMetric(effectiveCountryMetaCoverage, row.hasMetaFacts, row.ctr),
+      cpc: countryMetaMetric(effectiveCountryMetaCoverage, row.hasMetaFacts, row.cpc),
+      cpm: countryMetaMetric(effectiveCountryMetaCoverage, row.hasMetaFacts, row.cpm)
     }));
     const rawCountrySummary: any = result.summary || {};
     const visibleCountrySummary = {
       ...rawCountrySummary,
-      countriesCount: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.countriesCount),
-      countryCount: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.countryCount),
-      orderCountriesCount: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.orderCountriesCount),
-      orderCount: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.orderCount),
-      revenue: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.revenue),
-      averageOrderValue: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.averageOrderValue),
-      totalOrderRevenue: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.totalOrderRevenue),
-      totalOrderCount: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.totalOrderCount),
-      orderProfit: coverageMetric(countryCoverage.storeCoverage, rawCountrySummary.orderProfit),
-      metaCountriesCount: coverageMetric(countryCoverage.metaCoverage, rawCountrySummary.metaCountriesCount),
-      totalMetaSpend: coverageMetric(countryCoverage.metaCoverage, rawCountrySummary.totalMetaSpend),
-      totalMetaPurchases: coverageMetric(countryCoverage.metaCoverage, rawCountrySummary.totalMetaPurchases),
-      totalMetaPurchaseValue: coverageMetric(countryCoverage.metaCoverage, rawCountrySummary.totalMetaPurchaseValue),
-      unmappedMetaSpend: coverageMetric(countryCoverage.metaCoverage, rawCountrySummary.unmappedMetaSpend),
-      unmappedMetaSpendRate: coverageMetric(countryCoverage.metaCoverage, rawCountrySummary.unmappedMetaSpendRate)
+      countriesCount: coverageMetric(effectiveStoreCoverage, rawCountrySummary.countriesCount),
+      countryCount: coverageMetric(effectiveStoreCoverage, rawCountrySummary.countryCount),
+      orderCountriesCount: coverageMetric(effectiveStoreCoverage, rawCountrySummary.orderCountriesCount),
+      orderCount: coverageMetric(effectiveStoreCoverage, rawCountrySummary.orderCount),
+      revenue: coverageMetric(effectiveStoreCoverage, rawCountrySummary.revenue),
+      averageOrderValue: coverageMetric(effectiveStoreCoverage, rawCountrySummary.averageOrderValue),
+      totalOrderRevenue: coverageMetric(effectiveStoreCoverage, rawCountrySummary.totalOrderRevenue),
+      totalOrderCount: coverageMetric(effectiveStoreCoverage, rawCountrySummary.totalOrderCount),
+      orderProfit: coverageMetric(effectiveStoreCoverage, rawCountrySummary.orderProfit),
+      metaCountriesCount: coverageMetric(effectiveCountryMetaCoverage, rawCountrySummary.metaCountriesCount),
+      totalMetaSpend: coverageMetric(effectiveCountryMetaCoverage, rawCountrySummary.totalMetaSpend),
+      totalMetaPurchases: coverageMetric(effectiveCountryMetaCoverage, rawCountrySummary.totalMetaPurchases),
+      totalMetaPurchaseValue: coverageMetric(effectiveCountryMetaCoverage, rawCountrySummary.totalMetaPurchaseValue),
+      unmappedMetaSpend: coverageMetric(effectiveCountryMetaCoverage, rawCountrySummary.unmappedMetaSpend),
+      unmappedMetaSpendRate: coverageMetric(effectiveCountryMetaCoverage, rawCountrySummary.unmappedMetaSpendRate)
     };
 
     res.json({
       ...result,
-      coverage: countryCoverage.storeCoverage,
-      sourceCoverage: countryCoverage.storeCoverage,
-      storeCoverage: countryCoverage.storeCoverage,
-      metaCoverage: countryCoverage.metaCoverage,
+      coverage: effectiveStoreCoverage,
+      sourceCoverage: effectiveStoreCoverage,
+      storeCoverage: effectiveStoreCoverage,
+      metaCoverage: effectiveCountryMetaCoverage,
       rows: visibleCountryRows,
       summary: visibleCountrySummary,
       appliedFilters,
@@ -1372,7 +1481,7 @@ router.get("/countries", async (req, res) => {
       }),
       dataHealth: {
         ...(result.dataHealth || {}),
-        status: countryCoverage.storeCoverage.status,
+        status: effectiveStoreCoverage.status,
         source: "FactAudienceBreakdown + Order",
         factRows: visibleCountryRows.length,
         structureRows: 0,
@@ -1677,15 +1786,20 @@ router.get("/stores", async (req, res) => {
         .filter(r => uniqueMappedIds.includes(normalizeMetaAccountId(r.accountId)))
         .reduce((sum, r) => sum + r.spend, 0);
 
-      const roasAvailable =
-        ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(storePageCoverage.storeCoverage.status) &&
-        ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(storePageCoverage.metaCoverage.status) &&
-        adSpend > 0;
-      const roas = roasAvailable ? Number((revenue / adSpend).toFixed(4)) : null;
-      const visibleOrderCount = coverageMetric(storePageCoverage.storeCoverage, orderCount);
-      const visibleRevenue = coverageMetric(storePageCoverage.storeCoverage, revenue);
-      const visibleAov = coverageMetric(storePageCoverage.storeCoverage, orderCount > 0 ? Number((revenue / orderCount).toFixed(2)) : 0);
-      const visibleAdSpend = coverageMetric(storePageCoverage.metaCoverage, Number(adSpend.toFixed(2)));
+      const {
+        visibleOrderCount,
+        visibleRevenue,
+        visibleAov,
+        visibleAdSpend,
+        roas,
+        hasOrders
+      } = buildStoreApiDisplayMetrics({
+        orderCount,
+        revenue,
+        adSpend,
+        storeCoverage: storePageCoverage.storeCoverage,
+        metaCoverage: storePageCoverage.metaCoverage
+      });
 
       return {
         id: store.id,
@@ -1706,7 +1820,7 @@ router.get("/stores", async (req, res) => {
         adSpend: visibleAdSpend,
         roas,
         realRoas: roas,
-        hasOrders: visibleOrderCount === null ? null : visibleOrderCount > 0,
+        hasOrders,
         currency: storeRows[0]?.currency || "USD",
         latestFetchedAt,
         source: "DataCenterStoreDaily",

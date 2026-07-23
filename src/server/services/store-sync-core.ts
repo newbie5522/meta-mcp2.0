@@ -18,6 +18,26 @@ export type PlatformOrderValidity = {
   reason: string | null;
 };
 
+type AttributionField =
+  | "created_at"
+  | "placed_at"
+  | "paid_at"
+  | "processed_at"
+  | "completed_at"
+  | "updated_at";
+
+type OrderAttributionSelection =
+  | {
+      field: AttributionField;
+      rawTime: string;
+      error: null;
+    }
+  | {
+      field: null;
+      rawTime: null;
+      error: "ATTRIBUTION_TIME_UNAVAILABLE";
+    };
+
 const PLATFORM_ALLOWED_PAYMENT_STATUSES: Record<StorePlatform, ReadonlySet<string>> = {
   shopline: new Set([
     "paid",
@@ -106,7 +126,7 @@ export type CanonicalOrder = {
   rawCompletedAt: string | null;
   rawUpdatedAt: string | null;
 
-  attributionField: "created_at" | "placed_at" | "paid_at" | "processed_at" | "completed_at" | "updated_at";
+  attributionField: AttributionField;
   attributionTimeRaw: string;
   storeTimezone: string;
   storeLocalDate: string;
@@ -225,20 +245,26 @@ function getRawTimeByAttribution(co: any, attr: string): string | null {
 function selectAttributionForOrder(
   platform: StorePlatform,
   co: any,
-  preferredField: "created_at" | "placed_at" | "paid_at" | "processed_at" | "completed_at" | "updated_at"
-) {
+  preferredField: AttributionField
+): OrderAttributionSelection {
   if (platform === "shoplazza") {
     if (co.rawPlacedAt) {
-      return { field: "placed_at" as const, rawTime: co.rawPlacedAt };
+      return { field: "placed_at", rawTime: co.rawPlacedAt, error: null };
     }
-    return { field: "created_at" as const, rawTime: co.rawCreatedAt || "" };
+    if (co.rawCreatedAt) {
+      return { field: "created_at", rawTime: co.rawCreatedAt, error: null };
+    }
+    return { field: null, rawTime: null, error: "ATTRIBUTION_TIME_UNAVAILABLE" };
   }
 
   const preferredRaw = getRawTimeByAttribution(co, preferredField);
   if (preferredRaw) {
-    return { field: preferredField, rawTime: preferredRaw };
+    return { field: preferredField, rawTime: preferredRaw, error: null };
   }
-  return { field: "created_at" as const, rawTime: co.rawCreatedAt || "" };
+  if (co.rawCreatedAt) {
+    return { field: "created_at", rawTime: co.rawCreatedAt, error: null };
+  }
+  return { field: null, rawTime: null, error: "ATTRIBUTION_TIME_UNAVAILABLE" };
 }
 
 /**
@@ -438,16 +464,18 @@ export async function fetchStoreOrdersCanonical(params: {
   const timezoneBefore = params.timezone;
   const storeTimezone = canonicalStoreTimezone(timezoneBefore);
   
-  const offset = getTzOffset(storeTimezone, params.startDate);
-  
   // Safety margined expansion to handle timezone boundaries. We query wider in API, then filter strict in-memory.
   const queryStartLocalDate = dayjs(params.startDate).subtract(1, "day").format("YYYY-MM-DD");
   const queryEndLocalDate = dayjs(params.endDate).add(1, "day").format("YYYY-MM-DD");
-  const expandedStartAt = `${queryStartLocalDate}T00:00:00${offset}`;
-  const expandedEndAt = `${queryEndLocalDate}T23:59:59${offset}`;
+  const queryStartOffset = getTzOffset(storeTimezone, queryStartLocalDate);
+  const queryEndOffset = getTzOffset(storeTimezone, queryEndLocalDate);
+  const requestStartOffset = getTzOffset(storeTimezone, params.startDate);
+  const requestEndOffset = getTzOffset(storeTimezone, params.endDate);
+  const expandedStartAt = `${queryStartLocalDate}T00:00:00${queryStartOffset}`;
+  const expandedEndAt = `${queryEndLocalDate}T23:59:59${queryEndOffset}`;
 
-  const requestStartAt = `${params.startDate}T00:00:00${offset}`;
-  const requestEndAt = `${params.endDate}T23:59:59${offset}`;
+  const requestStartAt = `${params.startDate}T00:00:00${requestStartOffset}`;
+  const requestEndAt = `${params.endDate}T23:59:59${requestEndOffset}`;
 
   let pageIndex = 1;
   let currentUrl: string | null = null;
@@ -735,15 +763,26 @@ export async function fetchStoreOrdersCanonical(params: {
     };
   }
 
+  const attributionFailures: any[] = [];
+
   // Construct final array of CanonicalOrders adhering strict to the target field selected
-  const targetOrders = convertedOrders.map(co => {
+  const targetOrders = convertedOrders.flatMap(co => {
     const attribution = selectAttributionForOrder(params.platform, co, bestAttributionField);
-    const rawTime = attribution.rawTime || co.rawCreatedAt;
-    const storeLocalDate = getStoreLocalDate(rawTime || "", storeTimezone);
-    const storeLocalDatetime = getStoreLocalDatetime(rawTime || "", storeTimezone);
+    if (attribution.error || !attribution.field || !attribution.rawTime) {
+      attributionFailures.push({
+        storeId: params.storeId,
+        platform: params.platform,
+        orderId: co.orderId,
+        reason: "ATTRIBUTION_TIME_UNAVAILABLE"
+      });
+      return [];
+    }
+
+    const storeLocalDate = getStoreLocalDate(attribution.rawTime, storeTimezone);
+    const storeLocalDatetime = getStoreLocalDatetime(attribution.rawTime, storeTimezone);
     const orderTotal = co.orderTotal || 0;
 
-    return {
+    return [{
       platform: params.platform,
       storeId: params.storeId,
       orderId: co.orderId,
@@ -756,7 +795,7 @@ export async function fetchStoreOrdersCanonical(params: {
       rawCompletedAt: co.rawCompletedAt,
       rawUpdatedAt: co.rawUpdatedAt,
       attributionField: attribution.field,
-      attributionTimeRaw: rawTime || "",
+      attributionTimeRaw: attribution.rawTime,
       storeTimezone,
       storeLocalDate,
       storeLocalDatetime,
@@ -771,8 +810,9 @@ export async function fetchStoreOrdersCanonical(params: {
       revenueCandidates: co.revenueCandidates,
       lineItems: co.lineItems,
       raw: co.raw
-    } as CanonicalOrder;
+    } as CanonicalOrder];
   });
+  failedSlices.push(...attributionFailures);
 
   // Keep all converted order list for diagnostics, filter strict for canonical response
   const canonicalOrders = targetOrders.filter(co => {

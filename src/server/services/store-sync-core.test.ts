@@ -335,4 +335,178 @@ describe("store sync core verified timezone contract", () => {
     });
     expect(result.coverageComplete).toBe(true);
   });
+
+  it("DST-01 uses distinct start and end offsets across DST boundary", async () => {
+    axiosGet.mockResolvedValue({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} });
+
+    const result = await fetchStoreOrdersCanonical({
+      platform: "shoplazza",
+      storeId: 3,
+      domain: "shop.example.com",
+      token: "token",
+      startDate: "2026-10-31",
+      endDate: "2026-11-03",
+      timezone: "America/Los_Angeles"
+    });
+
+    expect(result.diagnostics.requestStartAt).toContain("-07:00");
+    expect(result.diagnostics.requestEndAt).toContain("-08:00");
+    expect(result.diagnostics.expandedStartAt).toContain("-07:00");
+    expect(result.diagnostics.expandedEndAt).toContain("-08:00");
+  });
+
+  it("ATTR-01 uses created_at for Shoplazza orders with no placed_at", async () => {
+    axiosGet
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          data: {
+            orders: [{
+              id: "attr-created",
+              number: "R-CREATED",
+              created_at: "2026-07-02T06:30:00Z",
+              payment_status: "paid",
+              status: "finished",
+              total_price: "18.00",
+              line_items: [{ id: "line-1", product_title: "Created Attribution Product", quantity: 1, price: "18.00" }]
+            }],
+            cursor: ""
+          }
+        },
+        headers: {}
+      })
+      .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} });
+
+    const result = await fetchStoreOrdersCanonical({
+      platform: "shoplazza",
+      storeId: 2,
+      domain: "lachry.myshoplaza.com",
+      token: "shoplazza-token",
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      timezone: "America/Los_Angeles",
+      timezoneSource: "manual_verified"
+    });
+
+    expect(result.orders[0]).toMatchObject({
+      orderId: "attr-created",
+      attributionField: "created_at",
+      attributionTimeRaw: "2026-07-02T06:30:00Z",
+      storeLocalDate: "2026-07-01"
+    });
+  });
+
+  it("ATTR-02 excludes Shoplazza orders with no placed_at or created_at and marks coverage incomplete", async () => {
+    axiosGet
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          data: {
+            orders: [{
+              id: "attr-missing",
+              number: "R-MISSING",
+              payment_status: "paid",
+              status: "finished",
+              total_price: "18.00",
+              line_items: [{ id: "line-1", product_title: "Missing Attribution Product", quantity: 1, price: "18.00" }]
+            }],
+            cursor: ""
+          }
+        },
+        headers: {}
+      })
+      .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} });
+
+    const result = await fetchStoreOrdersCanonical({
+      platform: "shoplazza",
+      storeId: 2,
+      domain: "lachry.myshoplaza.com",
+      token: "shoplazza-token",
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      timezone: "America/Los_Angeles",
+      timezoneSource: "manual_verified"
+    });
+
+    expect(result.orders).toEqual([]);
+    expect(result.coverageComplete).toBe(false);
+    expect(result.failedSlices).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        orderId: "attr-missing",
+        reason: "ATTRIBUTION_TIME_UNAVAILABLE"
+      })
+    ]));
+  });
+
+  it("ATTR-03 keeps per-order attribution for mixed placed_at and created_at orders", async () => {
+    axiosGet
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          data: {
+            orders: [{
+              id: "created-at-order",
+              number: "R-CREATED",
+              created_at: "2026-07-02T06:30:00Z",
+              payment_status: "paid",
+              status: "finished",
+              total_price: "21.00",
+              line_items: [{ id: "line-1", product_title: "Created Product", quantity: 1, price: "21.00" }]
+            }],
+            cursor: ""
+          }
+        },
+        headers: {}
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          data: {
+            orders: [{
+              id: "placed-at-order",
+              number: "R-PLACED",
+              created_at: "2026-06-20T12:00:00Z",
+              placed_at: "2026-07-02T06:30:00Z",
+              payment_status: "paid",
+              status: "finished",
+              total_price: "34.00",
+              line_items: [{ id: "line-1", product_title: "Placed Product", quantity: 1, price: "34.00" }]
+            }],
+            cursor: ""
+          }
+        },
+        headers: {}
+      });
+
+    const result = await fetchStoreOrdersCanonical({
+      platform: "shoplazza",
+      storeId: 2,
+      domain: "lachry.myshoplaza.com",
+      token: "shoplazza-token",
+      startDate: "2026-07-01",
+      endDate: "2026-07-01",
+      timezone: "America/Los_Angeles",
+      timezoneSource: "manual_verified"
+    });
+
+    expect(result.orders.map(order => ({
+      orderId: order.orderId,
+      attributionField: order.attributionField,
+      attributionTimeRaw: order.attributionTimeRaw,
+      storeLocalDate: order.storeLocalDate
+    }))).toEqual([
+      {
+        orderId: "created-at-order",
+        attributionField: "created_at",
+        attributionTimeRaw: "2026-07-02T06:30:00Z",
+        storeLocalDate: "2026-07-01"
+      },
+      {
+        orderId: "placed-at-order",
+        attributionField: "placed_at",
+        attributionTimeRaw: "2026-07-02T06:30:00Z",
+        storeLocalDate: "2026-07-01"
+      }
+    ]);
+  });
 });

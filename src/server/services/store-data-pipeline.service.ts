@@ -171,6 +171,12 @@ export async function executeStoreDataPipeline(input: {
     return baseReceipt;
   }
 
+  if (!coverageComplete || truncated || syncFailedSlices.length > 0) {
+    baseReceipt.status = "PARTIAL_SUCCESS";
+    baseReceipt.ledger.status = "SKIPPED";
+    return baseReceipt;
+  }
+
   try {
     const ledger = await refreshStoreDataCenterLedger({
       storeId: store.id,
@@ -214,8 +220,6 @@ export async function executeStoreDataPipeline(input: {
     !truncated
   ) {
     baseReceipt.status = "NO_NEW_DATA";
-  } else if (!coverageComplete || truncated || syncFailedSlices.length > 0) {
-    baseReceipt.status = recordsFetched > 0 || recordsSaved > 0 || baseReceipt.ledger.status === "SUCCESS" ? "PARTIAL_SUCCESS" : "FAILED";
   } else {
     baseReceipt.status = "SUCCESS";
   }

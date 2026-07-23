@@ -96,6 +96,39 @@ function getApiErrorMessage(error: any): string {
   return data?.message || data?.details || data?.error || error?.message || "同步请求失败";
 }
 
+function formatStoreCurrency(value: number) {
+  return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+export function formatStoreOrderText(row: { orderCount?: number | null; ordersCount?: number | null }) {
+  const orderCount = row.orderCount ?? row.ordersCount;
+  if (orderCount === null || orderCount === undefined) return "未同步";
+  return `${Number(orderCount).toLocaleString()} 单`;
+}
+
+export function formatStoreSalesText(row: { grossSales?: number | null; totalSales?: number | null }) {
+  const grossSales = row.grossSales ?? row.totalSales;
+  if (grossSales === null || grossSales === undefined) return "未同步";
+  return formatStoreCurrency(Number(grossSales));
+}
+
+export function formatStoreAovText(row: { aov?: number | null; avgOrderValue?: number | null }) {
+  const aov = row.aov ?? row.avgOrderValue;
+  if (aov === null || aov === undefined) return "未同步";
+  return formatStoreCurrency(Number(aov));
+}
+
+export function getStoreSyncStatusLabel(status: string | null | undefined) {
+  const normalized = String(status || "").trim().toUpperCase();
+  if (normalized === "SUCCESS" || normalized === "SUCCESSFUL") return "已同步";
+  if (normalized === "NO_NEW_DATA") return "已同步，无新数据";
+  if (normalized === "PARTIAL_SUCCESS" || normalized === "PARTIAL_COVERAGE") return "部分完成";
+  if (normalized === "RUNNING" || normalized === "PENDING") return "同步中";
+  if (normalized === "FAILED" || normalized === "ERROR") return "同步失败";
+  if (normalized === "NONE" || !normalized) return "未同步";
+  return "状态待确认";
+}
+
 interface ReconciliationData {
   startDate: string;
   endDate: string;
@@ -855,29 +888,17 @@ setAiReport(reportText || "未返回分析报告");
 
                           {/* 订单数 */}
                           <TableCell className="text-right text-slate-800 font-mono font-bold">
-                            {store.ordersCount === null ? "N/A" : store.hasOrders ? (
-                              store.ordersCount.toLocaleString()
-                            ) : (
-                              <span className="text-[11px] text-slate-400 font-normal">无订单</span>
-                            )}
+                            {formatStoreOrderText({ ordersCount: store.ordersCount })}
                           </TableCell>
 
                           {/* 销售额 */}
                           <TableCell className="text-right text-slate-950 font-mono font-extrabold text-[13px]">
-                            {store.totalSales === null ? "N/A" : store.hasOrders ? (
-                              `$${store.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                            ) : (
-                              <span className="text-[11px] text-slate-400 font-normal italic">—</span>
-                            )}
+                            {formatStoreSalesText({ totalSales: store.totalSales })}
                           </TableCell>
 
                           {/* AOV */}
                           <TableCell className="text-right text-slate-600 font-mono font-medium">
-                            {store.avgOrderValue === null ? "N/A" : store.hasOrders ? (
-                              `$${store.avgOrderValue.toFixed(2)}`
-                            ) : (
-                              <span className="text-slate-400 font-normal">—</span>
-                            )}
+                            {formatStoreAovText({ avgOrderValue: store.avgOrderValue })}
                           </TableCell>
 
                           {/* 账户开销 */}
@@ -934,7 +955,7 @@ setAiReport(reportText || "未返回分析报告");
                                   store.syncStatus === "running" && "bg-blue-50 text-blue-700 border border-blue-100 animate-pulse",
                                   store.syncStatus === "none" && "bg-slate-100 text-slate-500"
                                 )}>
-                                  {store.syncStatus.toUpperCase()}
+                                  {getStoreSyncStatusLabel(store.syncStatus)}
                                 </span>
                               </div>
                             </div>
