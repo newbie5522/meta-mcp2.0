@@ -18,13 +18,26 @@ export type PlatformOrderValidity = {
   reason: string | null;
 };
 
+export type SuccessfulPaymentResolution = {
+  paid: boolean;
+  paidAt: string | null;
+  paidAmount: number | null;
+  statusSourcePath: string | null;
+  timeSourcePath: string | null;
+  amountSourcePath: string | null;
+  reason: string | null;
+};
+
 type AttributionField =
+  | "successful_payment"
   | "created_at"
   | "placed_at"
   | "paid_at"
   | "processed_at"
   | "completed_at"
   | "updated_at";
+
+type PlatformCandidateDateFilter = "created_at" | "updated_at";
 
 type OrderAttributionSelection =
   | {
@@ -146,6 +159,7 @@ export type CanonicalOrder = {
   fulfillmentStatus: string | null;
   cancelledAt: string | null;
   refundedAmount: number;
+  successfulPayment?: SuccessfulPaymentResolution;
 
   revenueField: string;
   orderTotal: number;
@@ -242,6 +256,7 @@ function extractShoplazzaLedgerAmount(raw: any) {
 }
 
 function getRawTimeByAttribution(co: any, attr: string): string | null {
+  if (attr === "successful_payment") return co.rawPaidAt || null;
   if (attr === "created_at") return co.rawCreatedAt || null;
   if (attr === "placed_at") return co.rawPlacedAt || null;
   if (attr === "paid_at") return co.rawPaidAt || null;
@@ -251,28 +266,142 @@ function getRawTimeByAttribution(co: any, attr: string): string | null {
   return null;
 }
 
-function resolveSuccessfulPaymentTime(raw: any): string | null {
-  const candidates = [
-    raw?.paid_at,
-    raw?.paidAt,
-    raw?.payment_details?.paid_at,
-    raw?.payment_details?.paidAt,
-    raw?.paymentDetails?.paid_at,
-    raw?.paymentDetails?.paidAt,
-    raw?.payment?.paid_at,
-    raw?.payment?.paidAt,
-    raw?.payments?.paid_at,
-    raw?.payments?.paidAt
-  ];
-  for (const candidate of candidates) {
-    if (hasSuccessfulPaymentTime(candidate)) return String(candidate);
+function unpaidResolution(reason: string): SuccessfulPaymentResolution {
+  return {
+    paid: false,
+    paidAt: null,
+    paidAmount: null,
+    statusSourcePath: null,
+    timeSourcePath: null,
+    amountSourcePath: null,
+    reason
+  };
+}
+
+function validTimeOrNull(value: unknown): string | null {
+  return hasSuccessfulPaymentTime(value) ? String(value) : null;
+}
+
+function amountOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Number(parsed.toFixed(4)) : null;
+}
+
+function resolveShoplineSuccessfulPayment(order: any): SuccessfulPaymentResolution {
+  const details = Array.isArray(order?.payment_details) ? order.payment_details : [];
+  if (details.length === 0) return unpaidResolution("SHOPLINE_PAYMENT_DETAILS_UNAVAILABLE");
+
+  const successful = details
+    .map((detail: any, index: number) => ({ detail, index }))
+    .filter(({ detail }) => String(detail?.pay_status || "").trim().toLowerCase() === "paid");
+
+  if (successful.length === 0) return unpaidResolution("SHOPLINE_PAYMENT_NOT_SUCCESSFUL");
+  if (successful.length > 1) return unpaidResolution("SHOPLINE_MULTIPLE_SUCCESSFUL_PAYMENT_RECORDS_UNVERIFIED");
+
+  const { detail, index } = successful[0];
+  const paidAt = validTimeOrNull(detail?.processed_at);
+  if (!paidAt) return unpaidResolution("SHOPLINE_PAYMENT_PROCESSED_AT_UNAVAILABLE");
+
+  return {
+    paid: true,
+    paidAt,
+    paidAmount: amountOrNull(detail?.pay_amount),
+    statusSourcePath: `payment_details[${index}].pay_status`,
+    timeSourcePath: `payment_details[${index}].processed_at`,
+    amountSourcePath: `payment_details[${index}].pay_amount`,
+    reason: null
+  };
+}
+
+function resolveShopifySuccessfulPayment(order: any): SuccessfulPaymentResolution {
+  const transactions = Array.isArray(order?.transactions) ? order.transactions : [];
+  if (transactions.length === 0) return unpaidResolution("SHOPIFY_TRANSACTIONS_UNAVAILABLE");
+
+  const successful = transactions
+    .map((transaction: any, index: number) => ({ transaction, index }))
+    .filter(({ transaction }) => {
+      const kind = String(transaction?.kind || "").trim().toLowerCase();
+      const status = String(transaction?.status || "").trim().toLowerCase();
+      return (kind === "sale" || kind === "capture") && status === "success";
+    });
+
+  if (successful.length === 0) return unpaidResolution("SHOPIFY_PAYMENT_NOT_SUCCESSFUL");
+  if (successful.length > 1) return unpaidResolution("SHOPIFY_MULTIPLE_SUCCESSFUL_TRANSACTIONS_UNVERIFIED");
+
+  const { transaction, index } = successful[0];
+  const paidAt = validTimeOrNull(transaction?.processedAt ?? transaction?.processed_at);
+  if (!paidAt) return unpaidResolution("SHOPIFY_TRANSACTION_PROCESSED_AT_UNAVAILABLE");
+
+  return {
+    paid: true,
+    paidAt,
+    paidAmount: amountOrNull(transaction?.amount ?? transaction?.amountSet?.shopMoney?.amount),
+    statusSourcePath: `transactions[${index}].status`,
+    timeSourcePath: transaction?.processedAt !== undefined ? `transactions[${index}].processedAt` : `transactions[${index}].processed_at`,
+    amountSourcePath: transaction?.amount !== undefined ? `transactions[${index}].amount` : `transactions[${index}].amountSet.shopMoney.amount`,
+    reason: null
+  };
+}
+
+function resolveShoplazzaSuccessfulPayment(order: any): SuccessfulPaymentResolution {
+  const financialStatus = String(order?.financial_status || order?.payment_status || "").trim().toLowerCase();
+  if (financialStatus !== "paid" && financialStatus !== "partially_refunded" && financialStatus !== "refunded") {
+    return unpaidResolution("SHOPLAZZA_PAYMENT_NOT_SUCCESSFUL");
   }
-  return null;
+
+  const directPaidAt = validTimeOrNull(order?.paid_at);
+  if (directPaidAt) {
+    return {
+      paid: true,
+      paidAt: directPaidAt,
+      paidAmount: amountOrNull(order?.total_paid ?? order?.total_price),
+      statusSourcePath: order?.financial_status !== undefined ? "financial_status" : "payment_status",
+      timeSourcePath: "paid_at",
+      amountSourcePath: order?.total_paid !== undefined ? "total_paid" : "total_price",
+      reason: null
+    };
+  }
+
+  const camelPaidAt = validTimeOrNull(order?.paidAt);
+  if (camelPaidAt) {
+    return {
+      paid: true,
+      paidAt: camelPaidAt,
+      paidAmount: amountOrNull(order?.total_paid ?? order?.total_price),
+      statusSourcePath: order?.financial_status !== undefined ? "financial_status" : "payment_status",
+      timeSourcePath: "paidAt",
+      amountSourcePath: order?.total_paid !== undefined ? "total_paid" : "total_price",
+      reason: null
+    };
+  }
+
+  const placedAt = validTimeOrNull(order?.placed_at);
+  if (placedAt) {
+    return {
+      paid: true,
+      paidAt: placedAt,
+      paidAmount: amountOrNull(order?.total_paid ?? order?.total_price),
+      statusSourcePath: order?.financial_status !== undefined ? "financial_status" : "payment_status",
+      timeSourcePath: "placed_at",
+      amountSourcePath: order?.total_paid !== undefined ? "total_paid" : "total_price",
+      reason: null
+    };
+  }
+
+  return unpaidResolution("SHOPLAZZA_PAYMENT_TIME_UNVERIFIED");
+}
+
+export function resolveSuccessfulPayment(order: any, platform: StorePlatform): SuccessfulPaymentResolution {
+  if (platform === "shopline") return resolveShoplineSuccessfulPayment(order);
+  if (platform === "shopify") return resolveShopifySuccessfulPayment(order);
+  if (platform === "shoplazza") return resolveShoplazzaSuccessfulPayment(order);
+  return unpaidResolution("PLATFORM_PAYMENT_RESOLVER_UNAVAILABLE");
 }
 
 function selectAttributionForOrder(co: any): OrderAttributionSelection {
   if (co.rawPaidAt) {
-    return { field: "paid_at", rawTime: co.rawPaidAt, error: null };
+    return { field: "successful_payment", rawTime: co.rawPaidAt, error: null };
   }
   return { field: null, rawTime: null, error: "ATTRIBUTION_TIME_UNAVAILABLE" };
 }
@@ -287,6 +416,7 @@ async function fetchRawPlatformOrdersPage(params: {
   startUtc: string;
   endUtc: string;
   pageSize: number;
+  dateFilter?: PlatformCandidateDateFilter;
   pageUrlOverride?: string | null;
   pageIndex: number; // for page parameters
 }): Promise<{
@@ -298,10 +428,11 @@ async function fetchRawPlatformOrdersPage(params: {
 }> {
   const domain = params.domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
   const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const dateFilter = params.dateFilter ?? "created_at";
   
   if (params.platform === "shopline") {
     headers["Authorization"] = `Bearer ${params.token}`;
-    const url = params.pageUrlOverride || `https://${domain}/admin/openapi/v20240301/orders.json?status=any&created_at_min=${encodeURIComponent(params.startUtc)}&created_at_max=${encodeURIComponent(params.endUtc)}&limit=${params.pageSize}`;
+    const url = params.pageUrlOverride || `https://${domain}/admin/openapi/v20240301/orders.json?status=any&${dateFilter}_min=${encodeURIComponent(params.startUtc)}&${dateFilter}_max=${encodeURIComponent(params.endUtc)}&limit=${params.pageSize}`;
     
     const requestUrlSanitized = sanitizeUrl(url);
     console.log(`[Store Sync Core] GET ${requestUrlSanitized}`);
@@ -342,7 +473,7 @@ async function fetchRawPlatformOrdersPage(params: {
 
   if (params.platform === "shopify") {
     headers["X-Shopify-Access-Token"] = params.token;
-    const url = params.pageUrlOverride || `https://${domain}/admin/api/2024-01/orders.json?status=any&created_at_min=${encodeURIComponent(params.startUtc)}&created_at_max=${encodeURIComponent(params.endUtc)}&limit=${params.pageSize}`;
+    const url = params.pageUrlOverride || `https://${domain}/admin/api/2024-01/orders.json?status=any&${dateFilter}_min=${encodeURIComponent(params.startUtc)}&${dateFilter}_max=${encodeURIComponent(params.endUtc)}&limit=${params.pageSize}`;
     
     const requestUrlSanitized = sanitizeUrl(url);
     console.log(`[Store Sync Core] GET ${requestUrlSanitized}`);
@@ -364,6 +495,117 @@ async function fetchRawPlatformOrdersPage(params: {
   }
 
   throw new Error(`Unsupported platform: ${params.platform}`);
+}
+
+async function fetchRawPlatformOrdersSlice(params: {
+  platform: Exclude<StorePlatform, "shoplazza">;
+  storeId: number;
+  domain: string;
+  token: string;
+  startUtc: string;
+  endUtc: string;
+  pageSize: number;
+  dateFilter: PlatformCandidateDateFilter;
+}): Promise<{
+  rawOrders: any[];
+  requestUrlsSanitized: string[];
+  responseBodyKeys: string[];
+  responseHeaderKeys: string[];
+  pageOrderCounts: number[];
+  pagesFetched: number;
+  truncated: boolean;
+  paginationTermination: "NATURAL_END" | "EMPTY_PAGE" | "PAGE_LIMIT" | "ERROR";
+  failedSlices: any[];
+}> {
+  let pageIndex = 1;
+  let currentUrl: string | null = null;
+  let isFetching = true;
+
+  const rawOrders: any[] = [];
+  const requestUrlsSanitized: string[] = [];
+  const responseBodyKeysSet = new Set<string>();
+  const responseHeaderKeysSet = new Set<string>();
+  const pageOrderCounts: number[] = [];
+  const failedSlices: any[] = [];
+  let pagesFetched = 0;
+  let truncated = false;
+  let paginationTermination: "NATURAL_END" | "EMPTY_PAGE" | "PAGE_LIMIT" | "ERROR" = "NATURAL_END";
+
+  while (isFetching) {
+    pagesFetched++;
+    let pageResult;
+    try {
+      pageResult = await fetchRawPlatformOrdersPage({
+        platform: params.platform,
+        domain: params.domain,
+        token: params.token,
+        startUtc: params.startUtc,
+        endUtc: params.endUtc,
+        pageSize: params.pageSize,
+        dateFilter: params.dateFilter,
+        pageUrlOverride: currentUrl,
+        pageIndex
+      });
+    } catch (error: any) {
+      paginationTermination = "ERROR";
+      failedSlices.push({
+        storeId: params.storeId,
+        platform: params.platform,
+        dateFilter: params.dateFilter,
+        pageIndex,
+        reason: "CANDIDATE_ORDER_SLICE_ERROR",
+        message: error?.message || String(error)
+      });
+      throw error;
+    }
+
+    const orders = pageResult.orders;
+    pageOrderCounts.push(orders.length);
+    rawOrders.push(...orders);
+    requestUrlsSanitized.push(pageResult.requestUrlSanitized);
+    Object.keys(pageResult.rawBody || {}).forEach(k => responseBodyKeysSet.add(k));
+    Object.keys(pageResult.responseHeaders || {}).forEach(k => responseHeaderKeysSet.add(k));
+
+    const hasNextPage = Boolean(pageResult.nextUrl);
+    if (pagesFetched >= 50 && hasNextPage) {
+      truncated = true;
+      paginationTermination = "PAGE_LIMIT";
+      failedSlices.push({
+        storeId: params.storeId,
+        platform: params.platform,
+        dateFilter: params.dateFilter,
+        pageIndex,
+        truncated: true,
+        reason: "PAGE_LIMIT"
+      });
+      isFetching = false;
+    } else if (pageResult.nextUrl === "has_more") {
+      pageIndex++;
+      currentUrl = null;
+    } else if (pageResult.nextUrl) {
+      currentUrl = pageResult.nextUrl;
+    } else {
+      isFetching = false;
+      paginationTermination = "NATURAL_END";
+    }
+
+    if (orders.length === 0) {
+      isFetching = false;
+      paginationTermination = "EMPTY_PAGE";
+    }
+  }
+
+  return {
+    rawOrders,
+    requestUrlsSanitized,
+    responseBodyKeys: Array.from(responseBodyKeysSet),
+    responseHeaderKeys: Array.from(responseHeaderKeysSet),
+    pageOrderCounts,
+    pagesFetched,
+    truncated,
+    paginationTermination,
+    failedSlices
+  };
 }
 
 export function extractOffset(text: string | null | undefined): string | null {
@@ -439,6 +681,7 @@ export async function fetchStoreOrdersCanonical(params: {
     queryDateFields?: string[];
     createdAtSlice?: any;
     placedAtSlice?: any;
+    updatedAtSlice?: any;
     deduplicatedOrderCount?: number;
     duplicateAcrossSlicesCount?: number;
     attributionField: string;
@@ -486,11 +729,9 @@ export async function fetchStoreOrdersCanonical(params: {
 
   const requestStartAt = `${params.startDate}T00:00:00${requestStartOffset}`;
   const requestEndAt = `${params.endDate}T23:59:59${requestEndOffset}`;
+  const nowAt = dayjs();
+  const updatedCoverageEndAt = nowAt.isAfter(dayjs(expandedEndAt)) ? nowAt.toISOString() : expandedEndAt;
 
-  let pageIndex = 1;
-  let currentUrl: string | null = null;
-  let isFetching = true;
-  
   const rawOrders: any[] = [];
   const requestUrlsSanitized: string[] = [];
   const responseBodyKeysSet = new Set<string>();
@@ -508,6 +749,7 @@ export async function fetchStoreOrdersCanonical(params: {
   let queryDateFields: string[] | undefined;
   let createdAtSlice: any;
   let placedAtSlice: any;
+  let updatedAtSlice: any;
   let deduplicatedOrderCount: number | undefined;
   let duplicateAcrossSlicesCount: number | undefined;
 
@@ -558,71 +800,69 @@ export async function fetchStoreOrdersCanonical(params: {
     deduplicatedOrderCount = shoplazzaPages.deduplicatedOrderCount;
     duplicateAcrossSlicesCount = shoplazzaPages.duplicateAcrossSlicesCount;
   } else {
-  while (isFetching) {
-    pagesFetched++;
-    let pageResult;
-    try {
-      pageResult = await fetchRawPlatformOrdersPage({
-        platform: params.platform,
-        domain: params.domain,
-        token: params.token,
-        startUtc: expandedStartAt,
-        endUtc: expandedEndAt,
-        pageSize: 100,
-        pageUrlOverride: currentUrl,
-        pageIndex
-      });
-    } catch (error: any) {
-      paginationTermination = "ERROR";
-      failedSlices.push({
-        storeId: params.storeId,
-        platform: params.platform,
-        pageIndex,
-        message: error?.message || String(error)
-      });
-      throw error;
+    const createdSlice = await fetchRawPlatformOrdersSlice({
+      platform: params.platform,
+      storeId: params.storeId,
+      domain: params.domain,
+      token: params.token,
+      startUtc: expandedStartAt,
+      endUtc: expandedEndAt,
+      pageSize: 100,
+      dateFilter: "created_at"
+    });
+    const updatedSlice = await fetchRawPlatformOrdersSlice({
+      platform: params.platform,
+      storeId: params.storeId,
+      domain: params.domain,
+      token: params.token,
+      startUtc: expandedStartAt,
+      endUtc: updatedCoverageEndAt,
+      pageSize: 100,
+      dateFilter: "updated_at"
+    });
+
+    const deduped = new Map<string, any>();
+    for (const order of [...createdSlice.rawOrders, ...updatedSlice.rawOrders]) {
+      const key = String(order?.id ?? order?.order_id ?? order?.name ?? JSON.stringify(order));
+      if (!deduped.has(key)) deduped.set(key, order);
     }
 
-    const orders = pageResult.orders;
-    pageOrderCounts.push(orders.length);
-    rawOrders.push(...orders);
-    requestUrlsSanitized.push(pageResult.requestUrlSanitized);
-
-    // Record diagnostics keys
-    Object.keys(pageResult.rawBody || {}).forEach(k => responseBodyKeysSet.add(k));
-    Object.keys(pageResult.responseHeaders || {}).forEach(k => responseHeaderKeysSet.add(k));
-    
-    // Safety check limit
-    const hasNextPage = Boolean(pageResult.nextUrl);
-    if (pagesFetched >= 50 && hasNextPage) {
-      truncated = true;
-      paginationTermination = "PAGE_LIMIT";
-      failedSlices.push({
-        storeId: params.storeId,
-        platform: params.platform,
-        pageIndex,
-        truncated: true,
-        reason: "PAGE_LIMIT"
-      });
-      isFetching = false;
-    } else if (pageResult.nextUrl === "has_more") {
-      pageIndex++;
-      currentUrl = null;
-    } else if (pageResult.nextUrl) {
-      currentUrl = pageResult.nextUrl;
-    } else {
-      isFetching = false;
-      paginationTermination = "NATURAL_END";
-    }
-
-    if (orders.length === 0) {
-      isFetching = false;
-      paginationTermination = "EMPTY_PAGE";
-    }
-  }
+    rawOrders.push(...deduped.values());
+    requestUrlsSanitized.push(...createdSlice.requestUrlsSanitized, ...updatedSlice.requestUrlsSanitized);
+    [...createdSlice.responseBodyKeys, ...updatedSlice.responseBodyKeys].forEach(k => responseBodyKeysSet.add(k));
+    [...createdSlice.responseHeaderKeys, ...updatedSlice.responseHeaderKeys].forEach(k => responseHeaderKeysSet.add(k));
+    pageOrderCounts.push(...createdSlice.pageOrderCounts, ...updatedSlice.pageOrderCounts);
+    pagesFetched = createdSlice.pagesFetched + updatedSlice.pagesFetched;
+    truncated = createdSlice.truncated || updatedSlice.truncated;
+    failedSlices.push(...createdSlice.failedSlices, ...updatedSlice.failedSlices);
+    paginationTermination = truncated
+      ? "PAGE_LIMIT"
+      : failedSlices.length > 0
+        ? "ERROR"
+        : "NATURAL_END";
+    queryDateFields = ["created_at", "updated_at"];
+    createdAtSlice = {
+      dateFilter: "created_at",
+      rawOrdersCount: createdSlice.rawOrders.length,
+      coverageComplete: createdSlice.truncated !== true && createdSlice.failedSlices.length === 0,
+      truncated: createdSlice.truncated,
+      failedSlicesCount: createdSlice.failedSlices.length,
+      paginationTermination: createdSlice.paginationTermination
+    };
+    updatedAtSlice = {
+      dateFilter: "updated_at",
+      rawOrdersCount: updatedSlice.rawOrders.length,
+      coverageComplete: updatedSlice.truncated !== true && updatedSlice.failedSlices.length === 0,
+      truncated: updatedSlice.truncated,
+      failedSlicesCount: updatedSlice.failedSlices.length,
+      paginationTermination: updatedSlice.paginationTermination,
+      expandedEndAt: updatedCoverageEndAt
+    };
+    deduplicatedOrderCount = rawOrders.length;
+    duplicateAcrossSlicesCount = createdSlice.rawOrders.length + updatedSlice.rawOrders.length - rawOrders.length;
   }
 
-  const attributionCandidates = ["created_at", "placed_at", "paid_at", "processed_at", "completed_at", "updated_at"] as const;
+  const attributionCandidates = ["successful_payment", "created_at", "placed_at", "paid_at", "processed_at", "completed_at", "updated_at"] as const;
   
   // Mapping intermediate order forms
   const convertedOrders = rawOrders.map(o => {
@@ -637,7 +877,8 @@ export async function fetchStoreOrdersCanonical(params: {
 
     const rawCreatedAt = o.created_at || null;
     const rawPlacedAt = o.placed_at || null;
-    const rawPaidAt = resolveSuccessfulPaymentTime(o);
+    const successfulPayment = resolveSuccessfulPayment(o, params.platform);
+    const rawPaidAt = successfulPayment.paidAt;
     const rawProcessedAt = o.processed_at || null;
     const rawCompletedAt = o.finished_at || o.completed_at || o.closed_at || null;
     const rawUpdatedAt = o.updated_at || null;
@@ -684,16 +925,16 @@ export async function fetchStoreOrdersCanonical(params: {
       revenueCandidates,
       orderTotal: ledgerAmount.orderTotal,
       orderTotalSource: ledgerAmount.orderTotalSource,
+      successfulPayment,
       raw: o
     };
   });
 
   // Evaluate and rank attribution field & revenue field
-  let bestAttributionField: typeof attributionCandidates[number] = "processed_at";
-  let bestRevenueField = "current_total_price";
+  let bestAttributionField: AttributionField = "successful_payment";
 
   // Sales facts must be attributed to the final confirmed payment timestamp.
-  bestAttributionField = "paid_at";
+  bestAttributionField = "successful_payment";
 
   // 3.3 and 3.4 calculations for sums & stats across target range
   const revenueFieldSums = {
@@ -732,6 +973,7 @@ export async function fetchStoreOrdersCanonical(params: {
   }
 
   const attributionFieldStats: Record<string, any> = {
+    successful_payment: {},
     created_at: {},
     placed_at: {},
     paid_at: {},
@@ -768,17 +1010,22 @@ export async function fetchStoreOrdersCanonical(params: {
   }
 
   const attributionFailures: any[] = [];
+  const statusesRequiringPaymentTime = new Set(["paid", "partially_refunded", "refunded"]);
 
   // Construct final array of CanonicalOrders adhering strict to the target field selected
   const targetOrders = convertedOrders.flatMap(co => {
     const attribution = selectAttributionForOrder(co);
     if (attribution.error || !attribution.field || !attribution.rawTime) {
-      attributionFailures.push({
-        storeId: params.storeId,
-        platform: params.platform,
-        orderId: co.orderId,
-        reason: "ATTRIBUTION_TIME_UNAVAILABLE"
-      });
+      const normalizedStatus = String(co.paymentStatus || co.financialStatus || "").trim().toLowerCase();
+      if (statusesRequiringPaymentTime.has(normalizedStatus)) {
+        attributionFailures.push({
+          storeId: params.storeId,
+          platform: params.platform,
+          orderId: co.orderId,
+          paymentStatus: normalizedStatus,
+          reason: "ATTRIBUTION_TIME_UNAVAILABLE"
+        });
+      }
       return [];
     }
 
@@ -808,6 +1055,7 @@ export async function fetchStoreOrdersCanonical(params: {
       fulfillmentStatus: co.fulfillmentStatus,
       cancelledAt: co.cancelledAt,
       refundedAmount: co.refundedAmount,
+      successfulPayment: co.successfulPayment,
       revenueField: co.orderTotalSource,
       orderTotal,
       orderTotalSource: co.orderTotalSource,
@@ -885,6 +1133,7 @@ export async function fetchStoreOrdersCanonical(params: {
       queryDateFields,
       createdAtSlice,
       placedAtSlice,
+      updatedAtSlice,
       deduplicatedOrderCount,
       duplicateAcrossSlicesCount,
       attributionField: bestAttributionField,

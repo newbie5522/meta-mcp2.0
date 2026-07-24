@@ -426,22 +426,30 @@ export async function fetchShoplazzaOrderSlices(input: {
   pageSize?: number;
   maxPages?: number;
 }): Promise<ShoplazzaOrderSlicesResult> {
-  const createdAtSlice = await fetchShoplazzaOrderPages({
-    ...input,
-    dateFilter: "created_at"
-  });
-  const placedAtSlice = await fetchShoplazzaOrderPages({
-    ...input,
-    dateFilter: "placed_at"
-  });
   const paidAtSlice = await fetchShoplazzaOrderPages({
     ...input,
     dateFilter: "paid_at"
   });
+  const emptyCompleteSlice: ShoplazzaOrderPagesResult = {
+    ...paidAtSlice,
+    dateFilter: "created_at",
+    rawOrders: [],
+    pagesFetched: 0,
+    pageOrderCounts: [],
+    requestUrlsSanitized: [],
+    responseBodyKeys: [],
+    responseHeaderKeys: [],
+    cursorPages: 0,
+    coverageComplete: true,
+    truncated: false,
+    failedSlices: []
+  };
+  const createdAtSlice = { ...emptyCompleteSlice, dateFilter: "created_at" as const };
+  const placedAtSlice = { ...emptyCompleteSlice, dateFilter: "placed_at" as const };
 
   const byOrderId = new Map<string, any>();
   let duplicateAcrossSlicesCount = 0;
-  for (const order of [...createdAtSlice.rawOrders, ...placedAtSlice.rawOrders, ...paidAtSlice.rawOrders]) {
+  for (const order of paidAtSlice.rawOrders) {
     const key = orderDedupeKey(order);
     if (key && byOrderId.has(key)) {
       duplicateAcrossSlicesCount += 1;
@@ -451,45 +459,33 @@ export async function fetchShoplazzaOrderSlices(input: {
   }
 
   const failedSlices = [
-    ...createdAtSlice.failedSlices.map(slice => ({ ...slice, dateFilter: "created_at" })),
-    ...placedAtSlice.failedSlices.map(slice => ({ ...slice, dateFilter: "placed_at" })),
     ...paidAtSlice.failedSlices.map(slice => ({ ...slice, dateFilter: "paid_at" }))
   ];
-  if (!createdAtSlice.coverageComplete) {
-    failedSlices.push({ dateFilter: "created_at", reason: "SHOPLAZZA_CREATED_AT_SLICE_INCOMPLETE" });
-  }
-  if (!placedAtSlice.coverageComplete) {
-    failedSlices.push({ dateFilter: "placed_at", reason: "SHOPLAZZA_PLACED_AT_SLICE_INCOMPLETE" });
-  }
   if (!paidAtSlice.coverageComplete) {
     failedSlices.push({ dateFilter: "paid_at", reason: "SHOPLAZZA_PAID_AT_SLICE_INCOMPLETE" });
   }
 
   const rawOrders = Array.from(byOrderId.values());
   const coverageComplete =
-    createdAtSlice.coverageComplete === true &&
-    placedAtSlice.coverageComplete === true &&
     paidAtSlice.coverageComplete === true &&
-    createdAtSlice.truncated !== true &&
-    placedAtSlice.truncated !== true &&
     paidAtSlice.truncated !== true &&
     failedSlices.length === 0;
 
   return {
-    ...createdAtSlice,
-    dateFilter: "created_at",
+    ...paidAtSlice,
+    dateFilter: "paid_at",
     rawOrders,
-    pagesFetched: createdAtSlice.pagesFetched + placedAtSlice.pagesFetched + paidAtSlice.pagesFetched,
-    pageOrderCounts: [...createdAtSlice.pageOrderCounts, ...placedAtSlice.pageOrderCounts, ...paidAtSlice.pageOrderCounts],
-    requestUrlsSanitized: [...createdAtSlice.requestUrlsSanitized, ...placedAtSlice.requestUrlsSanitized, ...paidAtSlice.requestUrlsSanitized],
-    responseBodyKeys: Array.from(new Set([...createdAtSlice.responseBodyKeys, ...placedAtSlice.responseBodyKeys, ...paidAtSlice.responseBodyKeys])),
-    responseHeaderKeys: Array.from(new Set([...createdAtSlice.responseHeaderKeys, ...placedAtSlice.responseHeaderKeys, ...paidAtSlice.responseHeaderKeys])),
-    cursorPages: createdAtSlice.cursorPages + placedAtSlice.cursorPages + paidAtSlice.cursorPages,
+    pagesFetched: paidAtSlice.pagesFetched,
+    pageOrderCounts: paidAtSlice.pageOrderCounts,
+    requestUrlsSanitized: paidAtSlice.requestUrlsSanitized,
+    responseBodyKeys: paidAtSlice.responseBodyKeys,
+    responseHeaderKeys: paidAtSlice.responseHeaderKeys,
+    cursorPages: paidAtSlice.cursorPages,
     coverageComplete,
-    truncated: createdAtSlice.truncated || placedAtSlice.truncated,
+    truncated: paidAtSlice.truncated,
     paginationTermination: coverageComplete ? "NATURAL_END" : "ERROR",
     failedSlices,
-    queryDateFields: ["created_at", "placed_at", "paid_at"],
+    queryDateFields: ["paid_at"],
     createdAtSlice,
     placedAtSlice,
     paidAtSlice,

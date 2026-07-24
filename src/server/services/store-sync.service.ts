@@ -5,7 +5,7 @@ import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import { normalizeIanaTimezoneOrNull, requireVerifiedIanaTimezone } from "../utils/timezone.js";
-import { classifyPlatformOrderValidity, fetchStoreOrdersCanonical, saveCanonicalOrdersToDb } from "./store-sync-core.js";
+import { classifyPlatformOrderValidity, fetchStoreOrdersCanonical, resolveSuccessfulPayment, saveCanonicalOrdersToDb } from "./store-sync-core.js";
 import { resolveVerifiedStoreTimezone } from "./store-timezone.service.js";
 import { extractShoplazzaOrders } from "./shoplazza-order-adapter.js";
 
@@ -107,29 +107,9 @@ function sanitizeUrl(url: string): string {
   }
 }
 
-function resolveLegacySuccessfulPaymentTime(o: any): string | null {
-  const candidates = [
-    o?.paid_at,
-    o?.paidAt,
-    o?.payment_details?.paid_at,
-    o?.payment_details?.paidAt,
-    o?.paymentDetails?.paid_at,
-    o?.paymentDetails?.paidAt,
-    o?.payment?.paid_at,
-    o?.payment?.paidAt,
-    o?.payments?.paid_at,
-    o?.payments?.paidAt
-  ];
-
-  for (const value of candidates) {
-    if (value === null || value === undefined || value === "") continue;
-    const parsed = value instanceof Date ? value : new Date(String(value));
-    if (!Number.isNaN(parsed.getTime())) {
-      return value instanceof Date ? value.toISOString() : String(value);
-    }
-  }
-
-  return null;
+function resolveLegacySuccessfulPaymentTime(o: any, platform: "shopline" | "shopify" | "shoplazza"): string | null {
+  const resolution = resolveSuccessfulPayment(o, platform);
+  return resolution.paid ? resolution.paidAt : null;
 }
 
 function makeSkippedOrderItem(o: any, skipReason: string, totalAmount: number) {
@@ -439,14 +419,15 @@ export async function fetchShoplineOrdersDirect(
   startUtc: string,
   endUtc: string,
   limit: number = 100,
-  pageUrlOverride?: string | null
+  pageUrlOverride?: string | null,
+  dateFilter: "created_at" | "updated_at" = "updated_at"
 ): Promise<{ orders: any[]; nextUrl: string | null; responseHeaders: any; rawBody: any }> {
   const headers = { 
     'Authorization': `Bearer ${token}`,
     'Content-Type': 'application/json'
   };
 
-  const url = pageUrlOverride || `https://${domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "")}/admin/openapi/v20240301/orders.json?status=any&created_at_min=${encodeURIComponent(startUtc)}&created_at_max=${encodeURIComponent(endUtc)}&limit=${limit}`;
+  const url = pageUrlOverride || `https://${domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "")}/admin/openapi/v20240301/orders.json?status=any&${dateFilter}_min=${encodeURIComponent(startUtc)}&${dateFilter}_max=${encodeURIComponent(endUtc)}&limit=${limit}`;
 
   const res = await axios.get(url, { headers });
   const orders = res.data.data || res.data.orders || [];
@@ -502,6 +483,7 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
   const tzOffset = getTzOffset(timezoneStr, startDate);
   const startUtc = `${startDate}T00:00:00${tzOffset}`;
   const endUtc = `${endDate}T23:59:59${tzOffset}`;
+  const coverageEndUtc = dayjs().isAfter(dayjs(endUtc)) ? dayjs().toISOString() : endUtc;
 
   const report: StoreSyncResult = {
     storeId: store.id,
@@ -512,7 +494,7 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
     localEndDate: endDate,
     utcStartDate: startUtc,
     utcEndDate: endUtc,
-    requestUrlSanitized: sanitizeUrl(`https://${domain}/admin/openapi/v20240301/orders.json?status=any&created_at_min=${startUtc}&created_at_max=${endUtc}&limit=100`),
+    requestUrlSanitized: sanitizeUrl(`https://${domain}/admin/openapi/v20240301/orders.json?status=any&updated_at_min=${startUtc}&updated_at_max=${coverageEndUtc}&limit=100`),
     pageCount: 0,
     recordsFetched: 0,
     recordsSaved: 0,
@@ -536,9 +518,10 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
         domain,
         store.shopline_token,
         startUtc,
-        endUtc,
+        coverageEndUtc,
         100,
-        currentFetchUrl
+        currentFetchUrl,
+        "updated_at"
       );
     } catch (e: any) {
       report.errorMessage = e.response?.data ? JSON.stringify(e.response.data) : e.message;
@@ -555,7 +538,7 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
       let skipReason = "";
 
       const currentStatus = String(o.financial_status || "").toLowerCase();
-      const paidAtRaw = resolveLegacySuccessfulPaymentTime(o);
+      const paidAtRaw = resolveLegacySuccessfulPaymentTime(o, "shopline");
       const validity = classifyPlatformOrderValidity({
         platform: "shopline",
         paymentStatus: currentStatus,
@@ -744,8 +727,9 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
   const tzOffset = getTzOffset(store.timezone, startDate);
   const startUtc = `${startDate}T00:00:00${tzOffset}`;
   const endUtc = `${endDate}T23:59:59${tzOffset}`;
+  const coverageEndUtc = dayjs().isAfter(dayjs(endUtc)) ? dayjs().toISOString() : endUtc;
 
-  let ordersUrl = `https://${domain}/admin/api/2024-01/orders.json?status=any&created_at_min=${startUtc}&created_at_max=${endUtc}&limit=250`;
+  let ordersUrl = `https://${domain}/admin/api/2024-01/orders.json?status=any&updated_at_min=${startUtc}&updated_at_max=${coverageEndUtc}&limit=250`;
   const sanitizedUrl = sanitizeUrl(ordersUrl);
 
   const report: StoreSyncResult = {
@@ -791,7 +775,7 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
       let skipReason = "";
 
       const currentStatus = String(o.financial_status || "").toLowerCase();
-      const paidAtRaw = resolveLegacySuccessfulPaymentTime(o);
+      const paidAtRaw = resolveLegacySuccessfulPaymentTime(o, "shopify");
       const validity = classifyPlatformOrderValidity({
         platform: "shopify",
         paymentStatus: currentStatus,
@@ -1030,9 +1014,9 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
 
   while (hasNextOrders) {
     report.pageCount++;
-    const created_at_min = encodeURIComponent(formattedMin);
-    const created_at_max = encodeURIComponent(formattedMax);
-    const ordersUrl = `https://${domain}/openapi/${apiVersion}/orders${suffix}?created_at_min=${created_at_min}&created_at_max=${created_at_max}&limit=${limit}&page=${page}`;
+    const paid_at_min = encodeURIComponent(formattedMin);
+    const paid_at_max = encodeURIComponent(formattedMax);
+    const ordersUrl = `https://${domain}/openapi/${apiVersion}/orders${suffix}?paid_at_min=${paid_at_min}&paid_at_max=${paid_at_max}&limit=${limit}&page=${page}`;
     
     if (page === 1) {
       report.requestUrlSanitized = sanitizeUrl(ordersUrl);
@@ -1063,7 +1047,7 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
       let skipReason = "";
 
       const currentStatus = String(o.financial_status || "").toLowerCase();
-      const paidAtRaw = resolveLegacySuccessfulPaymentTime(o);
+      const paidAtRaw = resolveLegacySuccessfulPaymentTime(o, "shoplazza");
       const validity = classifyPlatformOrderValidity({
         platform: "shoplazza",
         paymentStatus: currentStatus,
