@@ -1,7 +1,7 @@
 import axios from "axios";
 
 export type ShoplazzaPaginationTermination = "NATURAL_END" | "EMPTY_PAGE" | "PAGE_LIMIT" | "ERROR";
-export type ShoplazzaDateFilter = "created_at" | "placed_at";
+export type ShoplazzaDateFilter = "created_at" | "placed_at" | "paid_at";
 
 export type ShoplazzaOrderExtraction = {
   orders: any[] | null;
@@ -42,6 +42,7 @@ export type ShoplazzaOrderSlicesResult = ShoplazzaOrderPagesResult & {
   queryDateFields: ShoplazzaDateFilter[];
   createdAtSlice: ShoplazzaOrderPagesResult;
   placedAtSlice: ShoplazzaOrderPagesResult;
+  paidAtSlice: ShoplazzaOrderPagesResult;
   deduplicatedOrderCount: number;
   duplicateAcrossSlicesCount: number;
 };
@@ -433,10 +434,14 @@ export async function fetchShoplazzaOrderSlices(input: {
     ...input,
     dateFilter: "placed_at"
   });
+  const paidAtSlice = await fetchShoplazzaOrderPages({
+    ...input,
+    dateFilter: "paid_at"
+  });
 
   const byOrderId = new Map<string, any>();
   let duplicateAcrossSlicesCount = 0;
-  for (const order of [...createdAtSlice.rawOrders, ...placedAtSlice.rawOrders]) {
+  for (const order of [...createdAtSlice.rawOrders, ...placedAtSlice.rawOrders, ...paidAtSlice.rawOrders]) {
     const key = orderDedupeKey(order);
     if (key && byOrderId.has(key)) {
       duplicateAcrossSlicesCount += 1;
@@ -447,7 +452,8 @@ export async function fetchShoplazzaOrderSlices(input: {
 
   const failedSlices = [
     ...createdAtSlice.failedSlices.map(slice => ({ ...slice, dateFilter: "created_at" })),
-    ...placedAtSlice.failedSlices.map(slice => ({ ...slice, dateFilter: "placed_at" }))
+    ...placedAtSlice.failedSlices.map(slice => ({ ...slice, dateFilter: "placed_at" })),
+    ...paidAtSlice.failedSlices.map(slice => ({ ...slice, dateFilter: "paid_at" }))
   ];
   if (!createdAtSlice.coverageComplete) {
     failedSlices.push({ dateFilter: "created_at", reason: "SHOPLAZZA_CREATED_AT_SLICE_INCOMPLETE" });
@@ -455,32 +461,38 @@ export async function fetchShoplazzaOrderSlices(input: {
   if (!placedAtSlice.coverageComplete) {
     failedSlices.push({ dateFilter: "placed_at", reason: "SHOPLAZZA_PLACED_AT_SLICE_INCOMPLETE" });
   }
+  if (!paidAtSlice.coverageComplete) {
+    failedSlices.push({ dateFilter: "paid_at", reason: "SHOPLAZZA_PAID_AT_SLICE_INCOMPLETE" });
+  }
 
   const rawOrders = Array.from(byOrderId.values());
   const coverageComplete =
     createdAtSlice.coverageComplete === true &&
     placedAtSlice.coverageComplete === true &&
+    paidAtSlice.coverageComplete === true &&
     createdAtSlice.truncated !== true &&
     placedAtSlice.truncated !== true &&
+    paidAtSlice.truncated !== true &&
     failedSlices.length === 0;
 
   return {
     ...createdAtSlice,
     dateFilter: "created_at",
     rawOrders,
-    pagesFetched: createdAtSlice.pagesFetched + placedAtSlice.pagesFetched,
-    pageOrderCounts: [...createdAtSlice.pageOrderCounts, ...placedAtSlice.pageOrderCounts],
-    requestUrlsSanitized: [...createdAtSlice.requestUrlsSanitized, ...placedAtSlice.requestUrlsSanitized],
-    responseBodyKeys: Array.from(new Set([...createdAtSlice.responseBodyKeys, ...placedAtSlice.responseBodyKeys])),
-    responseHeaderKeys: Array.from(new Set([...createdAtSlice.responseHeaderKeys, ...placedAtSlice.responseHeaderKeys])),
-    cursorPages: createdAtSlice.cursorPages + placedAtSlice.cursorPages,
+    pagesFetched: createdAtSlice.pagesFetched + placedAtSlice.pagesFetched + paidAtSlice.pagesFetched,
+    pageOrderCounts: [...createdAtSlice.pageOrderCounts, ...placedAtSlice.pageOrderCounts, ...paidAtSlice.pageOrderCounts],
+    requestUrlsSanitized: [...createdAtSlice.requestUrlsSanitized, ...placedAtSlice.requestUrlsSanitized, ...paidAtSlice.requestUrlsSanitized],
+    responseBodyKeys: Array.from(new Set([...createdAtSlice.responseBodyKeys, ...placedAtSlice.responseBodyKeys, ...paidAtSlice.responseBodyKeys])),
+    responseHeaderKeys: Array.from(new Set([...createdAtSlice.responseHeaderKeys, ...placedAtSlice.responseHeaderKeys, ...paidAtSlice.responseHeaderKeys])),
+    cursorPages: createdAtSlice.cursorPages + placedAtSlice.cursorPages + paidAtSlice.cursorPages,
     coverageComplete,
     truncated: createdAtSlice.truncated || placedAtSlice.truncated,
     paginationTermination: coverageComplete ? "NATURAL_END" : "ERROR",
     failedSlices,
-    queryDateFields: ["created_at", "placed_at"],
+    queryDateFields: ["created_at", "placed_at", "paid_at"],
     createdAtSlice,
     placedAtSlice,
+    paidAtSlice,
     deduplicatedOrderCount: rawOrders.length,
     duplicateAcrossSlicesCount
   };

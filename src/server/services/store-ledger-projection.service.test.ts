@@ -18,6 +18,7 @@ function order(overrides: Record<string, unknown> = {}) {
     orderTotal: 100,
     revenue: 100,
     store_local_date: "2026-07-10",
+    created_at_utc: new Date("2026-07-10T10:00:00.000Z"),
     paid_at: "2026-07-10T10:00:00.000Z",
     created_at: "2026-07-10T09:00:00.000Z",
     createdAt: new Date("2026-07-10T09:00:00.000Z"),
@@ -32,16 +33,16 @@ describe("Shopline canonical ledger parity projection", () => {
     expect(comparison.shoplineCompatibilityProjection.totalOrderCount).toBe(1);
   });
 
-  it("PARITY-02 pending Shopline is canonical-valid but compatibility-excluded", () => {
+  it("PARITY-02 pending Shopline is excluded by canonical and compatibility projections", () => {
     const rows = [order({ paymentStatus: "pending" })];
-    expect(buildCanonicalStoreLedgerProjection({ ...range, rows }).totalOrderCount).toBe(1);
+    expect(buildCanonicalStoreLedgerProjection({ ...range, rows }).totalOrderCount).toBe(0);
     expect(buildShoplineCompatibilityStoreLedgerProjection({ ...range, rows }).totalOrderCount).toBe(0);
   });
 
-  it("PARITY-03 fully refunded Shopline is canonical-valid but compatibility-excluded", () => {
+  it("PARITY-03 fully refunded Shopline retains original gross sales in both projections", () => {
     const rows = [order({ paymentStatus: "refunded" })];
     expect(buildCanonicalStoreLedgerProjection({ ...range, rows }).totalOrderCount).toBe(1);
-    expect(buildShoplineCompatibilityStoreLedgerProjection({ ...range, rows }).totalOrderCount).toBe(0);
+    expect(buildShoplineCompatibilityStoreLedgerProjection({ ...range, rows }).totalOrderCount).toBe(1);
   });
 
   it("PARITY-04 partially refunded Shopline is included by both projections", () => {
@@ -50,10 +51,10 @@ describe("Shopline canonical ledger parity projection", () => {
     expect(buildShoplineCompatibilityStoreLedgerProjection({ ...range, rows }).totalGrossSales).toBe(100);
   });
 
-  it("PARITY-05 blank paymentStatus is rejected by canonical and included by compatibility", () => {
+  it("PARITY-05 blank paymentStatus is rejected by canonical and compatibility projections", () => {
     const rows = [order({ paymentStatus: "" })];
     expect(buildCanonicalStoreLedgerProjection({ ...range, rows }).totalOrderCount).toBe(0);
-    expect(buildShoplineCompatibilityStoreLedgerProjection({ ...range, rows }).totalOrderCount).toBe(1);
+    expect(buildShoplineCompatibilityStoreLedgerProjection({ ...range, rows }).totalOrderCount).toBe(0);
   });
 
   it("PARITY-06 no lineItems is reported as MISSING_FROM_ORDER_FACT and not counted by canonical", () => {
@@ -93,14 +94,15 @@ describe("Shopline canonical ledger parity projection", () => {
     expect(buildShoplineCompatibilityStoreLedgerProjection({ ...range, rows }).days[0].date).toBe("2026-07-10");
   });
 
-  it("PARITY-11 processed_at is used when paid_at is absent", () => {
+  it("PARITY-11 processed_at is rejected when final payment evidence is absent", () => {
     const rows = [order({
       orderId: "processed-order",
       paid_at: null,
+      created_at_utc: null,
       processed_at: "2026-07-11T01:00:00.000Z",
       created_at: "2026-07-10T23:00:00.000Z"
     })];
-    expect(buildShoplineCompatibilityStoreLedgerProjection({ ...range, rows }).days[0].date).toBe("2026-07-11");
+    expect(buildShoplineCompatibilityStoreLedgerProjection({ ...range, rows }).totalOrderCount).toBe(0);
   });
 
   it("PARITY-12 multi-line orderTotal is counted once", () => {

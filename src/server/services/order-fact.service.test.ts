@@ -47,6 +47,7 @@ function orderFixture(overrides: Record<string, unknown> = {}) {
     billingCountryName: "United States",
     store_local_date: "2026-07-02",
     createdAt: new Date("2026-07-02T08:00:00.000Z"),
+    created_at_utc: new Date("2026-07-02T08:00:00.000Z"),
     ...overrides
   };
 }
@@ -59,8 +60,8 @@ beforeEach(() => {
 describe("store order fact shared contract", () => {
   it("uses one platform-specific payment status contract for sync and facts", async () => {
     // Arrange
-    const excludedStatuses = ["waiting", "unpaid", "failed", "cancelled", "canceled", "voided"];
-    const includedStatuses = ["paid", "authorized", "partially_paid", "partially_refunded", "refunded", "  PAID  "];
+    const excludedStatuses = ["waiting", "unpaid", "failed", "cancelled", "canceled", "voided", "pending", "authorized", "partially_paid"];
+    const includedStatuses = ["paid", "partially_refunded", "refunded", "  PAID  "];
     prismaMock.order.findMany.mockResolvedValueOnce([
       ...excludedStatuses.map((status, index) => orderFixture({
         id: `excluded-${index}`,
@@ -79,31 +80,33 @@ describe("store order fact shared contract", () => {
 
     // Assert
     for (const status of excludedStatuses) {
-      expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: status }).valid).toBe(false);
+      expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: status, paidAt: "2026-07-02T08:00:00.000Z" }).valid).toBe(false);
     }
     for (const status of includedStatuses) {
-      expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: status }).valid).toBe(true);
+      expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: status, paidAt: "2026-07-02T08:00:00.000Z" }).valid).toBe(true);
     }
     const normalized = normalizeStoreOrderFacts(rows);
     expect(normalized.orders.map(order => order.rows[0].orderId)).toEqual([
       "included-0",
       "included-1",
       "included-2",
-      "included-3",
-      "included-4",
-      "included-5"
+      "included-3"
     ]);
   });
 
-  it("distinguishes pending by platform and rejects unknown validity inputs", () => {
-    expect(classifyPlatformOrderValidity({ platform: "shopline", paymentStatus: "pending" }).valid).toBe(true);
-    expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: "pending" }).valid).toBe(false);
-    expect(classifyPlatformOrderValidity({ platform: "shoplazza", paymentStatus: "pending" }).valid).toBe(false);
-    expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: "refunded" }).valid).toBe(true);
-    expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: "partially_refunded" }).valid).toBe(true);
+  it("requires final successful payment evidence and rejects pending for every platform", () => {
+    expect(classifyPlatformOrderValidity({ platform: "shopline", paymentStatus: "pending", paidAt: "2026-07-02T08:00:00.000Z" }).valid).toBe(false);
+    expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: "pending", paidAt: "2026-07-02T08:00:00.000Z" }).valid).toBe(false);
+    expect(classifyPlatformOrderValidity({ platform: "shoplazza", paymentStatus: "pending", paidAt: "2026-07-02T08:00:00.000Z" }).valid).toBe(false);
+    expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: "authorized", paidAt: "2026-07-02T08:00:00.000Z" }).valid).toBe(false);
+    expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: "partially_paid", paidAt: "2026-07-02T08:00:00.000Z" }).valid).toBe(false);
+    expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: "paid" }).valid).toBe(false);
+    expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: "refunded", paidAt: "2026-07-02T08:00:00.000Z" }).valid).toBe(true);
+    expect(classifyPlatformOrderValidity({ platform: "shopify", paymentStatus: "partially_refunded", paidAt: "2026-07-02T08:00:00.000Z" }).valid).toBe(true);
     expect(classifyPlatformOrderValidity({
       platform: "shopline",
       paymentStatus: "paid",
+      paidAt: "2026-07-02T08:00:00.000Z",
       cancelledAt: "2026-07-02T00:00:00.000Z"
     }).valid).toBe(false);
     expect(classifyPlatformOrderValidity({ platform: "shopline", paymentStatus: "mystery" })).toEqual({

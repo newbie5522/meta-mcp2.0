@@ -91,6 +91,7 @@ describe("store sync core verified timezone contract", () => {
             number: "R-1001",
             created_at: "2026-07-02T06:30:00Z",
             placed_at: "2026-07-02T06:35:00Z",
+            paid_at: "2026-07-02T06:35:00Z",
             payment_status: "paid",
             status: "finished",
             total_price: "42.50",
@@ -128,8 +129,8 @@ describe("store sync core verified timezone contract", () => {
       orderId: "slz-1",
       orderNumber: "R-1001",
       rawPlacedAt: "2026-07-02T06:35:00Z",
-      rawPaidAt: null,
-      attributionField: "placed_at",
+      rawPaidAt: "2026-07-02T06:35:00Z",
+      attributionField: "paid_at",
       attributionTimeRaw: "2026-07-02T06:35:00Z",
       paymentStatus: "paid",
       orderTotal: 42.5,
@@ -162,6 +163,7 @@ describe("store sync core verified timezone contract", () => {
             number: "R-VOID",
             created_at: "2026-07-02T06:30:00Z",
             placed_at: "2026-07-02T06:35:00Z",
+            paid_at: "2026-07-02T06:35:00Z",
             payment_status: "paid",
             status: "cancelled",
             total_price: "42.50",
@@ -199,6 +201,7 @@ describe("store sync core verified timezone contract", () => {
             number: "R-SYSTEM-TZ",
             created_at: "2026-07-02T06:30:00Z",
             placed_at: "2026-07-02T06:30:00Z",
+            paid_at: "2026-07-02T06:30:00Z",
             payment_status: "paid",
             status: "finished",
             total_price: "80.00",
@@ -223,7 +226,7 @@ describe("store sync core verified timezone contract", () => {
 
     expect(result.orders[0]).toMatchObject({
       orderId: "slz-system-tz",
-      attributionField: "placed_at",
+      attributionField: "paid_at",
       attributionTimeRaw: "2026-07-02T06:30:00Z",
       storeLocalDate: "2026-07-01",
       storeTimezone: "America/Los_Angeles"
@@ -234,9 +237,14 @@ describe("store sync core verified timezone contract", () => {
     });
   });
 
-  it("SHOPLAZZA-DATE-02/06 includes placed_at in-range orders and derives store_local_date from the canonical attribution time", async () => {
+  it("SHOPLAZZA-DATE-02/06 includes paid_at in-range orders and derives store_local_date from final payment time", async () => {
     axiosGet
       .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { data: { orders: [], cursor: "" } },
+        headers: {}
+      })
       .mockResolvedValueOnce({
         status: 200,
         data: {
@@ -246,6 +254,7 @@ describe("store sync core verified timezone contract", () => {
               number: "R-PAID",
               created_at: "2026-06-20T12:00:00Z",
               placed_at: "2026-07-02T06:30:00Z",
+              paid_at: "2026-07-02T06:30:00Z",
               payment_status: "paid",
               status: "finished",
               total_price: "35.00",
@@ -271,16 +280,16 @@ describe("store sync core verified timezone contract", () => {
     expect(result.orders).toHaveLength(1);
     expect(result.orders[0]).toMatchObject({
       orderId: "paid-in-range",
-      attributionField: "placed_at",
+      attributionField: "paid_at",
       attributionTimeRaw: "2026-07-02T06:30:00Z",
       storeLocalDate: "2026-07-01"
     });
-    expect(result.diagnostics.queryDateFields).toEqual(["created_at", "placed_at"]);
+    expect(result.diagnostics.queryDateFields).toEqual(["created_at", "placed_at", "paid_at"]);
     expect(result.diagnostics.deduplicatedOrderCount).toBe(1);
     expect(result.coverageComplete).toBe(true);
   });
 
-  it("SHOPLAZZA-DATE-07 applies attribution per order instead of using a batch-level best field", async () => {
+  it("SHOPLAZZA-DATE-07 uses paid_at for every sales order instead of created_at or placed_at", async () => {
     axiosGet
       .mockResolvedValueOnce({
         status: 200,
@@ -290,6 +299,7 @@ describe("store sync core verified timezone contract", () => {
               id: "created-only",
               number: "R-CREATED",
               created_at: "2026-07-02T06:30:00Z",
+              paid_at: "2026-07-02T06:30:00Z",
               payment_status: "paid",
               status: "finished",
               total_price: "22.00",
@@ -309,6 +319,7 @@ describe("store sync core verified timezone contract", () => {
               number: "R-PLACED",
               created_at: "2026-06-20T12:00:00Z",
               placed_at: "2026-07-02T06:30:00Z",
+              paid_at: "2026-07-02T06:30:00Z",
               payment_status: "paid",
               status: "finished",
               total_price: "35.00",
@@ -318,7 +329,9 @@ describe("store sync core verified timezone contract", () => {
           }
         },
         headers: {}
-      });
+      })
+      .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} })
+      .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} });
 
     const result = await fetchStoreOrdersCanonical({
       platform: "shoplazza",
@@ -332,13 +345,13 @@ describe("store sync core verified timezone contract", () => {
     });
 
     expect(result.orders.map(order => [order.orderId, order.attributionField, order.storeLocalDate])).toEqual([
-      ["created-only", "created_at", "2026-07-01"],
-      ["placed-only", "placed_at", "2026-07-01"]
+      ["created-only", "paid_at", "2026-07-01"],
+      ["placed-only", "paid_at", "2026-07-01"]
     ]);
-    expect(result.diagnostics.attributionField).toBe("per_order");
+    expect(result.diagnostics.attributionField).toBe("paid_at");
   });
 
-  it("SHOPLAZZA-DATE-05 fixes attribution to created_at when only created_at is available", async () => {
+  it("SHOPLAZZA-DATE-05 rejects paid orders when final paid_at is unavailable", async () => {
     axiosGet
       .mockResolvedValueOnce({
         status: 200,
@@ -358,6 +371,7 @@ describe("store sync core verified timezone contract", () => {
         },
         headers: {}
       })
+      .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} })
       .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} });
 
     const result = await fetchStoreOrdersCanonical({
@@ -371,14 +385,11 @@ describe("store sync core verified timezone contract", () => {
       timezoneSource: "manual_verified"
     });
 
-    expect(result.orders).toHaveLength(1);
-    expect(result.orders[0]).toMatchObject({
-      orderId: "created-only",
-      attributionField: "created_at",
-      attributionTimeRaw: "2026-07-02T06:30:00Z",
-      storeLocalDate: "2026-07-01"
-    });
-    expect(result.coverageComplete).toBe(true);
+    expect(result.orders).toHaveLength(0);
+    expect(result.coverageComplete).toBe(false);
+    expect(result.failedSlices).toEqual(expect.arrayContaining([
+      expect.objectContaining({ orderId: "created-only", reason: "ATTRIBUTION_TIME_UNAVAILABLE" })
+    ]));
   });
 
   it("DST-01 uses distinct start and end offsets across DST boundary", async () => {
@@ -400,7 +411,7 @@ describe("store sync core verified timezone contract", () => {
     expect(result.diagnostics.expandedEndAt).toContain("-08:00");
   });
 
-  it("ATTR-01 uses created_at for Shoplazza orders with no placed_at", async () => {
+  it("ATTR-01 uses paid_at for Shoplazza orders even when placed_at is absent", async () => {
     axiosGet
       .mockResolvedValueOnce({
         status: 200,
@@ -410,6 +421,7 @@ describe("store sync core verified timezone contract", () => {
               id: "attr-created",
               number: "R-CREATED",
               created_at: "2026-07-02T06:30:00Z",
+              paid_at: "2026-07-02T06:30:00Z",
               payment_status: "paid",
               status: "finished",
               total_price: "18.00",
@@ -420,6 +432,7 @@ describe("store sync core verified timezone contract", () => {
         },
         headers: {}
       })
+      .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} })
       .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} });
 
     const result = await fetchStoreOrdersCanonical({
@@ -435,7 +448,7 @@ describe("store sync core verified timezone contract", () => {
 
     expect(result.orders[0]).toMatchObject({
       orderId: "attr-created",
-      attributionField: "created_at",
+      attributionField: "paid_at",
       attributionTimeRaw: "2026-07-02T06:30:00Z",
       storeLocalDate: "2026-07-01"
     });
@@ -483,7 +496,7 @@ describe("store sync core verified timezone contract", () => {
     ]));
   });
 
-  it("ATTR-03 keeps per-order attribution for mixed placed_at and created_at orders", async () => {
+  it("ATTR-03 keeps final payment attribution for mixed created_at and placed_at audit fields", async () => {
     axiosGet
       .mockResolvedValueOnce({
         status: 200,
@@ -493,6 +506,7 @@ describe("store sync core verified timezone contract", () => {
               id: "created-at-order",
               number: "R-CREATED",
               created_at: "2026-07-02T06:30:00Z",
+              paid_at: "2026-07-02T06:30:00Z",
               payment_status: "paid",
               status: "finished",
               total_price: "21.00",
@@ -512,6 +526,7 @@ describe("store sync core verified timezone contract", () => {
               number: "R-PLACED",
               created_at: "2026-06-20T12:00:00Z",
               placed_at: "2026-07-02T06:30:00Z",
+              paid_at: "2026-07-02T06:30:00Z",
               payment_status: "paid",
               status: "finished",
               total_price: "34.00",
@@ -521,7 +536,8 @@ describe("store sync core verified timezone contract", () => {
           }
         },
         headers: {}
-      });
+      })
+      .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} });
 
     const result = await fetchStoreOrdersCanonical({
       platform: "shoplazza",
@@ -542,13 +558,13 @@ describe("store sync core verified timezone contract", () => {
     }))).toEqual([
       {
         orderId: "created-at-order",
-        attributionField: "created_at",
+        attributionField: "paid_at",
         attributionTimeRaw: "2026-07-02T06:30:00Z",
         storeLocalDate: "2026-07-01"
       },
       {
         orderId: "placed-at-order",
-        attributionField: "placed_at",
+        attributionField: "paid_at",
         attributionTimeRaw: "2026-07-02T06:30:00Z",
         storeLocalDate: "2026-07-01"
       }

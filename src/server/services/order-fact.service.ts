@@ -113,6 +113,7 @@ export function classifyOrderValidity(input: {
   paymentStatus?: string | null;
   fulfillmentStatus?: string | null;
   cancelledAt?: unknown;
+  paidAt?: unknown;
 }): { valid: boolean; warning: StoreOrderFactWarningCode | null } {
   if (!input.platform) {
     return { valid: false, warning: "PLATFORM_ORDER_RULE_UNAVAILABLE" };
@@ -121,7 +122,8 @@ export function classifyOrderValidity(input: {
     platform: input.platform,
     paymentStatus: input.paymentStatus,
     fulfillmentStatus: input.fulfillmentStatus,
-    cancelledAt: input.cancelledAt
+    cancelledAt: input.cancelledAt,
+    paidAt: input.paidAt
   });
   const warning = result.reason === "PAYMENT_STATUS_UNAVAILABLE" ||
     result.reason === "PAYMENT_STATUS_UNRECOGNIZED"
@@ -234,7 +236,8 @@ export function normalizeStoreOrderFacts(rows: any[]): NormalizedStoreOrderFacts
       platform: resolveOrderPlatform(row),
       paymentStatus: row?.paymentStatus,
       fulfillmentStatus: row?.fulfillmentStatus,
-      cancelledAt: row?.cancelledAt
+      cancelledAt: row?.cancelledAt,
+      paidAt: row?.paidAt ?? row?.paid_at ?? row?.rawPaidAt ?? row?.created_at_utc
     });
     if (!validity.valid) {
       if (validity.warning) warnings.add(validity.warning);

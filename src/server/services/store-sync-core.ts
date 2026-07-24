@@ -41,23 +41,16 @@ type OrderAttributionSelection =
 const PLATFORM_ALLOWED_PAYMENT_STATUSES: Record<StorePlatform, ReadonlySet<string>> = {
   shopline: new Set([
     "paid",
-    "pending",
-    "authorized",
-    "partially_paid",
     "partially_refunded",
     "refunded"
   ]),
   shopify: new Set([
     "paid",
-    "authorized",
-    "partially_paid",
     "partially_refunded",
     "refunded"
   ]),
   shoplazza: new Set([
     "paid",
-    "authorized",
-    "partially_paid",
     "partially_refunded",
     "refunded"
   ])
@@ -66,19 +59,35 @@ const PLATFORM_ALLOWED_PAYMENT_STATUSES: Record<StorePlatform, ReadonlySet<strin
 const EXCLUDED_PAYMENT_STATUSES = new Set([
   "waiting",
   "paying",
+  "pending",
+  "authorized",
+  "partially_paid",
   "unpaid",
   "failed",
   "opened",
   "cancelled",
   "canceled",
-  "voided"
+  "voided",
+  "付款中",
+  "支付中",
+  "支付处理中",
+  "未付款",
+  "支付失败",
+  "支付取消"
 ]);
+
+function hasSuccessfulPaymentTime(value: unknown) {
+  if (value === null || value === undefined || value === "") return false;
+  const parsed = value instanceof Date ? value : new Date(String(value));
+  return !Number.isNaN(parsed.getTime());
+}
 
 export function classifyPlatformOrderValidity(input: {
   platform: StorePlatform;
   paymentStatus?: string | null;
   fulfillmentStatus?: string | null;
   cancelledAt?: unknown;
+  paidAt?: unknown;
 }): PlatformOrderValidity {
   const paymentStatus = String(input.paymentStatus || "").trim().toLowerCase();
   const fulfillmentStatus = String(input.fulfillmentStatus || "").trim().toLowerCase();
@@ -101,12 +110,12 @@ export function classifyPlatformOrderValidity(input: {
     return { valid: false, reason: "FULFILLMENT_CANCELLED" };
   }
   if (allowedStatuses.has(paymentStatus)) {
+    if (!hasSuccessfulPaymentTime(input.paidAt)) {
+      return { valid: false, reason: "PAYMENT_SUCCESS_TIME_UNAVAILABLE" };
+    }
     return { valid: true, reason: null };
   }
-  if (
-    EXCLUDED_PAYMENT_STATUSES.has(paymentStatus) ||
-    (paymentStatus === "pending" && input.platform !== "shopline")
-  ) {
+  if (EXCLUDED_PAYMENT_STATUSES.has(paymentStatus)) {
     return { valid: false, reason: "PAYMENT_STATUS_EXCLUDED" };
   }
   return { valid: false, reason: "PAYMENT_STATUS_UNRECOGNIZED" };
@@ -242,27 +251,28 @@ function getRawTimeByAttribution(co: any, attr: string): string | null {
   return null;
 }
 
-function selectAttributionForOrder(
-  platform: StorePlatform,
-  co: any,
-  preferredField: AttributionField
-): OrderAttributionSelection {
-  if (platform === "shoplazza") {
-    if (co.rawPlacedAt) {
-      return { field: "placed_at", rawTime: co.rawPlacedAt, error: null };
-    }
-    if (co.rawCreatedAt) {
-      return { field: "created_at", rawTime: co.rawCreatedAt, error: null };
-    }
-    return { field: null, rawTime: null, error: "ATTRIBUTION_TIME_UNAVAILABLE" };
+function resolveSuccessfulPaymentTime(raw: any): string | null {
+  const candidates = [
+    raw?.paid_at,
+    raw?.paidAt,
+    raw?.payment_details?.paid_at,
+    raw?.payment_details?.paidAt,
+    raw?.paymentDetails?.paid_at,
+    raw?.paymentDetails?.paidAt,
+    raw?.payment?.paid_at,
+    raw?.payment?.paidAt,
+    raw?.payments?.paid_at,
+    raw?.payments?.paidAt
+  ];
+  for (const candidate of candidates) {
+    if (hasSuccessfulPaymentTime(candidate)) return String(candidate);
   }
+  return null;
+}
 
-  const preferredRaw = getRawTimeByAttribution(co, preferredField);
-  if (preferredRaw) {
-    return { field: preferredField, rawTime: preferredRaw, error: null };
-  }
-  if (co.rawCreatedAt) {
-    return { field: "created_at", rawTime: co.rawCreatedAt, error: null };
+function selectAttributionForOrder(co: any): OrderAttributionSelection {
+  if (co.rawPaidAt) {
+    return { field: "paid_at", rawTime: co.rawPaidAt, error: null };
   }
   return { field: null, rawTime: null, error: "ATTRIBUTION_TIME_UNAVAILABLE" };
 }
@@ -627,7 +637,7 @@ export async function fetchStoreOrdersCanonical(params: {
 
     const rawCreatedAt = o.created_at || null;
     const rawPlacedAt = o.placed_at || null;
-    const rawPaidAt = o.paid_at || o.payment_details?.paid_at || null;
+    const rawPaidAt = resolveSuccessfulPaymentTime(o);
     const rawProcessedAt = o.processed_at || null;
     const rawCompletedAt = o.finished_at || o.completed_at || o.closed_at || null;
     const rawUpdatedAt = o.updated_at || null;
@@ -682,16 +692,8 @@ export async function fetchStoreOrdersCanonical(params: {
   let bestAttributionField: typeof attributionCandidates[number] = "processed_at";
   let bestRevenueField = "current_total_price";
 
-  // Unified priority: attribution defaults to created_at/processed_at
-  bestAttributionField = "created_at";
-  const hasProcessedAt = convertedOrders.some(co => co.rawProcessedAt);
-  if (hasProcessedAt) {
-    bestAttributionField = "processed_at";
-  }
-  const hasPaidAt = convertedOrders.some(co => co.rawPaidAt);
-  if (hasPaidAt) {
-    bestAttributionField = "paid_at";
-  }
+  // Sales facts must be attributed to the final confirmed payment timestamp.
+  bestAttributionField = "paid_at";
 
   // 3.3 and 3.4 calculations for sums & stats across target range
   const revenueFieldSums = {
@@ -706,14 +708,15 @@ export async function fetchStoreOrdersCanonical(params: {
   };
 
   const convertedOrdersInSelectedRange = convertedOrders.filter(co => {
-    const { rawTime } = selectAttributionForOrder(params.platform, co, bestAttributionField);
+    const { rawTime } = selectAttributionForOrder(co);
     if (!rawTime) return false;
     const localDate = getStoreLocalDate(rawTime, storeTimezone);
     return localDate >= params.startDate && localDate <= params.endDate && classifyPlatformOrderValidity({
       platform: params.platform,
       paymentStatus: co.paymentStatus,
       fulfillmentStatus: co.fulfillmentStatus,
-      cancelledAt: co.cancelledAt
+      cancelledAt: co.cancelledAt,
+      paidAt: co.rawPaidAt
     }).valid;
   });
 
@@ -739,14 +742,15 @@ export async function fetchStoreOrdersCanonical(params: {
 
   for (const attr of attributionCandidates) {
     const ordersInRangeAttr = convertedOrders.filter(co => {
-      const rawTime = getRawTimeByAttribution(co, attr) || co.rawCreatedAt;
+      const rawTime = getRawTimeByAttribution(co, attr);
       if (!rawTime) return false;
       const localDate = getStoreLocalDate(rawTime, storeTimezone);
       return localDate >= params.startDate && localDate <= params.endDate && classifyPlatformOrderValidity({
         platform: params.platform,
         paymentStatus: co.paymentStatus,
         fulfillmentStatus: co.fulfillmentStatus,
-        cancelledAt: co.cancelledAt
+        cancelledAt: co.cancelledAt,
+        paidAt: co.rawPaidAt
       }).valid;
     });
 
@@ -767,7 +771,7 @@ export async function fetchStoreOrdersCanonical(params: {
 
   // Construct final array of CanonicalOrders adhering strict to the target field selected
   const targetOrders = convertedOrders.flatMap(co => {
-    const attribution = selectAttributionForOrder(params.platform, co, bestAttributionField);
+    const attribution = selectAttributionForOrder(co);
     if (attribution.error || !attribution.field || !attribution.rawTime) {
       attributionFailures.push({
         storeId: params.storeId,
@@ -821,7 +825,8 @@ export async function fetchStoreOrdersCanonical(params: {
       platform: co.platform,
       paymentStatus: co.paymentStatus,
       fulfillmentStatus: co.fulfillmentStatus,
-      cancelledAt: co.cancelledAt
+      cancelledAt: co.cancelledAt,
+      paidAt: co.rawPaidAt || co.attributionTimeRaw
     });
     return inRange && validity.valid;
   });
@@ -882,7 +887,7 @@ export async function fetchStoreOrdersCanonical(params: {
       placedAtSlice,
       deduplicatedOrderCount,
       duplicateAcrossSlicesCount,
-      attributionField: params.platform === "shoplazza" ? "per_order" : bestAttributionField,
+      attributionField: bestAttributionField,
       revenueField: "extracted_order_total",
       orderTotalSource,
       ledgerAmountPolicy: "platform_priority_order_total_not_baseline",
@@ -1035,7 +1040,7 @@ export async function saveCanonicalOrdersToDb(
             store_local_date: o.storeLocalDate,
             paymentStatus: o.paymentStatus || "unknown",
             fulfillmentStatus: o.fulfillmentStatus || "unfulfilled",
-            created_at_utc: new Date(o.rawCreatedAt || o.attributionTimeRaw),
+            created_at_utc: new Date(o.attributionTimeRaw),
             store_timezone: o.storeTimezone,
             store_local_datetime: o.storeLocalDatetime,
             shippingCountryCode: countries.shippingCountryCode,
@@ -1058,7 +1063,7 @@ export async function saveCanonicalOrdersToDb(
             store_local_date: o.storeLocalDate,
             paymentStatus: o.paymentStatus || "unknown",
             fulfillmentStatus: o.fulfillmentStatus || "unfulfilled",
-            created_at_utc: new Date(o.rawCreatedAt || o.attributionTimeRaw),
+            created_at_utc: new Date(o.attributionTimeRaw),
             store_timezone: o.storeTimezone,
             store_local_datetime: o.storeLocalDatetime,
             shippingCountryCode: countries.shippingCountryCode,

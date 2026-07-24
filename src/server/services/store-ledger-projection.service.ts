@@ -35,18 +35,20 @@ type ProjectionInput = {
 
 const SHOPLINE_COMPATIBILITY_ALLOWED_PAYMENT_STATUSES = new Set([
   "paid",
-  "partially_paid",
-  "partially_refunded"
+  "partially_refunded",
+  "refunded"
 ]);
 
 const SHOPLINE_COMPATIBILITY_EXCLUDED_PAYMENT_STATUSES = new Set([
   "pending",
-  "refunded",
+  "authorized",
+  "partially_paid",
   "cancelled",
   "canceled",
   "voided",
   "unpaid",
   "waiting",
+  "paying",
   "failed"
 ]);
 
@@ -79,6 +81,18 @@ function dateOnly(value: unknown): string | null {
   const date = value instanceof Date ? value : new Date(String(value));
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString().slice(0, 10);
+}
+
+function hasSuccessfulPaymentEvidence(rows: any[]) {
+  return rows.some(row => {
+    const candidates = [
+      row?.paid_at,
+      row?.paidAt,
+      row?.rawPaidAt,
+      row?.created_at_utc
+    ];
+    return candidates.some(value => dateOnly(value) !== null);
+  });
 }
 
 function inRange(date: string | null, startDate: string, endDate: string) {
@@ -251,23 +265,19 @@ function isShoplineCompatibilityOrderAllowed(rows: any[]) {
 
   if (cancelledAt !== null && cancelledAt !== undefined && cancelledAt !== "") return false;
   if (SHOPLINE_COMPATIBILITY_EXCLUDED_PAYMENT_STATUSES.has(paymentStatus)) return false;
-  if (SHOPLINE_COMPATIBILITY_ALLOWED_PAYMENT_STATUSES.has(paymentStatus)) return true;
-  if (!paymentStatus) return true;
-  return fulfillmentStatus === "fulfilled";
+  if (fulfillmentStatus === "cancelled" || fulfillmentStatus === "canceled") return false;
+  if (SHOPLINE_COMPATIBILITY_ALLOWED_PAYMENT_STATUSES.has(paymentStatus)) {
+    return hasSuccessfulPaymentEvidence(rows);
+  }
+  return false;
 }
 
 function resolveShoplineLedgerDate(rows: any[]) {
   const fields = [
     "paid_at",
     "paidAt",
-    "processed_at",
-    "processedAt",
-    "completed_at",
-    "completedAt",
-    "created_at",
-    "createdAt",
-    "updated_at",
-    "updatedAt",
+    "rawPaidAt",
+    "created_at_utc",
     "store_local_date"
   ];
   for (const field of fields) {

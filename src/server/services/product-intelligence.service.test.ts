@@ -28,6 +28,7 @@ function orderRow(overrides: Record<string, unknown> = {}) {
     profit: 20,
     refunded: false,
     store_local_date: "2026-07-02",
+    created_at_utc: new Date("2026-07-02T08:00:00.000Z"),
     createdAt: new Date("2026-07-02T08:00:00.000Z"),
     ...overrides
   };

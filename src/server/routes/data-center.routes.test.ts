@@ -435,6 +435,46 @@ describe("Data Center store-orders route", () => {
     });
   });
 
+  it("STORE-ORDERS-05B keeps pending orders in detail rows but excludes them from sales summary", async () => {
+    prismaMock.store.findMany.mockResolvedValueOnce([
+      { id: 3, name: "kolaich", platform: "shopline", timezone: "America/Los_Angeles" }
+    ]);
+    prismaMock.order.findMany.mockResolvedValueOnce([
+      {
+        id: "pending-line-1",
+        storeId: 3,
+        orderId: "21076229791891807741937874",
+        store_local_date: "2026-07-21",
+        store_local_datetime: "2026-07-21T21:04:38",
+        createdAt: new Date("2026-07-22T04:04:35.000Z"),
+        created_at_utc: new Date("2026-07-22T04:04:35.000Z"),
+        store_timezone: "America/Los_Angeles",
+        orderTotal: 102.99,
+        revenue: 99.99,
+        profit: 0,
+        refunded: false,
+        paymentStatus: "pending",
+        fulfillmentStatus: "null"
+      }
+    ]);
+
+    const response = await invokeDataCenterRoute("/store-orders", {
+      query: { startDate: "2026-07-21", endDate: "2026-07-21", storeId: "3" }
+    });
+
+    expect(response.body.rows).toHaveLength(1);
+    expect(response.body.rows[0]).toMatchObject({
+      orderId: "21076229791891807741937874",
+      paymentStatus: "pending",
+      total: 102.99
+    });
+    expect(response.body.summary).toMatchObject({
+      rowCount: 1,
+      orderCount: 0,
+      grossSales: 0
+    });
+  });
+
   it("STORE-ORDERS-06 uses the same filtered rows for pagination total", async () => {
     const response = await invokeDataCenterRoute("/store-orders", {
       query: { startDate: "2026-07-01", endDate: "2026-07-02", storeId: "2" }

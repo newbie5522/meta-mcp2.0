@@ -5,7 +5,7 @@ import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import { normalizeIanaTimezoneOrNull, requireVerifiedIanaTimezone } from "../utils/timezone.js";
-import { fetchStoreOrdersCanonical, saveCanonicalOrdersToDb } from "./store-sync-core.js";
+import { classifyPlatformOrderValidity, fetchStoreOrdersCanonical, saveCanonicalOrdersToDb } from "./store-sync-core.js";
 import { resolveVerifiedStoreTimezone } from "./store-timezone.service.js";
 import { extractShoplazzaOrders } from "./shoplazza-order-adapter.js";
 
@@ -105,6 +105,49 @@ function sanitizeUrl(url: string): string {
   } catch (e) {
     return url;
   }
+}
+
+function resolveLegacySuccessfulPaymentTime(o: any): string | null {
+  const candidates = [
+    o?.paid_at,
+    o?.paidAt,
+    o?.payment_details?.paid_at,
+    o?.payment_details?.paidAt,
+    o?.paymentDetails?.paid_at,
+    o?.paymentDetails?.paidAt,
+    o?.payment?.paid_at,
+    o?.payment?.paidAt,
+    o?.payments?.paid_at,
+    o?.payments?.paidAt
+  ];
+
+  for (const value of candidates) {
+    if (value === null || value === undefined || value === "") continue;
+    const parsed = value instanceof Date ? value : new Date(String(value));
+    if (!Number.isNaN(parsed.getTime())) {
+      return value instanceof Date ? value.toISOString() : String(value);
+    }
+  }
+
+  return null;
+}
+
+function makeSkippedOrderItem(o: any, skipReason: string, totalAmount: number) {
+  const auditTime = o?.created_at || o?.placed_at || o?.updated_at || "";
+  const auditDate = auditTime ? new Date(auditTime) : null;
+
+  return {
+    id: o.id.toString(),
+    order_number: o.order_number || o.name || o.id.toString(),
+    createdAtRaw: auditTime,
+    createdAtUtc: auditDate && !Number.isNaN(auditDate.getTime()) ? auditDate.toISOString() : "",
+    storeLocalDate: "",
+    totalAmount,
+    paymentStatus: o.financial_status || "unknown",
+    fulfillmentStatus: o.fulfillment_status || "unfulfilled",
+    isSaved: false,
+    skipReason
+  };
 }
 
 function extractOrderStoreIdStr(o: any): string | null {
@@ -511,15 +554,19 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
       let isCountable = true;
       let skipReason = "";
 
-      const allowedStatuses = ['paid', 'pending', 'authorized', 'partially_paid', 'partially_refunded', 'refunded'];
       const currentStatus = String(o.financial_status || "").toLowerCase();
+      const paidAtRaw = resolveLegacySuccessfulPaymentTime(o);
+      const validity = classifyPlatformOrderValidity({
+        platform: "shopline",
+        paymentStatus: currentStatus,
+        fulfillmentStatus: o.fulfillment_status || null,
+        cancelledAt: o.cancelled_at || o.cancel_reason || null,
+        paidAt: paidAtRaw
+      });
 
-      if (!allowedStatuses.includes(currentStatus)) {
+      if (!validity.valid) {
         isCountable = false;
-        skipReason = `Financial status '${currentStatus}' is not in allowed synchronization list`;
-      } else if (o.cancelled_at || o.cancel_reason) {
-        isCountable = false;
-        skipReason = `Order was cancelled (cancelled_at: ${o.cancelled_at}, reason: ${o.cancel_reason || "unspecified"})`;
+        skipReason = validity.reason || `Financial status '${currentStatus}' is not a confirmed paid sales order`;
       }
 
       if (!o.line_items || o.line_items.length === 0) {
@@ -532,14 +579,23 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
         continue;
       }
 
-      // 1. Attribution Date: Compare created_at, paid_at, processed_at, completed_at, updated_at
-      const attributionDatetime = o.processed_at || o.created_at || o.updated_at || o.paid_at || o.completed_at || o.closed_at || o.created_at;
-      const storeLocalDate = getStoreLocalDate(attributionDatetime, timezoneStr);
-
-      // 2. Order Total: Calculate subtraction to get subtotal minus discount to match US$715.78 targets
       const currentSubtotal = parseFloat(o.current_subtotal_price || o.total_line_items_price || o.subtotal_price || 0);
       const discounts = parseFloat(o.total_discounts || o.current_total_discounts || 0);
       const totalAmount = currentSubtotal - discounts;
+
+      if (!isCountable) {
+        report.recordsSkipped++;
+        report.skippedReasons.push({
+          id: o.id.toString(),
+          order_number: o.order_number || o.name || o.id.toString(),
+          reason: skipReason
+        });
+        report.orderItems.push(makeSkippedOrderItem(o, skipReason, totalAmount));
+        continue;
+      }
+
+      const attributionDatetime = paidAtRaw;
+      const storeLocalDate = getStoreLocalDate(attributionDatetime, timezoneStr);
 
       if (!isStoreLocalDateWithinRange(storeLocalDate, startDate, endDate)) {
         report.recordsSkipped++;
@@ -575,15 +631,6 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
         isSaved: true,
         skipReason: isCountable ? "" : skipReason
       });
-
-      if (!isCountable) {
-        report.recordsSkipped++;
-        report.skippedReasons.push({
-          id: o.id.toString(),
-          order_number: o.order_number || o.name || o.id.toString(),
-          reason: skipReason
-        });
-      }
 
       const orderStoreIdStr = extractOrderStoreIdStr(o);
       const targetStoreId = orderStoreIdStr 
@@ -743,15 +790,19 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
       let isCountable = true;
       let skipReason = "";
 
-      const allowedStatuses = ['paid', 'pending', 'authorized', 'partially_paid', 'partially_refunded', 'refunded'];
       const currentStatus = String(o.financial_status || "").toLowerCase();
+      const paidAtRaw = resolveLegacySuccessfulPaymentTime(o);
+      const validity = classifyPlatformOrderValidity({
+        platform: "shopify",
+        paymentStatus: currentStatus,
+        fulfillmentStatus: o.fulfillment_status || null,
+        cancelledAt: o.cancelled_at || o.cancel_reason || null,
+        paidAt: paidAtRaw
+      });
 
-      if (!allowedStatuses.includes(currentStatus)) {
+      if (!validity.valid) {
         isCountable = false;
-        skipReason = `Financial status '${currentStatus}' is not in allowed synchronization list`;
-      } else if (o.cancelled_at || o.cancel_reason) {
-        isCountable = false;
-        skipReason = `Order was cancelled (cancelled_at: ${o.cancelled_at}, reason: ${o.cancel_reason || "unspecified"})`;
+        skipReason = validity.reason || `Financial status '${currentStatus}' is not a confirmed paid sales order`;
       }
 
       if (!o.line_items || o.line_items.length === 0) {
@@ -765,7 +816,19 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
       }
 
       const totalAmount = parseFloat(o.total_price || o.current_total_price || o.total_amount || 0);
-      const storeLocalDate = getStoreLocalDate(o.created_at, store.timezone);
+
+      if (!isCountable) {
+        report.recordsSkipped++;
+        report.skippedReasons.push({
+          id: o.id.toString(),
+          order_number: o.order_number || o.name || o.id.toString(),
+          reason: skipReason
+        });
+        report.orderItems.push(makeSkippedOrderItem(o, skipReason, totalAmount));
+        continue;
+      }
+
+      const storeLocalDate = getStoreLocalDate(paidAtRaw, store.timezone);
 
       if (!isStoreLocalDateWithinRange(storeLocalDate, startDate, endDate)) {
         report.recordsSkipped++;
@@ -777,8 +840,8 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
         report.orderItems.push({
           id: o.id.toString(),
           order_number: o.order_number || o.name || o.id.toString(),
-          createdAtRaw: o.created_at,
-          createdAtUtc: new Date(o.created_at).toISOString(),
+          createdAtRaw: paidAtRaw,
+          createdAtUtc: new Date(paidAtRaw).toISOString(),
           storeLocalDate,
           totalAmount,
           paymentStatus: o.financial_status || "unknown",
@@ -792,8 +855,8 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
       report.orderItems.push({
         id: o.id.toString(),
         order_number: o.order_number || o.name || o.id.toString(),
-        createdAtRaw: o.created_at,
-        createdAtUtc: new Date(o.created_at).toISOString(),
+        createdAtRaw: paidAtRaw,
+        createdAtUtc: new Date(paidAtRaw).toISOString(),
         storeLocalDate,
         totalAmount,
         paymentStatus: o.financial_status || "unknown",
@@ -801,15 +864,6 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
         isSaved: true,
         skipReason: isCountable ? "" : skipReason
       });
-
-      if (!isCountable) {
-        report.recordsSkipped++;
-        report.skippedReasons.push({
-          id: o.id.toString(),
-          order_number: o.order_number || o.name || o.id.toString(),
-          reason: skipReason
-        });
-      }
 
       const orderStoreIdStr = extractOrderStoreIdStr(o);
       const targetStoreId = orderStoreIdStr 
@@ -867,9 +921,9 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
               store_local_date: storeLocalDate,
               paymentStatus: o.financial_status || "unknown",
               fulfillmentStatus: o.fulfillment_status || "unfulfilled",
-              created_at_utc: new Date(o.created_at),
+              created_at_utc: new Date(paidAtRaw),
               store_timezone: normalizeTimezone(store.timezone),
-              store_local_datetime: getStoreLocalDatetime(o.created_at, store.timezone)
+              store_local_datetime: getStoreLocalDatetime(paidAtRaw, store.timezone)
             },
             create: {
               id: lineItem.id.toString(),
@@ -881,13 +935,13 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
               refundedAt,
               orderId,
               orderTotal: totalAmount,
-              createdAt: new Date(o.created_at),
+              createdAt: new Date(paidAtRaw),
               store_local_date: storeLocalDate,
               paymentStatus: o.financial_status || "unknown",
               fulfillmentStatus: o.fulfillment_status || "unfulfilled",
-              created_at_utc: new Date(o.created_at),
+              created_at_utc: new Date(paidAtRaw),
               store_timezone: normalizeTimezone(store.timezone),
-              store_local_datetime: getStoreLocalDatetime(o.created_at, store.timezone)
+              store_local_datetime: getStoreLocalDatetime(paidAtRaw, store.timezone)
             }
           });
         } catch (oErr) {
@@ -1008,15 +1062,19 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
       let isCountable = true;
       let skipReason = "";
 
-      const allowedStatuses = ['paid', 'pending', 'authorized', 'partially_paid', 'partially_refunded', 'refunded'];
       const currentStatus = String(o.financial_status || "").toLowerCase();
+      const paidAtRaw = resolveLegacySuccessfulPaymentTime(o);
+      const validity = classifyPlatformOrderValidity({
+        platform: "shoplazza",
+        paymentStatus: currentStatus,
+        fulfillmentStatus: o.fulfillment_status || null,
+        cancelledAt: o.cancelled_at || o.cancel_reason || null,
+        paidAt: paidAtRaw
+      });
 
-      if (!allowedStatuses.includes(currentStatus)) {
+      if (!validity.valid) {
         isCountable = false;
-        skipReason = `Financial status '${currentStatus}' is not in allowed synchronization list`;
-      } else if (o.cancelled_at || o.cancel_reason) {
-        isCountable = false;
-        skipReason = `Order was cancelled (cancelled_at: ${o.cancelled_at}, reason: ${o.cancel_reason || "unspecified"})`;
+        skipReason = validity.reason || `Financial status '${currentStatus}' is not a confirmed paid sales order`;
       }
 
       if (!o.line_items || o.line_items.length === 0) {
@@ -1030,7 +1088,19 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
       }
 
       const totalAmount = parseFloat(o.total_price || o.current_total_price || o.total_amount || 0);
-      const storeLocalDate = getStoreLocalDate(o.created_at, store.timezone);
+
+      if (!isCountable) {
+        report.recordsSkipped++;
+        report.skippedReasons.push({
+          id: o.id.toString(),
+          order_number: o.order_number || o.name || o.id.toString(),
+          reason: skipReason
+        });
+        report.orderItems.push(makeSkippedOrderItem(o, skipReason, totalAmount));
+        continue;
+      }
+
+      const storeLocalDate = getStoreLocalDate(paidAtRaw, store.timezone);
 
       if (!isStoreLocalDateWithinRange(storeLocalDate, startDate, endDate)) {
         report.recordsSkipped++;
@@ -1042,8 +1112,8 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
         report.orderItems.push({
           id: o.id.toString(),
           order_number: o.order_number || o.name || o.id.toString(),
-          createdAtRaw: o.created_at,
-          createdAtUtc: new Date(o.created_at).toISOString(),
+          createdAtRaw: paidAtRaw,
+          createdAtUtc: new Date(paidAtRaw).toISOString(),
           storeLocalDate,
           totalAmount,
           paymentStatus: o.financial_status || "unknown",
@@ -1057,8 +1127,8 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
       report.orderItems.push({
         id: o.id.toString(),
         order_number: o.order_number || o.name || o.id.toString(),
-        createdAtRaw: o.created_at,
-        createdAtUtc: new Date(o.created_at).toISOString(),
+        createdAtRaw: paidAtRaw,
+        createdAtUtc: new Date(paidAtRaw).toISOString(),
         storeLocalDate,
         totalAmount,
         paymentStatus: o.financial_status || "unknown",
@@ -1066,15 +1136,6 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
         isSaved: true,
         skipReason: isCountable ? "" : skipReason
       });
-
-      if (!isCountable) {
-        report.recordsSkipped++;
-        report.skippedReasons.push({
-          id: o.id.toString(),
-          order_number: o.order_number || o.name || o.id.toString(),
-          reason: skipReason
-        });
-      }
 
       const orderStoreIdStr = extractOrderStoreIdStr(o);
       const targetStoreId = orderStoreIdStr 
@@ -1132,9 +1193,9 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
               store_local_date: storeLocalDate,
               paymentStatus: o.financial_status || "unknown",
               fulfillmentStatus: o.fulfillment_status || "unfulfilled",
-              created_at_utc: new Date(o.created_at),
+              created_at_utc: new Date(paidAtRaw),
               store_timezone: normalizeTimezone(store.timezone),
-              store_local_datetime: getStoreLocalDatetime(o.created_at, store.timezone)
+              store_local_datetime: getStoreLocalDatetime(paidAtRaw, store.timezone)
             },
             create: {
               id: lineItem.id.toString(),
@@ -1146,13 +1207,13 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
               refundedAt,
               orderId,
               orderTotal: totalAmount,
-              createdAt: new Date(o.created_at),
+              createdAt: new Date(paidAtRaw),
               store_local_date: storeLocalDate,
               paymentStatus: o.financial_status || "unknown",
               fulfillmentStatus: o.fulfillment_status || "unfulfilled",
-              created_at_utc: new Date(o.created_at),
+              created_at_utc: new Date(paidAtRaw),
               store_timezone: normalizeTimezone(store.timezone),
-              store_local_datetime: getStoreLocalDatetime(o.created_at, store.timezone)
+              store_local_datetime: getStoreLocalDatetime(paidAtRaw, store.timezone)
             }
           });
         } catch (oErr) {

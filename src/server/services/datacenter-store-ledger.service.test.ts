@@ -34,6 +34,7 @@ describe("data center store ledger Order projection", () => {
         storeId: 1,
         orderId: "order-1",
         store_local_date: "2026-07-01",
+        created_at_utc: new Date("2026-07-01T12:00:00.000Z"),
         orderTotal: 200,
         revenue: 90,
         paymentStatus: "paid"
@@ -43,6 +44,7 @@ describe("data center store ledger Order projection", () => {
         storeId: 1,
         orderId: "order-1",
         store_local_date: "2026-07-01",
+        created_at_utc: new Date("2026-07-01T12:00:00.000Z"),
         orderTotal: 200,
         revenue: 110,
         paymentStatus: "paid"
@@ -82,6 +84,7 @@ describe("data center store ledger Order projection", () => {
         platform: "shoplazza",
         orderId: "slz-1",
         store_local_date: "2026-07-01",
+        created_at_utc: new Date("2026-07-01T12:00:00.000Z"),
         orderTotal: 120,
         revenue: 60,
         paymentStatus: "paid"
@@ -92,6 +95,7 @@ describe("data center store ledger Order projection", () => {
         platform: "shoplazza",
         orderId: "slz-1",
         store_local_date: "2026-07-01",
+        created_at_utc: new Date("2026-07-01T12:00:00.000Z"),
         orderTotal: 120,
         revenue: 60,
         paymentStatus: "paid"
@@ -102,6 +106,7 @@ describe("data center store ledger Order projection", () => {
         platform: "shoplazza",
         orderId: "slz-2",
         store_local_date: "2026-07-01",
+        created_at_utc: new Date("2026-07-01T12:00:00.000Z"),
         orderTotal: 999,
         revenue: 999,
         paymentStatus: "paid"
@@ -112,6 +117,7 @@ describe("data center store ledger Order projection", () => {
         platform: "shoplazza",
         orderId: "slz-3",
         store_local_date: "2026-07-03",
+        created_at_utc: new Date("2026-07-03T12:00:00.000Z"),
         orderTotal: 300,
         revenue: 300,
         paymentStatus: "paid"
@@ -153,6 +159,7 @@ describe("data center store ledger Order projection", () => {
         platform: "shoplazza",
         orderId: "slz-1",
         store_local_date: "2026-07-01",
+        created_at_utc: new Date("2026-07-01T12:00:00.000Z"),
         store_timezone: "America/Los_Angeles",
         orderTotal: 120,
         revenue: 120,
@@ -270,6 +277,7 @@ describe("data center store ledger Order projection", () => {
         storeId: 1,
         orderId: "order-1",
         store_local_date: "2026-07-01",
+        created_at_utc: new Date("2026-07-01T12:00:00.000Z"),
         orderTotal: 50,
         revenue: 50,
         paymentStatus: "paid"
@@ -301,8 +309,8 @@ describe("data center store ledger Order projection", () => {
 
   it("LEDGER-DEDUPE-01 counts duplicate storeId + orderId line rows once", async () => {
     prismaMock.order.findMany.mockResolvedValue([
-      { id: "line-1", storeId: 1, orderId: "dup-1", store_local_date: "2026-07-01", orderTotal: 80, revenue: 30, paymentStatus: "paid" },
-      { id: "line-2", storeId: 1, orderId: "dup-1", store_local_date: "2026-07-01", orderTotal: 80, revenue: 50, paymentStatus: "paid" }
+      { id: "line-1", storeId: 1, orderId: "dup-1", store_local_date: "2026-07-01", created_at_utc: new Date("2026-07-01T12:00:00.000Z"), orderTotal: 80, revenue: 30, paymentStatus: "paid" },
+      { id: "line-2", storeId: 1, orderId: "dup-1", store_local_date: "2026-07-01", created_at_utc: new Date("2026-07-01T12:00:00.000Z"), orderTotal: 80, revenue: 50, paymentStatus: "paid" }
     ]);
 
     const result = await refreshStoreDataCenterLedger({
@@ -334,8 +342,8 @@ describe("data center store ledger Order projection", () => {
 
   it("LEDGER-STORE-01 keeps projection scoped to the requested store only", async () => {
     prismaMock.order.findMany.mockResolvedValue([
-      { id: "line-1", storeId: 1, orderId: "store-1-order", store_local_date: "2026-07-01", orderTotal: 20, revenue: 20, paymentStatus: "paid" },
-      { id: "line-2", storeId: 2, orderId: "store-2-order", store_local_date: "2026-07-01", orderTotal: 999, revenue: 999, paymentStatus: "paid" }
+      { id: "line-1", storeId: 1, orderId: "store-1-order", store_local_date: "2026-07-01", created_at_utc: new Date("2026-07-01T12:00:00.000Z"), orderTotal: 20, revenue: 20, paymentStatus: "paid" },
+      { id: "line-2", storeId: 2, orderId: "store-2-order", store_local_date: "2026-07-01", created_at_utc: new Date("2026-07-01T12:00:00.000Z"), orderTotal: 999, revenue: 999, paymentStatus: "paid" }
     ]);
 
     const result = await refreshStoreDataCenterLedger({
@@ -350,7 +358,7 @@ describe("data center store ledger Order projection", () => {
 
   it("LEDGER-REPLACE-01 overwrites stale values instead of incrementing them", async () => {
     prismaMock.order.findMany.mockResolvedValue([
-      { id: "line-1", storeId: 1, orderId: "order-1", store_local_date: "2026-07-01", orderTotal: 25, revenue: 25, paymentStatus: "paid" }
+      { id: "line-1", storeId: 1, orderId: "order-1", store_local_date: "2026-07-01", created_at_utc: new Date("2026-07-01T12:00:00.000Z"), orderTotal: 25, revenue: 25, paymentStatus: "paid" }
     ]);
 
     await refreshStoreDataCenterLedger({
@@ -402,7 +410,7 @@ describe("data center store ledger Order projection", () => {
 
   it("LEDGER-SCOPE-01 writes only the requested store/date keys", async () => {
     prismaMock.order.findMany.mockResolvedValue([
-      { id: "line-1", storeId: 1, orderId: "order-1", store_local_date: "2026-07-01", orderTotal: 25, revenue: 25, paymentStatus: "paid" }
+      { id: "line-1", storeId: 1, orderId: "order-1", store_local_date: "2026-07-01", created_at_utc: new Date("2026-07-01T12:00:00.000Z"), orderTotal: 25, revenue: 25, paymentStatus: "paid" }
     ]);
 
     await refreshStoreDataCenterLedger({

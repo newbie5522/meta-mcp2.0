@@ -133,12 +133,13 @@ describe("Shoplazza order adapter", () => {
     expect(next.nextUrl).toContain("cursor=cursor-2");
   });
 
-  it("SHOPLAZZA-DATE-02 returns an order created outside the range but placed inside the range in dual-slice mode", async () => {
+  it("SHOPLAZZA-DATE-02 returns an order paid inside the range in multi-slice mode", async () => {
     axiosGet
+      .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} })
       .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} })
       .mockResolvedValueOnce({
         status: 200,
-        data: { data: { orders: [{ id: "paid-in-range", created_at: "2026-06-01T00:00:00Z", placed_at: "2026-07-02T06:00:00Z" }], cursor: "" } },
+        data: { data: { orders: [{ id: "paid-in-range", created_at: "2026-06-01T00:00:00Z", placed_at: "2026-06-05T06:00:00Z", paid_at: "2026-07-02T06:00:00Z" }], cursor: "" } },
         headers: {}
       });
 
@@ -149,15 +150,17 @@ describe("Shoplazza order adapter", () => {
       endUtc: "2026-07-03T06:59:59Z"
     });
 
-    expect(result.queryDateFields).toEqual(["created_at", "placed_at"]);
+    expect(result.queryDateFields).toEqual(["created_at", "placed_at", "paid_at"]);
     expect(result.rawOrders.map(order => order.id)).toEqual(["paid-in-range"]);
     expect(result.coverageComplete).toBe(true);
     expect(axiosGet.mock.calls[0][0]).toContain("created_at_min=");
     expect(axiosGet.mock.calls[1][0]).toContain("placed_at_min=");
+    expect(axiosGet.mock.calls[2][0]).toContain("paid_at_min=");
   });
 
-  it("SHOPLAZZA-DATE-03 deduplicates the same order across created_at and placed_at slices by order id", async () => {
+  it("SHOPLAZZA-DATE-03 deduplicates the same order across created_at, placed_at, and paid_at slices by order id", async () => {
     axiosGet
+      .mockResolvedValueOnce({ status: 200, data: { data: { orders: [{ id: "same-order" }], cursor: "" } }, headers: {} })
       .mockResolvedValueOnce({ status: 200, data: { data: { orders: [{ id: "same-order" }], cursor: "" } }, headers: {} })
       .mockResolvedValueOnce({ status: 200, data: { data: { orders: [{ id: "same-order" }], cursor: "" } }, headers: {} });
 
@@ -170,7 +173,7 @@ describe("Shoplazza order adapter", () => {
 
     expect(result.rawOrders).toHaveLength(1);
     expect(result.deduplicatedOrderCount).toBe(1);
-    expect(result.duplicateAcrossSlicesCount).toBe(1);
+    expect(result.duplicateAcrossSlicesCount).toBe(2);
     expect(result.coverageComplete).toBe(true);
   });
 
@@ -182,7 +185,8 @@ describe("Shoplazza order adapter", () => {
       .mockRejectedValueOnce({ response: { status: 500, data: { error: "boom" } } })
       .mockRejectedValueOnce({ response: { status: 500, data: { error: "boom" } } })
       .mockRejectedValueOnce({ response: { status: 500, data: { error: "boom" } } })
-      .mockRejectedValueOnce({ response: { status: 500, data: { error: "boom" } } });
+      .mockRejectedValueOnce({ response: { status: 500, data: { error: "boom" } } })
+      .mockResolvedValueOnce({ status: 200, data: { data: { orders: [], cursor: "" } }, headers: {} });
 
     const result = await fetchShoplazzaOrderSlices({
       domain: "shop.example.com",

@@ -9,7 +9,7 @@ import { getAggregatedCreativeInsights } from "../services/creative-insights.ser
 import { analyzeCreativeScope } from "../services/creative-analysis.service.js";
 import { normalizeMetaAccountId } from "../utils.js";
 import { getCountryAnalytics } from "../services/country-analytics.service.js";
-import { getStoreOrderFacts, getStoreOrderSummary } from "../services/order-fact.service.js";
+import { classifyOrderValidity, getStoreOrderFacts, getStoreOrderSummary } from "../services/order-fact.service.js";
 import { getMetaAccountPerformanceFacts, getMetaPerformanceSummary } from "../services/meta-performance-fact.service.js";
 import { getAccountMappingFacts, resolveAccountStoreBinding } from "../services/mapping-fact.service.js";
 import { runDataPipelineAudit } from "../services/data-pipeline-audit.service.js";
@@ -149,6 +149,16 @@ function parseLedgerOrderIds(value: unknown): string[] {
 
 function roundCurrency(value: number) {
   return Number(Number(value || 0).toFixed(2));
+}
+
+function isConfirmedPaidSalesOrder(row: any, platform: string | null | undefined) {
+  return classifyOrderValidity({
+    platform: platform || row?.storePlatform || row?.platform || null,
+    paymentStatus: row?.paymentStatus,
+    fulfillmentStatus: row?.fulfillmentStatus,
+    cancelledAt: row?.cancelledAt,
+    paidAt: row?.paidAt ?? row?.paid_at ?? row?.rawPaidAt ?? row?.created_at_utc
+  }).valid;
 }
 
 function coverageMetric(coverage: any, value: number) {
@@ -2096,9 +2106,7 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
 
     const uniqueOrdersMap = new Map<string, { orderTotal: number, items: any[] }>();
     ordersInDb.forEach(o => {
-      // Exclude unpaid, pending, cancelled, or waiting orders from registered system totals
-      const paymentStatus = o.paymentStatus ? String(o.paymentStatus).toLowerCase() : "";
-      if (paymentStatus && ["waiting", "unpaid", "pending", "cancelled", "voided"].includes(paymentStatus)) {
+      if (!isConfirmedPaidSalesOrder(o, store.platform)) {
         return;
       }
       const oId = scopedStoreOrderKey(store.id, o);
@@ -2172,7 +2180,7 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       const paymentStatus = o.paymentStatus ? String(o.paymentStatus).toLowerCase() : "";
       let includedByOrderFactRule = true;
       let excludeReason: string | null = null;
-      if (paymentStatus && ["waiting", "unpaid", "pending", "cancelled", "voided"].includes(paymentStatus)) {
+      if (!isConfirmedPaidSalesOrder(o, store.platform)) {
         includedByOrderFactRule = false;
         excludeReason = `Excluded by payment status: ${paymentStatus}`;
       }
@@ -2279,7 +2287,7 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
           const convertedLocalDate = rawTime ? dayjs(rawTime).tz(timezone).format("YYYY-MM-DD") : "";
           if (convertedLocalDate && (convertedLocalDate !== fact.storeLocalDate || convertedLocalDate < startStr || convertedLocalDate > endStr)) {
             reason = "TIMEZONE_BOUNDARY_MISMATCH";
-          } else if (fact.paymentStatus && ["waiting", "unpaid", "pending", "cancelled", "voided"].includes(fact.paymentStatus.toLowerCase())) {
+          } else if (!isConfirmedPaidSalesOrder(fact.items?.[0] || fact, store.platform)) {
             reason = "PAYMENT_STATUS_EXCLUDED_BY_LEDGER";
           } else {
             reason = "STALE_ORDER_FACT_ROW";
@@ -3341,6 +3349,8 @@ router.get("/store-orders", async (req, res) => {
     const storeMap = new Map(stores.map(store => [store.id, store]));
     const uniqueOrders = new Map<string, any>();
     for (const order of orders) {
+      const store = storeMap.get(Number(order.storeId));
+      if (!isConfirmedPaidSalesOrder(order, store?.platform)) continue;
       const key = scopedStoreOrderKey(order.storeId, order);
       if (key && !uniqueOrders.has(key)) uniqueOrders.set(key, order);
     }
