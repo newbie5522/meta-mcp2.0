@@ -123,7 +123,7 @@ export function formatStoreAovText(row: { aov?: number | null; avgOrderValue?: n
 
 export function getStoreSyncStatusLabel(status: string | null | undefined) {
   const normalized = String(status || "").trim().toUpperCase();
-  if (normalized === "SUCCESS" || normalized === "SUCCESSFUL") return "已同步";
+  if (normalized === "READY" || normalized === "COVERED" || normalized === "SUCCESS" || normalized === "SUCCESSFUL") return "已同步";
   if (normalized === "NO_NEW_DATA") return "已同步，无新数据";
   if (normalized === "PARTIAL_SUCCESS" || normalized === "PARTIAL_COVERAGE") return "部分完成";
   if (normalized === "RUNNING" || normalized === "PENDING") return "同步中";
@@ -466,8 +466,9 @@ setAiReport(reportText || "未返回分析报告");
     const averageAOV = totalOrders > 0 ? totalSales / totalOrders : 0;
     const realGlobalROAS = totalSpend > 0 ? totalSales / totalSpend : 0;
 
-    const storeMetricsAvailable = ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(String(storeCoverage?.status).toUpperCase());
-    const metaMetricsAvailable = ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(String(metaCoverage?.status).toUpperCase());
+    const visibleCoverageStatuses = ["READY", "COVERED", "SUCCESS", "PARTIAL_COVERAGE", "PARTIAL_SUCCESS", "TRUE_EMPTY"];
+    const storeMetricsAvailable = visibleCoverageStatuses.includes(String(storeCoverage?.status).toUpperCase());
+    const metaMetricsAvailable = visibleCoverageStatuses.includes(String(metaCoverage?.status).toUpperCase());
     return {
       totalStores,
       totalOrders: storeMetricsAvailable ? totalOrders : null,

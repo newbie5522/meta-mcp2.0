@@ -162,7 +162,8 @@ function isConfirmedPaidSalesOrder(row: any, platform: string | null | undefined
 }
 
 function coverageMetric(coverage: any, value: number) {
-  return ["READY", "PARTIAL_COVERAGE", "TRUE_EMPTY"].includes(String(coverage?.status || ""))
+  const status = String(coverage?.status || "").toUpperCase();
+  return ["READY", "COVERED", "SUCCESS", "PARTIAL_COVERAGE", "PARTIAL_SUCCESS", "TRUE_EMPTY"].includes(status)
     ? value
     : null;
 }
@@ -1841,6 +1842,20 @@ router.get("/stores", async (req, res) => {
       storesInventory = storesInventory.filter(s => s.id === storeId);
     }
 
+    const perStoreCoverageEntries = await Promise.all(
+      storesInventory.map(async (store) => [
+        store.id,
+        await getDataSourceCoverage({
+          source: "STORE_LEDGER",
+          requestedStartDate: startStr,
+          requestedEndDate: endStr,
+          storeId: store.id,
+          scopeKey: `store:${store.id}`
+        })
+      ] as const)
+    );
+    const perStoreCoverage = new Map(perStoreCoverageEntries);
+
     // 2. Load meta ledger rows in that range to compute mapped spend
     const metaRows = await prisma.dataCenterMetaAccountDaily.findMany({
       where: {
@@ -1859,6 +1874,7 @@ router.get("/stores", async (req, res) => {
 
     const storesList = storesInventory.map(store => {
       const storeRows = rowsByStore.get(store.id) || [];
+      const currentStoreCoverage = perStoreCoverage.get(store.id) || storePageCoverage.storeCoverage;
 
       const orderCount = storeRows.reduce((s, r) => s + Number(r.orderCount || 0), 0);
       const revenue = Number(storeRows.reduce((s, r) => s + Number(r.grossSales || 0), 0).toFixed(2));
@@ -1888,7 +1904,7 @@ router.get("/stores", async (req, res) => {
         orderCount,
         revenue,
         adSpend,
-        storeCoverage: storePageCoverage.storeCoverage,
+        storeCoverage: currentStoreCoverage,
         metaCoverage: storePageCoverage.metaCoverage
       });
       const timezoneDisplay = buildStoreTimezoneDisplay({ store, storeRows });
@@ -1928,8 +1944,10 @@ router.get("/stores", async (req, res) => {
         accountsCount: uniqueMappedIds.length,
         hasMappedAccounts: uniqueMappedIds.length > 0,
         needsRefresh: storeRows.length === 0,
-        syncStatus: storePageCoverage.storeCoverage.status,
-        dataCoverage: storePageCoverage.storeCoverage,
+        syncStatus: currentStoreCoverage.status,
+        coverageStatus: currentStoreCoverage.status,
+        coverageComplete: currentStoreCoverage.coverageComplete,
+        dataCoverage: currentStoreCoverage,
         reconciliation: {
           status: "derived_from_datacenter_ledger",
           match: null,

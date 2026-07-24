@@ -109,6 +109,11 @@ describe("Store page request contract", () => {
     expect(getStoreSyncStatusLabel("NO_NEW_DATA")).toBe("已同步，无新数据");
   });
 
+  it("READY and COVERED use the same synced status label as SUCCESS", () => {
+    expect(getStoreSyncStatusLabel("READY")).toBe(getStoreSyncStatusLabel("SUCCESS"));
+    expect(getStoreSyncStatusLabel("COVERED")).toBe(getStoreSyncStatusLabel("SUCCESS"));
+  });
+
   it("UI-SLZ-TZ-01 system_default with orders shows real order, sales, and AOV values", () => {
     const row = { orderCount: 2, grossSales: 80, aov: 40 };
 

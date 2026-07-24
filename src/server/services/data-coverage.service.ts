@@ -144,6 +144,14 @@ function readLogRange(log: any, metadata: Record<string, any>) {
   };
 }
 
+function readReceiptCoverageComplete(log: any, metadata: Record<string, any>) {
+  return metadata.coverageComplete === true || log.coverageComplete === true;
+}
+
+function readReceiptTruncated(log: any, metadata: Record<string, any>) {
+  return metadata.truncated === true || log.truncated === true;
+}
+
 async function resolveSyncReceipt(query: DataCoverageQuery, scopeKey: string) {
   const logs = await prisma.syncLog.findMany({
     where: { taskType: { in: SOURCE_TASK_TYPES[query.source] } },
@@ -187,8 +195,8 @@ async function resolveSyncReceipt(query: DataCoverageQuery, scopeKey: string) {
       recordsSaved: Number(log.recordsSaved ?? metadata.recordsSaved ?? 0),
       failedCount
     };
-    evidenceCoverageComplete = metadata.coverageComplete === true;
-    evidenceTruncated = metadata.truncated === true;
+    evidenceCoverageComplete = readReceiptCoverageComplete(log, metadata);
+    evidenceTruncated = readReceiptTruncated(log, metadata);
     asOfTime = formatBusinessAsOf(log.finishedAt);
   }
 

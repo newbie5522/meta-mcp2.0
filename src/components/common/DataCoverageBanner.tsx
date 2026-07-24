@@ -2,6 +2,10 @@ import React from "react";
 
 export function coverageClass(status: string) {
   switch (status) {
+    case "READY":
+    case "COVERED":
+    case "SUCCESS":
+      return "border-emerald-200 bg-emerald-50 text-emerald-800";
     case "ERROR":
       return "border-red-200 bg-red-50 text-red-800";
     case "PARTIAL_COVERAGE":
@@ -17,13 +21,16 @@ export function coverageClass(status: string) {
 
 export function DataCoverageBanner({ coverage }: { coverage?: any }) {
   if (!coverage?.status) return null;
+  const normalizedStatus = String(coverage.status || "").toUpperCase();
   const showCurrentDayNotice = Boolean(coverage.currentDayInProgress && coverage.asOfTime);
-  if (coverage.status === "READY" && !showCurrentDayNotice) return null;
+  if ((normalizedStatus === "READY" || normalizedStatus === "COVERED" || normalizedStatus === "SUCCESS") && !showCurrentDayNotice) return null;
 
   const latest = coverage.latestAvailableDate || "未知";
   const requestedEnd = coverage.requestedEndDate || "当前截止日";
   const copy: Record<string, string> = {
     READY: "当前周期数据已覆盖。",
+    COVERED: "当前周期数据已覆盖。",
+    SUCCESS: "当前周期数据已覆盖。",
     PARTIAL_COVERAGE: `请求截止 ${requestedEnd}，当前事实只覆盖至 ${latest}`,
     NOT_SYNCED: `当前周期尚未同步，数据最新至 ${latest}`,
     TRUE_EMPTY: "当前周期已完整同步，确认没有业务数据。",
@@ -32,8 +39,8 @@ export function DataCoverageBanner({ coverage }: { coverage?: any }) {
   };
 
   return (
-    <div className={`rounded-lg border px-3 py-2 text-xs font-medium ${coverageClass(coverage.status)}`}>
-      {copy[coverage.status] || `数据覆盖状态：${coverage.status}`}
+    <div className={`rounded-lg border px-3 py-2 text-xs font-medium ${coverageClass(normalizedStatus)}`}>
+      {copy[normalizedStatus] || `数据覆盖状态：${coverage.status}`}
       {showCurrentDayNotice ? `（今日数据进行中，统计截至 ${coverage.asOfTime}）` : ""}
     </div>
   );

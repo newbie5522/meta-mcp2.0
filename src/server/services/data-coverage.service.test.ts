@@ -38,6 +38,16 @@ function mockNoMetaCreativeFacts() {
   prismaMock.factMetaPerformance.findFirst.mockResolvedValue(null);
 }
 
+function mockStoreLedgerFacts(count = 30) {
+  prismaMock.dataCenterStoreDaily.count.mockResolvedValue(count);
+  prismaMock.dataCenterStoreDaily.findFirst.mockImplementation((args: any) => {
+    if (args.orderBy?.date === "asc") return Promise.resolve({ date: "2026-06-24" });
+    if (args.orderBy?.date === "desc") return Promise.resolve({ date: "2026-07-23" });
+    if (args.orderBy?.apiFetchedAt === "desc") return Promise.resolve({ apiFetchedAt: new Date("2026-07-24T06:25:00.000Z") });
+    return Promise.resolve(null);
+  });
+}
+
 function mockCompleteZeroReceipt(factLevel: "campaign" | "adset" | "ad", levelCounts: Record<string, number>) {
   prismaMock.syncLog.findMany.mockResolvedValue([{
     id: `log-${factLevel}-zero`,
@@ -236,5 +246,169 @@ describe("data coverage service factLevel receipt contract", () => {
 
     expect(coverage.status).toBe("NOT_SYNCED");
     expect(coverage.coverageComplete).toBe(false);
+  });
+});
+
+describe("store ledger coverage receipt contract", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prismaMock.syncLog.findMany.mockResolvedValue([]);
+    prismaMock.accountMapping.findMany.mockResolvedValue([]);
+    prismaMock.adAccount.findMany.mockResolvedValue([]);
+    mockStoreLedgerFacts();
+  });
+
+  it("COVERAGE-STORE-01 exact store ledger SUCCESS receipt with facts resolves READY", async () => {
+    prismaMock.syncLog.findMany.mockResolvedValue([{
+      id: "ledger-log-3",
+      taskType: "refresh_store_datacenter_ledger",
+      status: "success",
+      storeId: 3,
+      rangeStart: "2026-06-24",
+      rangeEnd: "2026-07-23",
+      recordsFetched: 843,
+      recordsSaved: 30,
+      finishedAt: new Date("2026-07-24T06:25:00.000Z"),
+      metadata: JSON.stringify({
+        scopeKey: "store:3",
+        status: "SUCCESS",
+        coverageComplete: true,
+        truncated: false,
+        failedSlices: []
+      })
+    }]);
+
+    const coverage = await getDataSourceCoverage({
+      source: "STORE_LEDGER",
+      requestedStartDate: "2026-06-24",
+      requestedEndDate: "2026-07-23",
+      storeId: 3,
+      scopeKey: "store:3"
+    });
+
+    expect(coverage.status).toBe("READY");
+    expect(coverage.coverageComplete).toBe(true);
+    expect(coverage.syncEvidence?.taskType).toBe("refresh_store_datacenter_ledger");
+  });
+
+  it("COVERAGE-STORE-02 exact complete zero store ledger receipt resolves TRUE_EMPTY", async () => {
+    mockStoreLedgerFacts(0);
+    prismaMock.dataCenterStoreDaily.findFirst.mockResolvedValue(null);
+    prismaMock.syncLog.findMany.mockResolvedValue([{
+      id: "ledger-empty-3",
+      taskType: "refresh_store_datacenter_ledger",
+      status: "success",
+      storeId: 3,
+      rangeStart: "2026-06-24",
+      rangeEnd: "2026-07-23",
+      recordsFetched: 0,
+      recordsSaved: 0,
+      metadata: JSON.stringify({
+        scopeKey: "store:3",
+        status: "NO_NEW_DATA",
+        coverageComplete: true,
+        truncated: false,
+        failedSlices: []
+      })
+    }]);
+
+    const coverage = await getDataSourceCoverage({
+      source: "STORE_LEDGER",
+      requestedStartDate: "2026-06-24",
+      requestedEndDate: "2026-07-23",
+      storeId: 3,
+      scopeKey: "store:3"
+    });
+
+    expect(coverage.status).toBe("TRUE_EMPTY");
+    expect(coverage.coverageComplete).toBe(true);
+  });
+
+  it("COVERAGE-STORE-03 other date range receipt does not prove current range", async () => {
+    prismaMock.syncLog.findMany.mockResolvedValue([{
+      id: "ledger-log-other-range",
+      taskType: "refresh_store_datacenter_ledger",
+      status: "success",
+      storeId: 3,
+      rangeStart: "2026-07-01",
+      rangeEnd: "2026-07-23",
+      metadata: JSON.stringify({
+        scopeKey: "store:3",
+        status: "SUCCESS",
+        coverageComplete: true,
+        truncated: false,
+        failedSlices: []
+      })
+    }]);
+
+    const coverage = await getDataSourceCoverage({
+      source: "STORE_LEDGER",
+      requestedStartDate: "2026-06-24",
+      requestedEndDate: "2026-07-23",
+      storeId: 3,
+      scopeKey: "store:3"
+    });
+
+    expect(coverage.status).toBe("PARTIAL_COVERAGE");
+    expect(coverage.explicitRangeSyncSuccess).toBe(false);
+  });
+
+  it("COVERAGE-STORE-04 other storeId receipt does not prove current store", async () => {
+    prismaMock.syncLog.findMany.mockResolvedValue([{
+      id: "ledger-log-store-2",
+      taskType: "refresh_store_datacenter_ledger",
+      status: "success",
+      storeId: 2,
+      rangeStart: "2026-06-24",
+      rangeEnd: "2026-07-23",
+      metadata: JSON.stringify({
+        scopeKey: "store:2",
+        status: "SUCCESS",
+        coverageComplete: true,
+        truncated: false,
+        failedSlices: []
+      })
+    }]);
+
+    const coverage = await getDataSourceCoverage({
+      source: "STORE_LEDGER",
+      requestedStartDate: "2026-06-24",
+      requestedEndDate: "2026-07-23",
+      storeId: 3,
+      scopeKey: "store:3"
+    });
+
+    expect(coverage.status).toBe("PARTIAL_COVERAGE");
+    expect(coverage.syncEvidence).toBeNull();
+  });
+
+  it("COVERAGE-STORE-07 truncated or failed slices keep store coverage PARTIAL", async () => {
+    prismaMock.syncLog.findMany.mockResolvedValue([{
+      id: "ledger-log-truncated",
+      taskType: "refresh_store_datacenter_ledger",
+      status: "success",
+      storeId: 3,
+      rangeStart: "2026-06-24",
+      rangeEnd: "2026-07-23",
+      metadata: JSON.stringify({
+        scopeKey: "store:3",
+        status: "PARTIAL_SUCCESS",
+        coverageComplete: false,
+        truncated: true,
+        failedSlices: [{ page: 2 }]
+      })
+    }]);
+
+    const coverage = await getDataSourceCoverage({
+      source: "STORE_LEDGER",
+      requestedStartDate: "2026-06-24",
+      requestedEndDate: "2026-07-23",
+      storeId: 3,
+      scopeKey: "store:3"
+    });
+
+    expect(coverage.status).toBe("PARTIAL_COVERAGE");
+    expect(coverage.coverageComplete).toBe(false);
+    expect(coverage.syncEvidence?.failedCount).toBe(1);
   });
 });

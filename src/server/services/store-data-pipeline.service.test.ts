@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { prismaMock, syncStoreOrdersMock, refreshLedgerMock } = vi.hoisted(() => ({
   prismaMock: {
-    syncLog: { findUnique: vi.fn() }
+    syncLog: { findUnique: vi.fn(), create: vi.fn() }
   },
   syncStoreOrdersMock: vi.fn(),
   refreshLedgerMock: vi.fn()
@@ -38,8 +38,10 @@ beforeEach(() => {
   refreshLedgerMock.mockResolvedValue({
     recordsFetched: 2,
     recordsSaved: 1,
-    uniqueOrderCount: 2
+    uniqueOrderCount: 2,
+    totalGrossSales: 100
   });
+  prismaMock.syncLog.create.mockResolvedValue({});
 });
 
 describe("single canonical store data pipeline", () => {
@@ -75,6 +77,18 @@ describe("single canonical store data pipeline", () => {
       status: "SUCCESS",
       orderSync: { taskId: "task-1", recordsFetched: 2, recordsSaved: 2 },
       ledger: { source: "Order", dateField: "Order.store_local_date", uniqueOrderCount: 2 }
+    });
+    expect(prismaMock.syncLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        taskType: "refresh_store_datacenter_ledger",
+        status: "success",
+        storeId: 1,
+        rangeStart: expect.any(Date),
+        rangeEnd: expect.any(Date),
+        recordsFetched: 2,
+        recordsSaved: 1,
+        metadata: expect.stringContaining('"scopeKey":"store:1"')
+      })
     });
   });
 
@@ -270,6 +284,12 @@ describe("single canonical store data pipeline", () => {
     expect(refreshLedgerMock).toHaveBeenCalled();
     expect(receipt.status).toBe("NO_NEW_DATA");
     expect(receipt.ledger.status).toBe("SUCCESS");
+    expect(prismaMock.syncLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        taskType: "refresh_store_datacenter_ledger",
+        metadata: expect.stringContaining('"status":"NO_NEW_DATA"')
+      })
+    });
   });
 
   it("PIPE-SLZ-TZ-03 system_default alone does not produce PARTIAL_SUCCESS", async () => {

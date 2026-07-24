@@ -6,6 +6,12 @@ describe("DataCoverageBanner", () => {
     expect(DataCoverageBanner({ coverage: { status: "READY" } })).toBeNull();
   });
 
+  it("BANNER-01B READY/COVERED/SUCCESS use green success class", () => {
+    expect(coverageClass("READY")).toContain("emerald");
+    expect(coverageClass("COVERED")).toContain("emerald");
+    expect(coverageClass("SUCCESS")).toContain("emerald");
+  });
+
   it("BANNER-02 RUNNING blue neutral", () => {
     expect(coverageClass("SYNC_RUNNING")).toContain("blue");
   });

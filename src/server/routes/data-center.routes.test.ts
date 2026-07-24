@@ -8,7 +8,12 @@ const { prismaMock } = vi.hoisted(() => ({
     factMetaPerformance: { findMany: vi.fn() },
     store: { findUnique: vi.fn(), findMany: vi.fn() },
     order: { findMany: vi.fn() },
-    dataCenterStoreDaily: { findMany: vi.fn() }
+    dataCenterStoreDaily: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
+    dataCenterMetaAccountDaily: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
+    accountMapping: { findMany: vi.fn() },
+    adAccount: { findMany: vi.fn(), count: vi.fn() },
+    syncLog: { findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn() },
+    dataCenterRefreshRun: { findFirst: vi.fn() }
   }
 }));
 
@@ -340,6 +345,84 @@ describe("Store API display metrics", () => {
     expect(metrics.visibleOrderCount).toBeNull();
     expect(metrics.visibleRevenue).toBeNull();
     expect(metrics.roas).toBeNull();
+  });
+});
+
+describe("Data Center stores route coverage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prismaMock.store.findMany.mockResolvedValue([
+      { id: 2, name: "Romanticed", platform: "shoplazza", domain: "romanticed.test", timezone: "America/Los_Angeles", accounts: [], accountMappings: [] },
+      { id: 3, name: "kolaich", platform: "shopline", domain: "kolaich.test", timezone: "America/Los_Angeles", accounts: [], accountMappings: [] }
+    ]);
+    prismaMock.dataCenterStoreDaily.findMany.mockResolvedValue([
+      { storeId: 2, date: "2026-07-23", orderCount: 95, grossSales: 4714.96, apiFetchedAt: new Date("2026-07-24T06:00:00.000Z"), currency: "USD" },
+      { storeId: 3, date: "2026-07-23", orderCount: 295, grossSales: 15301.09, apiFetchedAt: new Date("2026-07-24T06:25:00.000Z"), currency: "USD" }
+    ]);
+    prismaMock.dataCenterStoreDaily.count.mockImplementation(({ where }: any) => {
+      if (where?.storeId === 3) return Promise.resolve(30);
+      if (where?.storeId === 2) return Promise.resolve(30);
+      return Promise.resolve(60);
+    });
+    prismaMock.dataCenterStoreDaily.findFirst.mockImplementation(({ where, orderBy }: any) => {
+      const syncedAt = where?.storeId === 3
+        ? new Date("2026-07-24T06:25:00.000Z")
+        : new Date("2026-07-24T06:00:00.000Z");
+      if (orderBy?.date === "asc") return Promise.resolve({ date: "2026-06-24" });
+      if (orderBy?.date === "desc") return Promise.resolve({ date: "2026-07-23" });
+      if (orderBy?.apiFetchedAt === "desc") return Promise.resolve({ apiFetchedAt: syncedAt });
+      return Promise.resolve(null);
+    });
+    prismaMock.dataCenterMetaAccountDaily.findMany.mockResolvedValue([]);
+    prismaMock.dataCenterMetaAccountDaily.count.mockResolvedValue(0);
+    prismaMock.dataCenterMetaAccountDaily.findFirst.mockResolvedValue(null);
+    prismaMock.accountMapping.findMany.mockResolvedValue([]);
+    prismaMock.adAccount.findMany.mockResolvedValue([]);
+    prismaMock.dataCenterRefreshRun.findFirst.mockResolvedValue(null);
+    prismaMock.syncLog.findMany.mockImplementation(({ where }: any) => {
+      const taskTypes = where?.taskType?.in || [];
+      if (!taskTypes.includes("refresh_store_datacenter_ledger")) return Promise.resolve([]);
+      return Promise.resolve([{
+        id: "ledger-log-kolaich",
+        taskType: "refresh_store_datacenter_ledger",
+        status: "success",
+        storeId: 3,
+        rangeStart: "2026-06-24",
+        rangeEnd: "2026-07-23",
+        recordsFetched: 843,
+        recordsSaved: 30,
+        startedAt: new Date("2026-07-24T06:24:00.000Z"),
+        finishedAt: new Date("2026-07-24T06:25:00.000Z"),
+        metadata: JSON.stringify({
+          scopeKey: "store:3",
+          status: "SUCCESS",
+          coverageComplete: true,
+          truncated: false,
+          failedSlices: []
+        })
+      }]);
+    });
+  });
+
+  it("STORE-COVERAGE-01 uses each store's own STORE_LEDGER receipt for row syncStatus", async () => {
+    const response = await invokeDataCenterRoute("/stores", {
+      query: { startDate: "2026-06-24", endDate: "2026-07-23" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const kolaich = response.body.stores.find((store: any) => store.storeId === 3);
+    const romanticed = response.body.stores.find((store: any) => store.storeId === 2);
+
+    expect(kolaich).toMatchObject({
+      orderCount: 295,
+      grossSales: 15301.09,
+      syncStatus: "READY",
+      coverageStatus: "READY",
+      coverageComplete: true
+    });
+    expect(kolaich.dataCoverage.syncEvidence.taskType).toBe("refresh_store_datacenter_ledger");
+    expect(romanticed.syncStatus).toBe("PARTIAL_COVERAGE");
+    expect(response.body.coverage.status).toBe("PARTIAL_COVERAGE");
   });
 });
 

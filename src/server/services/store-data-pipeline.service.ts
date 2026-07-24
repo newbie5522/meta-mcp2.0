@@ -64,6 +64,72 @@ function metadataTimezone(metadata: any, store: any) {
   return metadata?.timezone || metadata?.diagnostics?.timezoneAfter || store?.timezone || "";
 }
 
+function rangeStartDate(value: string) {
+  return new Date(`${value}T00:00:00.000Z`);
+}
+
+function rangeEndDate(value: string) {
+  return new Date(`${value}T23:59:59.999Z`);
+}
+
+async function writeStoreLedgerCoverageReceipt(input: {
+  store: any;
+  chainId: string;
+  triggeredBy: string;
+  parentTaskId: string | null;
+  startDate: string;
+  endDate: string;
+  orderSyncTaskId: string | null;
+  orderSyncFinishedAt: Date | null;
+  receiptStatus: "SUCCESS" | "NO_NEW_DATA";
+  ledger: StorePipelineReceipt["ledger"];
+}) {
+  const now = new Date();
+  const metadata = {
+    parentTaskId: input.parentTaskId,
+    sourceSyncTaskId: input.orderSyncTaskId,
+    sourceSyncFinishedAt: input.orderSyncFinishedAt?.toISOString?.() || null,
+    originalStoreId: String(input.store.id),
+    storeId: Number(input.store.id),
+    storeName: input.store.name,
+    platform: String(input.store.platform || "unknown").toLowerCase(),
+    rangeStart: input.startDate,
+    rangeEnd: input.endDate,
+    scopeKey: `store:${input.store.id}`,
+    status: input.receiptStatus,
+    coverageComplete: true,
+    truncated: false,
+    failedSlices: [],
+    failedAccounts: [],
+    source: "DataCenterStoreDaily",
+    dateField: "DataCenterStoreDaily.date",
+    recordsFetched: input.ledger.recordsFetched,
+    recordsSaved: input.ledger.recordsSaved,
+    uniqueOrderCount: input.ledger.uniqueOrderCount,
+    totalGrossSales: input.ledger.totalGrossSales,
+    completedAt: now.toISOString()
+  };
+
+  await prisma.syncLog.create({
+    data: {
+      taskType: "refresh_store_datacenter_ledger",
+      type: "refresh_store_datacenter_ledger",
+      sourceType: String(input.store.platform || "summary").toLowerCase(),
+      triggeredBy: input.triggeredBy,
+      taskChainId: input.chainId,
+      storeId: Number(input.store.id),
+      status: "success",
+      startedAt: input.orderSyncFinishedAt || now,
+      finishedAt: now,
+      rangeStart: rangeStartDate(input.startDate),
+      rangeEnd: rangeEndDate(input.endDate),
+      recordsFetched: input.ledger.recordsFetched,
+      recordsSaved: input.ledger.recordsSaved,
+      metadata: JSON.stringify(metadata)
+    }
+  });
+}
+
 export async function executeStoreDataPipeline(input: {
   store: any;
   chainId: string;
@@ -196,6 +262,24 @@ export async function executeStoreDataPipeline(input: {
       totalGrossSales: Number(ledger.totalGrossSales ?? 0),
       error: null
     };
+    const receiptStatus =
+      canonicalStatus === "NO_NEW_DATA" &&
+      recordsFetched === 0 &&
+      recordsSaved === 0
+        ? "NO_NEW_DATA"
+        : "SUCCESS";
+    await writeStoreLedgerCoverageReceipt({
+      store,
+      chainId: input.chainId,
+      triggeredBy: input.triggeredBy,
+      parentTaskId: input.previousTaskId || null,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      orderSyncTaskId: taskId,
+      orderSyncFinishedAt: log?.finishedAt || null,
+      receiptStatus,
+      ledger: baseReceipt.ledger
+    });
   } catch (error: any) {
     baseReceipt.ledger = {
       status: "FAILED",
