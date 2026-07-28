@@ -877,28 +877,40 @@ router.post("/sync/trigger", async (req, res) => {
 
       const targets = await resolveSafeStoreTargets({ storeId, limit });
 
-      let lastTaskId: string | null = null;
       const taskIds: string[] = [];
+      let lastTaskId: string | null = null;
+      const storeReceipts: any[] = [];
+      const ledgers: any[] = [];
 
       for (const store of targets) {
-        const taskId = await SyncCenter.syncStoreOrders(
-          store.id,
+        const receipt = await executeStoreDataPipeline({
+          store,
           chainId,
-          "frontend_safe_sync",
-          lastTaskId,
-          range.days,
-          range.startDate,
-          range.endDate,
-          {
-            baselineRevenue: baselineRevenue !== undefined ? parseFloat(String(baselineRevenue)) : undefined,
-            rebuild: rebuild === true || rebuild === "true"
-          }
-        );
-        taskIds.push(taskId);
-        lastTaskId = taskId;
+          triggeredBy: "frontend_safe_sync",
+          previousTaskId: lastTaskId,
+          days: range.days,
+          startDate: range.startDate,
+          endDate: range.endDate,
+          baselineRevenue: baselineRevenue !== undefined ? parseFloat(String(baselineRevenue)) : undefined,
+          rebuild: rebuild === true || rebuild === "true"
+        });
+        storeReceipts.push(receipt);
+        ledgers.push(receipt.ledger);
+        if (receipt.orderSync.taskId) {
+          taskIds.push(receipt.orderSync.taskId);
+          lastTaskId = receipt.orderSync.taskId;
+        }
       }
 
-      const summary = await summarizeSyncLogs(taskIds);
+      const summary = taskIds.length > 0 ? await summarizeSyncLogs(taskIds) : {
+        recordsFetched: 0,
+        recordsSaved: 0,
+        recordsUpdated: 0,
+        failedAccounts: [],
+        failedSlices: storeReceipts.flatMap(receipt => receipt.failedSlices || []),
+        truncated: false,
+        coverageComplete: storeReceipts.every(receipt => receipt.coverageComplete === true)
+      };
       const status = deriveSyncStatus(summary);
       if (status === "FAILED") {
         return returnFailedSyncResponse(res, { summary, chainId, taskType, taskIds });
@@ -926,6 +938,8 @@ router.post("/sync/trigger", async (req, res) => {
         failedSlices: summary.failedSlices,
         truncated: summary.truncated,
         coverageComplete: summary.coverageComplete,
+        ledgers,
+        storeReceipts,
         ...buildProgress({
           currentStep: targets.length,
           totalSteps: Math.max(1, targets.length),

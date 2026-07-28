@@ -47,6 +47,13 @@ export type ShoplazzaOrderSlicesResult = ShoplazzaOrderPagesResult & {
   duplicateAcrossSlicesCount: number;
 };
 
+export function resolveShoplazzaPaymentRangeField(apiVersion: string | null | undefined): ShoplazzaDateFilter {
+  if (apiVersion === "2022-01" || !apiVersion) {
+    return "placed_at";
+  }
+  return "placed_at";
+}
+
 export const SHOPLAZZA_ORDER_ENDPOINTS: ShoplazzaOrderEndpoint[] = [
   { apiVersion: "2026-01", path: "/openapi/2026-01/orders", mode: "cursor" },
   { apiVersion: "2025-06", path: "/openapi/2025-06/orders", mode: "cursor" },
@@ -426,12 +433,13 @@ export async function fetchShoplazzaOrderSlices(input: {
   pageSize?: number;
   maxPages?: number;
 }): Promise<ShoplazzaOrderSlicesResult> {
-  const paidAtSlice = await fetchShoplazzaOrderPages({
+  const selectedDateFilter = resolveShoplazzaPaymentRangeField("2022-01");
+  const placedAtSlice = await fetchShoplazzaOrderPages({
     ...input,
-    dateFilter: "paid_at"
+    dateFilter: selectedDateFilter
   });
   const emptyCompleteSlice: ShoplazzaOrderPagesResult = {
-    ...paidAtSlice,
+    ...placedAtSlice,
     dateFilter: "created_at",
     rawOrders: [],
     pagesFetched: 0,
@@ -445,11 +453,11 @@ export async function fetchShoplazzaOrderSlices(input: {
     failedSlices: []
   };
   const createdAtSlice = { ...emptyCompleteSlice, dateFilter: "created_at" as const };
-  const placedAtSlice = { ...emptyCompleteSlice, dateFilter: "placed_at" as const };
+  const paidAtSlice = { ...emptyCompleteSlice, dateFilter: "paid_at" as const };
 
   const byOrderId = new Map<string, any>();
   let duplicateAcrossSlicesCount = 0;
-  for (const order of paidAtSlice.rawOrders) {
+  for (const order of placedAtSlice.rawOrders) {
     const key = orderDedupeKey(order);
     if (key && byOrderId.has(key)) {
       duplicateAcrossSlicesCount += 1;
@@ -459,33 +467,33 @@ export async function fetchShoplazzaOrderSlices(input: {
   }
 
   const failedSlices = [
-    ...paidAtSlice.failedSlices.map(slice => ({ ...slice, dateFilter: "paid_at" }))
+    ...placedAtSlice.failedSlices.map(slice => ({ ...slice, dateFilter: selectedDateFilter }))
   ];
-  if (!paidAtSlice.coverageComplete) {
-    failedSlices.push({ dateFilter: "paid_at", reason: "SHOPLAZZA_PAID_AT_SLICE_INCOMPLETE" });
+  if (!placedAtSlice.coverageComplete) {
+    failedSlices.push({ dateFilter: selectedDateFilter, reason: "SHOPLAZZA_PAYMENT_RANGE_SLICE_INCOMPLETE" });
   }
 
   const rawOrders = Array.from(byOrderId.values());
   const coverageComplete =
-    paidAtSlice.coverageComplete === true &&
-    paidAtSlice.truncated !== true &&
+    placedAtSlice.coverageComplete === true &&
+    placedAtSlice.truncated !== true &&
     failedSlices.length === 0;
 
   return {
-    ...paidAtSlice,
-    dateFilter: "paid_at",
+    ...placedAtSlice,
+    dateFilter: selectedDateFilter,
     rawOrders,
-    pagesFetched: paidAtSlice.pagesFetched,
-    pageOrderCounts: paidAtSlice.pageOrderCounts,
-    requestUrlsSanitized: paidAtSlice.requestUrlsSanitized,
-    responseBodyKeys: paidAtSlice.responseBodyKeys,
-    responseHeaderKeys: paidAtSlice.responseHeaderKeys,
-    cursorPages: paidAtSlice.cursorPages,
+    pagesFetched: placedAtSlice.pagesFetched,
+    pageOrderCounts: placedAtSlice.pageOrderCounts,
+    requestUrlsSanitized: placedAtSlice.requestUrlsSanitized,
+    responseBodyKeys: placedAtSlice.responseBodyKeys,
+    responseHeaderKeys: placedAtSlice.responseHeaderKeys,
+    cursorPages: placedAtSlice.cursorPages,
     coverageComplete,
-    truncated: paidAtSlice.truncated,
+    truncated: placedAtSlice.truncated,
     paginationTermination: coverageComplete ? "NATURAL_END" : "ERROR",
     failedSlices,
-    queryDateFields: ["paid_at"],
+    queryDateFields: [selectedDateFilter],
     createdAtSlice,
     placedAtSlice,
     paidAtSlice,

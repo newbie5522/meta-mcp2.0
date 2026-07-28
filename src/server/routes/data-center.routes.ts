@@ -18,6 +18,8 @@ import { runDataCenterRebuild } from "../services/data-center-rebuild.service.js
 import { getFreshnessMeta } from "../services/data-center-auto-refresh.service.js";
 import { getDataSourceCoverage, getCoverageMap } from "../services/data-coverage.service.js";
 import { getCanonicalAdHierarchy } from "../services/ad-hierarchy.service.js";
+import { fetchShoplazzaOrderPages, resolveShoplazzaPaymentRangeField } from "../services/shoplazza-order-adapter.js";
+import { resolveSuccessfulPayment } from "../services/store-sync-core.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -127,6 +129,117 @@ function scopedStoreOrderSnapshotKey(storeId: number, date: unknown, orderId: un
     ? normalizedOrderId
     : `store:${Number(storeId)}:order:${normalizedOrderId}`;
   return normalizedDate ? `store:${Number(storeId)}:date:${normalizedDate}:order:${scopedOrderId}` : scopedOrderId;
+}
+
+function normalizePlatformForPaymentResolver(platform: unknown) {
+  const normalized = String(platform || "").trim().toLowerCase();
+  if (normalized === "shoplazza" || normalized === "shopline" || normalized === "shopify") return normalized;
+  return "unknown";
+}
+
+function buildStoreLocalUtcWindow(startStr: string, endStr: string, timezoneName: string) {
+  const tzName = timezoneName || DATA_CENTER_TIMEZONE;
+  return {
+    startUtc: dayjs.tz(`${startStr}T00:00:00`, tzName).toISOString(),
+    endUtc: dayjs.tz(`${endStr}T23:59:59`, tzName).toISOString()
+  };
+}
+
+async function runReadOnlyPlatformProbe(input: { store: any; startStr: string; endStr: string }) {
+  const store = input.store;
+  const platform = normalizePlatformForPaymentResolver(store.platform);
+  if (platform !== "shoplazza") {
+    return {
+      performed: false,
+      status: "NOT_SUPPORTED",
+      orderCount: null,
+      grossSales: null,
+      error: `Platform probe is not implemented for ${platform || "unknown"}.`
+    };
+  }
+
+  if (!store.domain || !store.shoplazza_token) {
+    return {
+      performed: true,
+      status: "ERROR",
+      orderCount: null,
+      grossSales: null,
+      error: "SHOPLAZZA_PROBE_CREDENTIALS_UNAVAILABLE"
+    };
+  }
+
+  try {
+    const timezoneName = store.timezone || DATA_CENTER_TIMEZONE;
+    const { startUtc, endUtc } = buildStoreLocalUtcWindow(input.startStr, input.endStr, timezoneName);
+    const dateFilter = resolveShoplazzaPaymentRangeField("2022-01");
+    const pages = await fetchShoplazzaOrderPages({
+      domain: store.domain,
+      token: store.shoplazza_token,
+      startUtc,
+      endUtc,
+      dateFilter,
+      pageSize: 250,
+      maxPages: 50
+    });
+
+    if (!pages.coverageComplete || pages.truncated) {
+      return {
+        performed: true,
+        status: "PARTIAL",
+        orderCount: null,
+        grossSales: null,
+        error: "SHOPLAZZA_PLATFORM_PROBE_INCOMPLETE",
+        dateFilter,
+        selectedApiVersion: pages.selectedApiVersion,
+        selectedEndpointPath: pages.selectedEndpointPath,
+        queryDateFields: [dateFilter],
+        coverageComplete: pages.coverageComplete,
+        truncated: pages.truncated,
+        failedSlices: pages.failedSlices
+      };
+    }
+
+    const paidOrders = new Map<string, { orderId: string; paidAt: string; amount: number }>();
+    for (const order of pages.rawOrders) {
+      const payment = resolveSuccessfulPayment(order, platform);
+      if (!payment.paid || !payment.paidAt) continue;
+      const localDate = dayjs(payment.paidAt).tz(timezoneName).format("YYYY-MM-DD");
+      if (localDate < input.startStr || localDate > input.endStr) continue;
+      const rawOrderId = String(order?.id ?? order?.order_id ?? order?.order_number ?? order?.number ?? "").trim();
+      if (!rawOrderId) continue;
+      const scopedOrderId = scopedStoreOrderKey(store.id, { orderId: rawOrderId });
+      paidOrders.set(scopedOrderId, {
+        orderId: scopedOrderId,
+        paidAt: payment.paidAt,
+        amount: Number(payment.paidAmount || 0)
+      });
+    }
+
+    const grossSales = roundCurrency(Array.from(paidOrders.values()).reduce((sum, order) => sum + order.amount, 0));
+    return {
+      performed: true,
+      status: "SUCCESS",
+      orderCount: paidOrders.size,
+      grossSales,
+      error: null,
+      orderIds: Array.from(paidOrders.keys()),
+      dateFilter,
+      selectedApiVersion: pages.selectedApiVersion,
+      selectedEndpointPath: pages.selectedEndpointPath,
+      responseOrderPath: pages.responseOrderPath,
+      queryDateFields: [dateFilter],
+      coverageComplete: pages.coverageComplete,
+      truncated: pages.truncated
+    };
+  } catch (error: any) {
+    return {
+      performed: true,
+      status: "ERROR",
+      orderCount: null,
+      grossSales: null,
+      error: error?.message || "SHOPLAZZA_PLATFORM_PROBE_FAILED"
+    };
+  }
 }
 
 function parseLedgerOrderIds(value: unknown): string[] {
@@ -2394,6 +2507,21 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
             : !countMatches
               ? "COUNT_MISMATCH"
               : "SALES_MISMATCH";
+    const platformProbeRequested = String(req.query.platformProbe || "").trim().toLowerCase() === "true";
+    const platformProbe = platformProbeRequested
+      ? await runReadOnlyPlatformProbe({ store, startStr, endStr })
+      : {
+          performed: false,
+          status: "NOT_PERFORMED",
+          orderCount: null,
+          grossSales: null,
+          error: null
+        };
+    const platformMessage = platformProbe.performed
+      ? platformProbe.status === "SUCCESS"
+        ? "Read-only platform probe completed."
+        : "Read-only platform probe did not complete successfully."
+      : "DB reconciliation completed; platform probe was not performed by this read-only request.";
 
     res.json({
       startDate: startStr,
@@ -2431,6 +2559,7 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
         orderTotalSum: orderFactTotalSum,
         orderIds: orderFactOrderIds
       },
+      platformProbe,
       apiAudit: {
         recordsFetched: auditReport.recordsFetched,
         orderItemsCount: auditReport.orderItems?.length || 0,
@@ -2455,7 +2584,7 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       utcStartDate: auditReport.utcStartDate,
       utcEndDate: auditReport.utcEndDate,
       platformUnsupported: false,
-      platformMessage: "Read-only platform API reconciliation completed; order items show source order chain status.",
+      platformMessage,
       ledgerRefresh: ledgerRefreshResult
     });
 

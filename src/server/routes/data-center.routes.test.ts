@@ -17,8 +17,17 @@ const { prismaMock } = vi.hoisted(() => ({
   }
 }));
 
+const { fetchShoplazzaOrderPagesMock } = vi.hoisted(() => ({
+  fetchShoplazzaOrderPagesMock: vi.fn()
+}));
+
 vi.mock("../../db/index.js", () => ({ default: prismaMock }));
 vi.mock("../utils.js", () => ({ normalizeMetaAccountId: (value: string) => value }));
+vi.mock("../services/shoplazza-order-adapter.js", () => ({
+  fetchShoplazzaOrderPages: fetchShoplazzaOrderPagesMock,
+  fetchShoplazzaOrderSlices: vi.fn(),
+  resolveShoplazzaPaymentRangeField: () => "placed_at"
+}));
 
 import {
   audienceMetaMetric,
@@ -596,7 +605,9 @@ describe("Data Center store reconciliation route", () => {
       id: 2,
       name: "Romanticed",
       platform: "shoplazza",
-      timezone: "America/Los_Angeles"
+      timezone: "America/Los_Angeles",
+      domain: "romanticed.example",
+      shoplazza_token: "test-token"
     });
     prismaMock.order.findMany.mockResolvedValue([
       {
@@ -633,6 +644,8 @@ describe("Data Center store reconciliation route", () => {
     expect(response.statusCode).toBe(200);
     expect(response.body.status).toBe("MATCHED");
     expect(response.body.canonicalLedger).toMatchObject({ rowCount: 1, orderCount: 1, grossSales: 100 });
+    expect(response.body.platformProbe).toMatchObject({ performed: false, status: "NOT_PERFORMED" });
+    expect(response.body.platformMessage).not.toContain("Read-only platform API reconciliation completed");
   });
 
   it("RECON-02 does not return 0/0 when DataCenterStoreDaily has data", async () => {
@@ -772,6 +785,66 @@ describe("Data Center store reconciliation route", () => {
     expect(response.body.orderFact.uniqueOrderCount).toBe(2);
     expect(response.body.canonicalLedger.orderCount).toBe(2);
     expect(response.body.difference.orderCount).toBe(0);
+  });
+
+  it("RECON-SLZ-02 runs a real read-only platform probe only when requested", async () => {
+    fetchShoplazzaOrderPagesMock.mockResolvedValueOnce({
+      rawOrders: [
+        {
+          id: "254906207565668829056",
+          financial_status: "paid",
+          placed_at: "2026-07-02T12:00:00.000Z",
+          total_paid: "45.94"
+        },
+        {
+          id: "pending-order",
+          financial_status: "pending",
+          placed_at: "2026-07-02T13:00:00.000Z",
+          total_paid: "99.00"
+        }
+      ],
+      selectedApiVersion: "2022-01",
+      selectedEndpointPath: "/openapi/2022-01/orders",
+      responseOrderPath: "orders",
+      coverageComplete: true,
+      truncated: false,
+      failedSlices: []
+    });
+
+    const response = await invokeDataCenterRoute("/stores/:storeId/reconciliation", {
+      params: { storeId: "2" },
+      query: { startDate: "2026-07-02", endDate: "2026-07-02", platformProbe: "true" }
+    });
+
+    expect(fetchShoplazzaOrderPagesMock).toHaveBeenCalledWith(expect.objectContaining({
+      domain: "romanticed.example",
+      dateFilter: "placed_at"
+    }));
+    expect(response.body.platformProbe).toMatchObject({
+      performed: true,
+      status: "SUCCESS",
+      orderCount: 1,
+      grossSales: 45.94,
+      selectedApiVersion: "2022-01"
+    });
+  });
+
+  it("RECON-SLZ-03 returns platformProbe ERROR instead of wrapping platform failure as 0 orders", async () => {
+    fetchShoplazzaOrderPagesMock.mockRejectedValueOnce(new Error("SHOPLAZZA_ORDER_PERMISSION_DENIED"));
+
+    const response = await invokeDataCenterRoute("/stores/:storeId/reconciliation", {
+      params: { storeId: "2" },
+      query: { startDate: "2026-07-02", endDate: "2026-07-02", platformProbe: "true" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.platformProbe).toMatchObject({
+      performed: true,
+      status: "ERROR",
+      orderCount: null,
+      grossSales: null,
+      error: "SHOPLAZZA_ORDER_PERMISSION_DENIED"
+    });
   });
 });
 

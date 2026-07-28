@@ -35,6 +35,16 @@ export function safeDateToDateString(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+function getCompletedDayRange(today: dayjs.Dayjs, days: number) {
+  const end = today.subtract(1, "day");
+  const start = end.subtract(days - 1, "day");
+
+  return {
+    startDateStr: start.format("YYYY-MM-DD"),
+    endDateStr: end.format("YYYY-MM-DD")
+  };
+}
+
 export function getBusinessDateRange(rangeId: string): { startDateStr: string; endDateStr: string } {
   const today = getBusinessNow();
   const yesterday = today.subtract(1, "day");
@@ -53,22 +63,13 @@ export function getBusinessDateRange(rangeId: string): { startDateStr: string; e
       };
 
     case "past_7":
-      return {
-        startDateStr: today.subtract(6, "day").format("YYYY-MM-DD"),
-        endDateStr: today.format("YYYY-MM-DD")
-      };
+      return getCompletedDayRange(today, 7);
 
     case "past_14":
-      return {
-        startDateStr: today.subtract(13, "day").format("YYYY-MM-DD"),
-        endDateStr: today.format("YYYY-MM-DD")
-      };
+      return getCompletedDayRange(today, 14);
 
     case "past_30":
-      return {
-        startDateStr: today.subtract(29, "day").format("YYYY-MM-DD"),
-        endDateStr: today.format("YYYY-MM-DD")
-      };
+      return getCompletedDayRange(today, 30);
 
     case "this_week": {
       const start = today.startOf("week").add(1, "day");
@@ -107,10 +108,7 @@ export function getBusinessDateRange(rangeId: string): { startDateStr: string; e
     }
 
     default:
-      return {
-        startDateStr: today.subtract(29, "day").format("YYYY-MM-DD"),
-        endDateStr: today.format("YYYY-MM-DD")
-      };
+      return getCompletedDayRange(today, 30);
   }
 }
 

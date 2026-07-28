@@ -11,7 +11,8 @@ import {
   extractShoplazzaCursor,
   extractShoplazzaOrders,
   fetchShoplazzaOrderPages,
-  fetchShoplazzaOrderSlices
+  fetchShoplazzaOrderSlices,
+  resolveShoplazzaPaymentRangeField
 } from "./shoplazza-order-adapter";
 
 beforeEach(() => {
@@ -133,10 +134,10 @@ describe("Shoplazza order adapter", () => {
     expect(next.nextUrl).toContain("cursor=cursor-2");
   });
 
-  it("SHOPLAZZA-DATE-02 returns an order paid inside the range in multi-slice mode", async () => {
+  it("SLZ-RANGE-01/03 returns a paid legacy order by verified placed_at payment range", async () => {
     axiosGet.mockResolvedValueOnce({
       status: 200,
-      data: { data: { orders: [{ id: "paid-in-range", created_at: "2026-06-01T00:00:00Z", placed_at: "2026-06-05T06:00:00Z", paid_at: "2026-07-02T06:00:00Z" }], cursor: "" } },
+      data: { data: { orders: [{ id: "254906207565668829056", financial_status: "paid", created_at: "2026-06-01T00:00:00Z", placed_at: "2026-07-18T09:12:44Z", total_paid: "45.94" }], cursor: "" } },
       headers: {}
     });
 
@@ -147,14 +148,16 @@ describe("Shoplazza order adapter", () => {
       endUtc: "2026-07-03T06:59:59Z"
     });
 
-    expect(result.queryDateFields).toEqual(["paid_at"]);
-    expect(result.rawOrders.map(order => order.id)).toEqual(["paid-in-range"]);
+    expect(resolveShoplazzaPaymentRangeField("2022-01")).toBe("placed_at");
+    expect(result.queryDateFields).toEqual(["placed_at"]);
+    expect(result.rawOrders.map(order => order.id)).toEqual(["254906207565668829056"]);
     expect(result.coverageComplete).toBe(true);
     expect(axiosGet).toHaveBeenCalledTimes(1);
-    expect(axiosGet.mock.calls[0][0]).toContain("paid_at_min=");
+    expect(axiosGet.mock.calls[0][0]).toContain("placed_at_min=");
+    expect(axiosGet.mock.calls[0][0]).not.toContain("paid_at_min=");
   });
 
-  it("SHOPLAZZA-DATE-03 uses paid_at as the authoritative payment range slice", async () => {
+  it("SLZ-RANGE-02 does not continue paid_at-only for the verified legacy API", async () => {
     axiosGet.mockResolvedValueOnce({ status: 200, data: { data: { orders: [{ id: "same-order" }], cursor: "" } }, headers: {} });
 
     const result = await fetchShoplazzaOrderSlices({
@@ -168,10 +171,10 @@ describe("Shoplazza order adapter", () => {
     expect(result.deduplicatedOrderCount).toBe(1);
     expect(result.duplicateAcrossSlicesCount).toBe(0);
     expect(result.coverageComplete).toBe(true);
-    expect(result.queryDateFields).toEqual(["paid_at"]);
+    expect(result.queryDateFields).toEqual(["placed_at"]);
   });
 
-  it("SHOPLAZZA-DATE-04 marks coverage incomplete when the paid_at slice fails", async () => {
+  it("SLZ-RANGE-06 marks coverage incomplete when the verified payment range slice fails", async () => {
     axiosGet.mockRejectedValue({ response: { status: 500, data: { error: "boom" } } });
 
     const result = await fetchShoplazzaOrderSlices({
@@ -183,6 +186,6 @@ describe("Shoplazza order adapter", () => {
 
     expect(result.rawOrders).toEqual([]);
     expect(result.coverageComplete).toBe(false);
-    expect(result.failedSlices.some(slice => slice.dateFilter === "paid_at")).toBe(true);
+    expect(result.failedSlices.some(slice => slice.dateFilter === "placed_at")).toBe(true);
   });
 });

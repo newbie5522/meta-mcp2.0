@@ -7,7 +7,7 @@ const { prismaMock, syncCenterMock, uuidMock, executeStoreDataPipelineMock } = v
       findFirst: vi.fn(),
       findMany: vi.fn()
     },
-    store: { findMany: vi.fn() }
+    store: { findMany: vi.fn(), findUnique: vi.fn() }
   },
   syncCenterMock: {
     syncMetaAccounts: vi.fn(),
@@ -72,6 +72,13 @@ beforeEach(() => {
     mode: "production",
     shopify_token: "test-token"
   }]);
+  prismaMock.store.findUnique.mockResolvedValue({
+    id: 1,
+    name: "Test Store",
+    platform: "shopify",
+    mode: "production",
+    shopify_token: "test-token"
+  });
   syncCenterMock.syncMetaAccounts.mockResolvedValue("task-accounts");
   syncCenterMock.syncMetaActivity.mockResolvedValue("task-activity");
   syncCenterMock.syncStoreOrders.mockResolvedValue("task-store");
@@ -293,5 +300,25 @@ describe("POST /sync/trigger manual guard", () => {
     expect(response.body.success).toBe(true);
     expect(syncCenterMock.syncMetaAccounts).toHaveBeenCalled();
     expect(syncCenterMock.syncMetaActivity).toHaveBeenCalled();
+  });
+
+  it("SLZ-PIPELINE-04 routes direct store order sync through the full Order to Ledger pipeline", async () => {
+    process.env.ENABLE_MANUAL_SYNC = "true";
+
+    const response = await invokeTrigger({
+      taskType: "sync_store_orders",
+      storeId: 1,
+      startDate: "2026-07-21",
+      endDate: "2026-07-27"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(executeStoreDataPipelineMock).toHaveBeenCalledWith(expect.objectContaining({
+      startDate: "2026-07-21",
+      endDate: "2026-07-27",
+      triggeredBy: "frontend_safe_sync"
+    }));
+    expect(syncCenterMock.syncStoreOrders).not.toHaveBeenCalled();
+    expect(response.body.ledgers).toHaveLength(1);
   });
 });

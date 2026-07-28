@@ -398,12 +398,12 @@ describe("store sync core verified timezone contract", () => {
       attributionTimeRaw: "2026-07-02T06:30:00Z",
       storeLocalDate: "2026-07-01"
     });
-    expect(result.diagnostics.queryDateFields).toEqual(["paid_at"]);
+    expect(result.diagnostics.queryDateFields).toEqual(["placed_at"]);
     expect(result.diagnostics.deduplicatedOrderCount).toBe(1);
     expect(result.coverageComplete).toBe(true);
   });
 
-  it("SHOPLAZZA-DATE-07 uses paid_at for every sales order instead of created_at or placed_at", async () => {
+  it("SHOPLAZZA-DATE-07 uses successful payment time for every sales order instead of created_at", async () => {
     axiosGet.mockResolvedValueOnce({
         status: 200,
         data: {

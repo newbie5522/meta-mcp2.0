@@ -23,8 +23,6 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { MetaAccountDisplay } from "./common/MetaAccountDisplay";
-import { DataViewTraceBar } from "./common/DataViewTraceBar";
-import { DataCoverageBanner } from "./common/DataCoverageBanner";
 import { SyncStatusPanel, type SyncPanelStatus } from "./common/SyncStatusPanel";
 import { mapSyncErrorToPanel, mapSyncResultToPanel, triggerSyncTask } from "@/lib/sync-trigger";
 import {
@@ -58,6 +56,7 @@ interface StoreMetric {
   countryCount: number | null;
   productCount: number;
   lastSyncTime: string | null;
+  latestFetchedAt?: string | null;
   syncStatus: string;
   syncError: string | null;
   timezoneSource?: string | null;
@@ -219,8 +218,11 @@ interface OrderConsistencyView {
   statusLabel: string;
   statusTone: "success" | "warning";
   lastCheckedText: string;
-  platformOrderCountText: string;
-  systemOrderCountText: string;
+  ledgerOrderCountText: string;
+  orderFactCountText: string;
+  orderCountDifferenceText: string;
+  grossSalesDifferenceText: string;
+  anomalyOrderCountText: string;
   amountConsistencyText: string;
   differenceText: string;
   resultMessage: string;
@@ -307,22 +309,21 @@ function buildDiffAnomalyRows(diff: ReconciliationData["diff"] | undefined): Ord
 export function buildOrderConsistencyView(data: ReconciliationData | null | undefined): OrderConsistencyView {
   const orderCount = toFiniteNumber(data?.canonicalLedger?.orderCount ?? data?.systemOrdersCount);
   const salesAmount = toFiniteNumber(data?.canonicalLedger?.grossSales ?? data?.systemSalesAmount);
-  const platformOrderCount = toFiniteNumber(data?.systemOrdersCount ?? data?.canonicalLedger?.orderCount ?? orderCount);
-  const systemOrderCount = toFiniteNumber(
-    data?.orderFact?.uniqueOrderCount ??
-    data?.legacyOrderFactOrdersCount ??
-    data?.savedOrdersCount ??
-    data?.canonicalLedger?.orderCount ??
-    orderCount
-  );
+  const ledgerOrderCount = toFiniteNumber(data?.canonicalLedger?.orderCount ?? orderCount);
+  const orderFactOrderCount = toFiniteNumber(data?.orderFact?.uniqueOrderCount ?? ledgerOrderCount);
   const grossSalesDifference = toFiniteNumber(
     data?.difference?.grossSales ??
     (data?.orderFact && data?.canonicalLedger
-      ? data.orderFact.orderTotalSum - data.canonicalLedger.grossSales
+      ? data.canonicalLedger.grossSales - data.orderFact.orderTotalSum
       : 0)
   );
-  const orderCountDifference = toFiniteNumber(data?.difference?.orderCount ?? (systemOrderCount - orderCount));
+  const orderCountDifference = toFiniteNumber(data?.difference?.orderCount ?? (ledgerOrderCount - orderFactOrderCount));
   const anomalies = buildDiffAnomalyRows(data?.diff);
+  const anomalyOrderIds = new Set(
+    anomalies
+      .map((item) => item.orderNumber)
+      .filter((value) => value && !value.includes("鏁翠綋"))
+  );
 
   if (Math.abs(orderCountDifference) > 0) {
     anomalies.unshift({
@@ -352,10 +353,13 @@ export function buildOrderConsistencyView(data: ReconciliationData | null | unde
     statusLabel: hasAnomalies ? "⚠ 存在异常" : "✓ 已同步",
     statusTone: hasAnomalies ? "warning" : "success",
     lastCheckedText,
-    platformOrderCountText: formatOrderCountValue(platformOrderCount),
-    systemOrderCountText: formatOrderCountValue(systemOrderCount),
-    amountConsistencyText: formatStoreCurrency(salesAmount),
-    differenceText: hasAnomalies ? String(anomalies.length) : "0",
+    ledgerOrderCountText: formatOrderCountValue(ledgerOrderCount),
+    orderFactCountText: formatOrderCountValue(orderFactOrderCount),
+    orderCountDifferenceText: formatOrderCountValue(orderCountDifference),
+    grossSalesDifferenceText: Math.abs(grossSalesDifference) <= 0.01 ? "涓€鑷?" : `鐩稿樊 ${formatStoreCurrency(Math.abs(grossSalesDifference))}`,
+    anomalyOrderCountText: formatOrderCountValue(anomalyOrderIds.size),
+    amountConsistencyText: Math.abs(grossSalesDifference) <= 0.01 ? "涓€鑷?" : `鐩稿樊 ${formatStoreCurrency(Math.abs(grossSalesDifference))}`,
+    differenceText: formatOrderCountValue(orderCountDifference),
     resultMessage: hasAnomalies ? `发现 ${anomalies.length} 笔订单异常，请检查` : "✓ 当前订单数据校验通过",
     anomalies
   };
@@ -444,7 +448,8 @@ export function StoreDataDashboard({ startDate, endDate }: StoreDataDashboardPro
       const response = await axios.get("/api/data-center/stores", {
         params: {
           startDate: formattedStartDate,
-          endDate: formattedEndDate
+          endDate: formattedEndDate,
+          platformProbe: true
         },
         signal: controller.signal
       });
@@ -776,28 +781,6 @@ setAiReport(reportText || "未返回分析报告");
 
       <SyncStatusPanel status={viewSyncStatus} />
 
-      <div className="grid gap-2 md:grid-cols-2">
-        <DataCoverageBanner coverage={storeCoverage} />
-        <DataCoverageBanner coverage={metaCoverage} />
-      </div>
-
-      <DataViewTraceBar
-        compactScopeLabel="店铺订单口径，按 store_local_date 统计"
-        currentStartDate={formattedStartDate}
-        currentEndDate={formattedEndDate}
-        responseStartDate={appliedDateRange?.startDate}
-        responseEndDate={appliedDateRange?.endDate}
-        latestAvailableDate={storeCoverage?.latestAvailableDate}
-        timezone={(appliedDateRange as any)?.timezone || "America/Los_Angeles"}
-        rowCount={stores.length}
-        factRows={aggregatedStats.totalOrders}
-        structureRows={stores.length}
-        status={storeCoverage?.status || dataHealth.status}
-        level="store"
-        queryDebug={(dataHealth as any)?.queryDebug}
-        source="店铺订单 + 店铺配置"
-        scope="all_stores"
-      />
 
       {/* 📊 KPI summary banner */}
       {viewNotice && (
@@ -835,7 +818,7 @@ setAiReport(reportText || "未返回分析报告");
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">店铺销售额</span>
             <div className="flex items-center justify-between mt-2">
               <h3 className="text-lg font-extrabold text-emerald-600 tracking-tight">
-                {aggregatedStats.totalSales === null ? "N/A" : `$${aggregatedStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`}
+                {aggregatedStats.totalSales === null ? "N/A" : formatStoreCurrency(aggregatedStats.totalSales)}
               </h3>
               <Coins className="w-4 h-4 text-emerald-600" />
             </div>
@@ -847,7 +830,7 @@ setAiReport(reportText || "未返回分析报告");
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">平均订单金额</span>
             <div className="flex items-center justify-between mt-2">
               <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">
-                {aggregatedStats.averageAOV === null ? "N/A" : `$${aggregatedStats.averageAOV.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                {aggregatedStats.averageAOV === null ? "N/A" : formatStoreCurrency(aggregatedStats.averageAOV)}
               </h3>
               <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-1.5 py-0.5 rounded">AOV</span>
             </div>
@@ -859,7 +842,7 @@ setAiReport(reportText || "未返回分析报告");
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">映射广告总花费</span>
             <div className="flex items-center justify-between mt-2">
               <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">
-                {aggregatedStats.totalSpend === null ? "N/A" : `$${aggregatedStats.totalSpend.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`}
+                {aggregatedStats.totalSpend === null ? "N/A" : formatStoreCurrency(aggregatedStats.totalSpend)}
               </h3>
               <SpendIcon className="w-4 h-4 text-indigo-500" />
             </div>
@@ -900,60 +883,11 @@ setAiReport(reportText || "未返回分析报告");
         </div>
       )}
 
-      {Number(unmappedSummary.count || 0) > 0 && Number(unmappedSummary.spend || 0) > 0 && !loading && (
-        <div className="p-3 bg-rose-50 border border-rose-150 rounded-xl text-slate-800 text-xs shadow-sm mb-4">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
-              <span className="font-medium text-rose-900">
-                未绑定消耗：{unmappedSummary.count} 个账户，${Number(unmappedSummary.spend).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </span>
-            </div>
-            <button 
-              onClick={() => setUnmappedExpanded(!unmappedExpanded)}
-              className="text-[11px] text-rose-700 hover:text-rose-900 underline font-semibold cursor-pointer"
-            >
-              {unmappedExpanded ? "折叠明细" : "展开明细"}
-            </button>
-          </div>
-          {unmappedExpanded && unmappedSummary.accounts && unmappedSummary.accounts.length > 0 && (
-            <div className="mt-2 bg-white/80 border border-rose-100 rounded-lg p-2.5 overflow-x-auto">
-              <table className="w-full text-left border-collapse text-[11px]">
-                <thead>
-                  <tr className="border-b border-rose-100 text-slate-500 font-semibold">
-                    <th className="py-1 px-2">广告账户</th>
-                    <th className="py-1 px-2 text-right">消耗 (Spend)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-rose-50">
-                  {unmappedSummary.accounts.map((acc) => (
-                    <tr key={acc.accountId} className="hover:bg-rose-50/50">
-                      <td className="py-1 px-2">
-                        <MetaAccountDisplay
-                          name={acc.name}
-                          accountId={acc.accountId}
-                          nameClassName="text-slate-700 font-medium truncate"
-                          idClassName="text-[10px] text-slate-500 font-mono truncate"
-                        />
-                      </td>
-                      <td className="py-1 px-2 text-right font-mono text-rose-600 font-bold">
-                        ${acc.spend.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
       <Card className="border border-slate-200 shadow-sm bg-white rounded-xl overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-slate-50/50 to-white flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <StoreIcon className="w-4 h-4 text-indigo-500" />
-            <span className="font-bold text-[14px] text-slate-900">核对映射已关联之真实店铺列表</span>
-            <span className="text-[11px] text-slate-400 font-normal">（自动剔除未映射广告账户伪造行，只保留 Stores 中的合法实例）</span>
+            <span className="font-bold text-[14px] text-slate-900">店铺列表</span>
           </div>
           
           <div className="relative w-full sm:w-64">
@@ -1021,7 +955,7 @@ setAiReport(reportText || "未返回分析报告");
                       <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
                     </div>
                   </TableHead>
-                  <TableHead className="font-semibold text-center py-3 px-5 text-slate-600">更新时间</TableHead>
+                  <TableHead className="font-semibold text-center py-3 px-5 text-slate-600">订单同步</TableHead>
                   <TableHead className="font-semibold text-right py-3 pr-5 text-slate-600">操作</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1038,7 +972,9 @@ setAiReport(reportText || "未返回分析报告");
                 ) : (
                   processedStores.map((store) => {
                     const isReconActive = selectedStoreForRecon?.id === store.id;
-                    const hasSyncTime = !!store.lastSyncTime;
+                    const orderSyncTime = store.lastSyncTime || store.latestFetchedAt || null;
+                    const normalizedSyncStatus = String(store.syncStatus || "").trim().toUpperCase();
+                    const hasSyncTime = !!orderSyncTime;
                     
                     return (
                       <React.Fragment key={store.id}>
@@ -1097,7 +1033,7 @@ setAiReport(reportText || "未返回分析报告");
                           {/* 账户开销 */}
                           <TableCell className="text-right text-slate-700 font-mono font-bold">
                             {store.adSpend === null ? "N/A" : store.adSpend > 0 ? (
-                              `$${store.adSpend.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                              formatStoreCurrency(store.adSpend)
                             ) : (
                               <span className="text-[11px] text-slate-400 font-normal">—</span>
                             )}
@@ -1138,15 +1074,16 @@ setAiReport(reportText || "未返回分析报告");
                             <div className="space-y-0.5 inline-block text-left">
                               <p className="font-mono text-[10.5px] text-slate-600 flex items-center justify-center gap-1">
                                 <Clock className="w-3 h-3 opacity-60" />
-                                {hasSyncTime ? format(new Date(store.lastSyncTime!), "MM-dd HH:mm") : "未进行同步"}
+                                {hasSyncTime ? format(new Date(orderSyncTime!), "MM-dd HH:mm") : (normalizedSyncStatus === "NONE" || !normalizedSyncStatus ? "未进行同步" : "")}
                               </p>
                               <div className="text-center">
                                 <span className={cn(
                                   "inline-block px-1.5 py-0.2 rounded text-[10px] font-semibold",
-                                  store.syncStatus === "success" && "bg-emerald-50 text-emerald-700 border border-emerald-100",
-                                  store.syncStatus === "failed" && "bg-rose-50 text-rose-700 border border-rose-100",
-                                  store.syncStatus === "running" && "bg-blue-50 text-blue-700 border border-blue-100 animate-pulse",
-                                  store.syncStatus === "none" && "bg-slate-100 text-slate-500"
+                                  ["SUCCESS", "SUCCESSFUL", "READY", "COVERED"].includes(normalizedSyncStatus) && "bg-emerald-50 text-emerald-700 border border-emerald-100",
+                                  ["FAILED", "ERROR"].includes(normalizedSyncStatus) && "bg-rose-50 text-rose-700 border border-rose-100",
+                                  ["RUNNING", "PENDING"].includes(normalizedSyncStatus) && "bg-blue-50 text-blue-700 border border-blue-100 animate-pulse",
+                                  ["NONE", ""].includes(normalizedSyncStatus) && "bg-slate-100 text-slate-500",
+                                  ["PARTIAL_SUCCESS", "PARTIAL_COVERAGE"].includes(normalizedSyncStatus) && "bg-amber-50 text-amber-700 border border-amber-100"
                                 )}>
                                   {getStoreSyncStatusLabel(store.syncStatus)}
                                 </span>
@@ -1327,32 +1264,38 @@ setAiReport(reportText || "未返回分析报告");
 
               <div className="space-y-3 pt-2">
                 <h5 className="font-bold text-slate-900 text-xs">校验结果</h5>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                   <div className="p-3 rounded-lg border border-slate-200 bg-white">
-                    <span className="text-[10px] text-slate-500 font-bold block">平台订单数量</span>
+                    <span className="text-[10px] text-slate-500 font-bold block">账目汇总订单数</span>
                     <div className="mt-1 text-lg font-extrabold text-slate-900 font-mono">
-                      {reconciliationView.platformOrderCountText}
+                      {reconciliationView.ledgerOrderCountText}
                     </div>
                   </div>
                   <div className="p-3 rounded-lg border border-slate-200 bg-white">
-                    <span className="text-[10px] text-slate-500 font-bold block">系统订单数量</span>
+                    <span className="text-[10px] text-slate-500 font-bold block">有效订单明细数</span>
                     <div className="mt-1 text-lg font-extrabold text-slate-900 font-mono">
-                      {reconciliationView.systemOrderCountText}
+                      {reconciliationView.orderFactCountText}
                     </div>
                   </div>
                   <div className="p-3 rounded-lg border border-slate-200 bg-white">
-                    <span className="text-[10px] text-slate-500 font-bold block">金额一致性</span>
+                    <span className="text-[10px] text-slate-500 font-bold block">订单数差异</span>
                     <div className="mt-1 text-lg font-extrabold text-slate-900 font-mono">
-                      {reconciliationView.amountConsistencyText}
+                      {reconciliationView.orderCountDifferenceText}
                     </div>
                   </div>
                   <div className="p-3 rounded-lg border border-slate-200 bg-white">
-                    <span className="text-[10px] text-slate-500 font-bold block">差异</span>
+                    <span className="text-[10px] text-slate-500 font-bold block">销售额差异</span>
+                    <div className="mt-1 text-lg font-extrabold text-slate-900 font-mono">
+                      {reconciliationView.grossSalesDifferenceText}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg border border-slate-200 bg-white">
+                    <span className="text-[10px] text-slate-500 font-bold block">异常订单数量</span>
                     <div className={cn(
                       "mt-1 text-lg font-extrabold font-mono",
                       reconciliationView.anomalies.length === 0 ? "text-emerald-700" : "text-amber-700"
                     )}>
-                      {reconciliationView.differenceText}
+                      {reconciliationView.anomalyOrderCountText}
                     </div>
                   </div>
                 </div>
