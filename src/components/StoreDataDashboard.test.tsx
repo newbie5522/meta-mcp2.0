@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildDataViewRequestKey, isDateRangeMismatch, shouldApplyLatestRequest } from "../lib/data-view-state";
 import {
+  buildOrderConsistencyView,
   formatStoreAovText,
   formatStoreOrderText,
   formatStoreSalesText,
@@ -166,6 +167,83 @@ describe("Store reconciliation UI helpers", () => {
       canonicalLedger: { orderCount: 94, grossSales: 4679.02, orderIds: [] },
       orderFact: { uniqueOrderCount: 94, orderTotalSum: 4669.02, orderIds: [] }
     })).toBe(true);
+  });
+
+  it("RECON-UI-04 presents matched reconciliation in business language", () => {
+    const view = buildOrderConsistencyView({
+      startDate: "2026-06-24",
+      endDate: "2026-07-23",
+      systemOrdersCount: 295,
+      systemSalesAmount: 15301.09,
+      lastSyncTime: null,
+      lastSyncStatus: "success",
+      fetchedOrdersCount: 295,
+      savedOrdersCount: 295,
+      syncFailedCount: 0,
+      lastSyncError: null,
+      platformUnsupported: false,
+      platformMessage: "ok",
+      status: "MATCHED",
+      difference: { orderCount: 0, grossSales: 0 },
+      canonicalLedger: { orderCount: 295, grossSales: 15301.09, orderIds: [] },
+      orderFact: { uniqueOrderCount: 295, orderTotalSum: 15301.09, orderIds: [] },
+      apiAudit: { recordsFetched: 295, orderItemsCount: 295, savedLikeCount: 295 },
+      diff: {
+        orderFactNotInLedger: [],
+        ledgerNotInOrderFact: [],
+        apiSavedNotInLedger: [],
+        excludedByPaymentStatus: [],
+        excludedByLocalDate: [],
+        amountMismatch: []
+      }
+    });
+
+    expect(view.statusLabel).toBe("✓ 已同步");
+    expect(view.resultMessage).toBe("✓ 当前订单数据校验通过");
+    expect(view.orderCountText).toBe("295 单");
+    expect(view.salesAmountText).toBe("$15,301.09");
+    expect(view.differenceText).toBe("0");
+    expect(view.anomalies).toHaveLength(0);
+  });
+
+  it("RECON-UI-05 maps technical differences to operator-facing anomaly rows", () => {
+    const view = buildOrderConsistencyView({
+      startDate: "2026-06-24",
+      endDate: "2026-07-23",
+      systemOrdersCount: 2,
+      systemSalesAmount: 120,
+      lastSyncTime: "2026-07-23T08:30:00.000Z",
+      lastSyncStatus: "success",
+      fetchedOrdersCount: 2,
+      savedOrdersCount: 2,
+      syncFailedCount: 0,
+      lastSyncError: null,
+      platformUnsupported: false,
+      platformMessage: "ok",
+      status: "AMOUNT_MISMATCH",
+      difference: { orderCount: 0, grossSales: 10 },
+      canonicalLedger: { orderCount: 2, grossSales: 120, orderIds: [] },
+      orderFact: { uniqueOrderCount: 2, orderTotalSum: 130, orderIds: [] },
+      diff: {
+        orderFactNotInLedger: [],
+        ledgerNotInOrderFact: [],
+        apiSavedNotInLedger: [],
+        excludedByPaymentStatus: [],
+        excludedByLocalDate: [],
+        amountMismatch: [{ orderId: "order-1" }]
+      }
+    });
+
+    expect(view.statusLabel).toBe("⚠ 存在异常");
+    expect(view.resultMessage).toBe("发现 2 笔订单异常，请检查");
+    expect(view.lastCheckedText).toBe("2026-07-23");
+    expect(view.anomalies.map((row) => row.anomalyType)).toEqual([
+      "销售金额不一致",
+      "订单金额异常"
+    ]);
+    expect(JSON.stringify(view.anomalies)).not.toContain("Ledger");
+    expect(JSON.stringify(view.anomalies)).not.toContain("API金额");
+    expect(JSON.stringify(view.anomalies)).not.toContain("ORDER表金额");
   });
 
   it("RECON-UI-03 keeps switched store/date reconciliation payloads out through request keys", () => {
