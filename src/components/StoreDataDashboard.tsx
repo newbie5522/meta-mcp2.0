@@ -356,9 +356,9 @@ export function buildOrderConsistencyView(data: ReconciliationData | null | unde
     ledgerOrderCountText: formatOrderCountValue(ledgerOrderCount),
     orderFactCountText: formatOrderCountValue(orderFactOrderCount),
     orderCountDifferenceText: formatOrderCountValue(orderCountDifference),
-    grossSalesDifferenceText: Math.abs(grossSalesDifference) <= 0.01 ? "涓€鑷?" : `鐩稿樊 ${formatStoreCurrency(Math.abs(grossSalesDifference))}`,
+    grossSalesDifferenceText: Math.abs(grossSalesDifference) <= 0.01 ? "一致" : `相差 ${formatStoreCurrency(Math.abs(grossSalesDifference))}`,
     anomalyOrderCountText: formatOrderCountValue(anomalyOrderIds.size),
-    amountConsistencyText: Math.abs(grossSalesDifference) <= 0.01 ? "涓€鑷?" : `鐩稿樊 ${formatStoreCurrency(Math.abs(grossSalesDifference))}`,
+    amountConsistencyText: Math.abs(grossSalesDifference) <= 0.01 ? "一致" : `相差 ${formatStoreCurrency(Math.abs(grossSalesDifference))}`,
     differenceText: formatOrderCountValue(orderCountDifference),
     resultMessage: hasAnomalies ? `发现 ${anomalies.length} 笔订单异常，请检查` : "✓ 当前订单数据校验通过",
     anomalies
