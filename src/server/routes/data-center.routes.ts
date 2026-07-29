@@ -71,8 +71,10 @@ function isValidDateString(value: unknown): value is string {
 }
 
 function getAppliedDateRange(query: any, fallbackDays = 30) {
-  const fallbackEnd = dayjs().tz(DATA_CENTER_TIMEZONE).format("YYYY-MM-DD");
-  const fallbackStart = dayjs().tz(DATA_CENTER_TIMEZONE).subtract(fallbackDays - 1, "day").format("YYYY-MM-DD");
+  const fallbackEndDay = dayjs().tz(DATA_CENTER_TIMEZONE).subtract(1, "day");
+  const fallbackStartDay = fallbackEndDay.subtract(Math.max(1, fallbackDays) - 1, "day");
+  const fallbackEnd = fallbackEndDay.format("YYYY-MM-DD");
+  const fallbackStart = fallbackStartDay.format("YYYY-MM-DD");
   const startStr = isValidDateString(String(query.startDate || "")) ? String(query.startDate).trim() : fallbackStart;
   const endStr = isValidDateString(String(query.endDate || "")) ? String(query.endDate).trim() : fallbackEnd;
 
@@ -2199,8 +2201,10 @@ router.get("/stores/:storeId/reconciliation", async (req, res) => {
       return res.status(404).json({ error: "Store not found" });
     }
 
-    const startStr = startDate ? String(startDate) : dayjs().subtract(7, "day").format("YYYY-MM-DD");
-    const endStr = endDate ? String(endDate) : dayjs().format("YYYY-MM-DD");
+    const defaultEndDay = dayjs().tz(DATA_CENTER_TIMEZONE).subtract(1, "day");
+    const defaultStartDay = defaultEndDay.subtract(6, "day");
+    const startStr = isValidDateString(String(startDate || "")) ? String(startDate).trim() : defaultStartDay.format("YYYY-MM-DD");
+    const endStr = isValidDateString(String(endDate || "")) ? String(endDate).trim() : defaultEndDay.format("YYYY-MM-DD");
 
     const auditReport = {
       storeId: store.id,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "fs";
 import { buildDataViewRequestKey, isDateRangeMismatch, shouldApplyLatestRequest } from "../lib/data-view-state";
 import {
   buildOrderConsistencyView,
@@ -235,7 +236,8 @@ describe("Store reconciliation UI helpers", () => {
     });
 
     expect(view.statusLabel).toBe("⚠ 存在异常");
-    expect(view.resultMessage).toBe("发现 2 笔订单异常，请检查");
+    expect(view.resultMessage).toBe("发现 1 笔订单异常，请检查");
+    expect(view.anomalyOrderCountText).toBe("1");
     expect(view.lastCheckedText).toBe("2026-07-23");
     expect(view.anomalies.map((row) => row.anomalyType)).toEqual([
       "销售金额不一致",
@@ -244,6 +246,44 @@ describe("Store reconciliation UI helpers", () => {
     expect(JSON.stringify(view.anomalies)).not.toContain("Ledger");
     expect(JSON.stringify(view.anomalies)).not.toContain("API金额");
     expect(JSON.stringify(view.anomalies)).not.toContain("ORDER表金额");
+  });
+
+  it("RECON-UI-06 summary-only mismatch is not described as an order count", () => {
+    const view = buildOrderConsistencyView({
+      startDate: "2026-06-24",
+      endDate: "2026-07-23",
+      systemOrdersCount: 2,
+      systemSalesAmount: 120,
+      lastSyncTime: "2026-07-23T08:30:00.000Z",
+      lastSyncStatus: "success",
+      fetchedOrdersCount: 2,
+      savedOrdersCount: 2,
+      syncFailedCount: 0,
+      lastSyncError: null,
+      platformUnsupported: false,
+      platformMessage: "ok",
+      status: "COUNT_MISMATCH",
+      difference: { orderCount: 1, grossSales: 0 },
+      canonicalLedger: { orderCount: 3, grossSales: 120, orderIds: [] },
+      orderFact: { uniqueOrderCount: 2, orderTotalSum: 120, orderIds: [] },
+      diff: {
+        orderFactNotInLedger: [],
+        ledgerNotInOrderFact: [],
+        apiSavedNotInLedger: [],
+        excludedByPaymentStatus: [],
+        excludedByLocalDate: [],
+        amountMismatch: []
+      }
+    });
+
+    expect(view.resultMessage).toBe("发现汇总数据不一致，请检查");
+    expect(view.anomalyOrderCountText).toBe("0");
+    expect(view.anomalies.length).toBeGreaterThan(0);
+  });
+
+  it("RECON-UI-07 keeps store consistency text free of known mojibake", () => {
+    const source = readFileSync("src/components/StoreDataDashboard.tsx", "utf8");
+    expect(source).not.toMatch(new RegExp(["\\u93c1\\u7fe0\\u7d8b", "\\u6daf\\u20ac\\u9477", "\\u9429\\u7a3f\\u6a0a"].join("|")));
   });
 
   it("RECON-UI-03 keeps switched store/date reconciliation payloads out through request keys", () => {

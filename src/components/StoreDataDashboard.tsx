@@ -318,18 +318,19 @@ export function buildOrderConsistencyView(data: ReconciliationData | null | unde
       : 0)
   );
   const orderCountDifference = toFiniteNumber(data?.difference?.orderCount ?? (ledgerOrderCount - orderFactOrderCount));
-  const anomalies = buildDiffAnomalyRows(data?.diff);
+  const orderLevelAnomalies = buildDiffAnomalyRows(data?.diff);
   const anomalyOrderIds = new Set(
-    anomalies
-      .map((item) => item.orderNumber)
-      .filter((value) => value && !value.includes("鏁翠綋"))
+    orderLevelAnomalies
+      .map((item) => String(item.orderNumber || "").trim())
+      .filter((value) => value && !value.startsWith("整体"))
   );
+  const anomalies = [...orderLevelAnomalies];
 
   if (Math.abs(orderCountDifference) > 0) {
     anomalies.unshift({
       orderNumber: "整体订单数量",
       anomalyType: "订单数量不一致",
-      description: "平台确认订单数量与系统订单数量不一致。",
+      description: "账目汇总订单数与有效订单明细数不一致。",
       suggestion: "请确认日期范围是否正确，必要时重新执行官方校验。"
     });
   }
@@ -338,8 +339,8 @@ export function buildOrderConsistencyView(data: ReconciliationData | null | unde
     anomalies.unshift({
       orderNumber: "整体销售金额",
       anomalyType: "销售金额不一致",
-      description: "平台确认销售金额与系统销售金额不一致。",
-      suggestion: "请核对异常订单列表中的金额与退款记录。"
+      description: "账目汇总销售额与有效订单销售额不一致。",
+      suggestion: "请核对异常订单中的实付金额与退款记录。"
     });
   }
 
@@ -360,7 +361,11 @@ export function buildOrderConsistencyView(data: ReconciliationData | null | unde
     anomalyOrderCountText: formatOrderCountValue(anomalyOrderIds.size),
     amountConsistencyText: Math.abs(grossSalesDifference) <= 0.01 ? "一致" : `相差 ${formatStoreCurrency(Math.abs(grossSalesDifference))}`,
     differenceText: formatOrderCountValue(orderCountDifference),
-    resultMessage: hasAnomalies ? `发现 ${anomalies.length} 笔订单异常，请检查` : "✓ 当前订单数据校验通过",
+    resultMessage: !hasAnomalies
+      ? "✓ 当前订单数据校验通过"
+      : anomalyOrderIds.size > 0
+        ? `发现 ${anomalyOrderIds.size} 笔订单异常，请检查`
+        : "发现汇总数据不一致，请检查",
     anomalies
   };
 }

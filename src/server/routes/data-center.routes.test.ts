@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
@@ -28,6 +28,10 @@ vi.mock("../services/shoplazza-order-adapter.js", () => ({
   fetchShoplazzaOrderSlices: vi.fn(),
   resolveShoplazzaPaymentRangeField: () => "placed_at"
 }));
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 import {
   audienceMetaMetric,
@@ -433,6 +437,55 @@ describe("Data Center stores route coverage", () => {
     expect(romanticed.syncStatus).toBe("PARTIAL_COVERAGE");
     expect(response.body.coverage.status).toBe("PARTIAL_COVERAGE");
   });
+
+  it("DATE-DEFAULT-01 Store API default range is 30 completed LA days", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T18:00:00.000Z"));
+
+    const response = await invokeDataCenterRoute("/stores", { query: {} });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.dateRange).toMatchObject({
+      startDate: "2026-06-28",
+      endDate: "2026-07-27",
+      timezone: "America/Los_Angeles"
+    });
+    expect(response.body.appliedFilters).toMatchObject({
+      startDate: "2026-06-28",
+      endDate: "2026-07-27"
+    });
+    expect(prismaMock.dataCenterStoreDaily.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        date: { gte: "2026-06-28", lte: "2026-07-27" }
+      })
+    }));
+  });
+
+  it("DATE-DEFAULT-03 explicit Store API date range is not rewritten", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T18:00:00.000Z"));
+
+    const response = await invokeDataCenterRoute("/stores", {
+      query: { storeId: "3", startDate: "2026-06-24", endDate: "2026-07-23" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.dateRange).toMatchObject({
+      startDate: "2026-06-24",
+      endDate: "2026-07-23",
+      timezone: "America/Los_Angeles"
+    });
+    expect(response.body.appliedFilters).toMatchObject({
+      startDate: "2026-06-24",
+      endDate: "2026-07-23",
+      storeId: "3"
+    });
+    expect(prismaMock.dataCenterStoreDaily.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        date: { gte: "2026-06-24", lte: "2026-07-23" }
+      })
+    }));
+  });
 });
 
 describe("Data Center store-orders route", () => {
@@ -681,6 +734,56 @@ describe("Data Center store reconciliation route", () => {
     }));
     expect(prismaMock.dataCenterStoreDaily.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { storeId: 2, date: { gte: "2026-07-01", lte: "2026-07-03" } }
+    }));
+  });
+
+  it("DATE-DEFAULT-02 reconciliation default range is 7 completed LA days", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T18:00:00.000Z"));
+
+    const response = await invokeDataCenterRoute("/stores/:storeId/reconciliation", {
+      params: { storeId: "2" },
+      query: {}
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.startDate).toBe("2026-07-21");
+    expect(response.body.endDate).toBe("2026-07-27");
+    expect(response.body.dateRange).toMatchObject({
+      startDate: "2026-07-21",
+      endDate: "2026-07-27",
+      timezone: "America/Los_Angeles"
+    });
+    expect(prismaMock.order.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { storeId: 2, store_local_date: { gte: "2026-07-21", lte: "2026-07-27" } }
+    }));
+    expect(prismaMock.dataCenterStoreDaily.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { storeId: 2, date: { gte: "2026-07-21", lte: "2026-07-27" } }
+    }));
+  });
+
+  it("DATE-DEFAULT-04 explicit reconciliation date range is not rewritten", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T18:00:00.000Z"));
+
+    const response = await invokeDataCenterRoute("/stores/:storeId/reconciliation", {
+      params: { storeId: "2" },
+      query: { startDate: "2026-06-24", endDate: "2026-07-23" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.startDate).toBe("2026-06-24");
+    expect(response.body.endDate).toBe("2026-07-23");
+    expect(response.body.dateRange).toMatchObject({
+      startDate: "2026-06-24",
+      endDate: "2026-07-23",
+      timezone: "America/Los_Angeles"
+    });
+    expect(prismaMock.order.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { storeId: 2, store_local_date: { gte: "2026-06-24", lte: "2026-07-23" } }
+    }));
+    expect(prismaMock.dataCenterStoreDaily.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { storeId: 2, date: { gte: "2026-06-24", lte: "2026-07-23" } }
     }));
   });
 
