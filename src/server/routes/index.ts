@@ -15,6 +15,8 @@ import aiRoutes from "./ai.routes.js";
 import dashboardRoutes from "./dashboard.routes.js";
 import dataCenterRoutes from "./data-center.routes.js";
 import systemRoutes from "./system.routes.js";
+import metaOauthRoutes from "./meta-oauth.routes.js";
+import pagesRoutes from "./pages.routes.js";
 
 const router = Router();
 
@@ -32,5 +34,7 @@ router.use("/", syncRoutes);
 router.use("/settings", settingsRoutes);
 router.use("/mappings", mappingsRoutes);
 router.use("/monitoring", monitoringRoutes);
+router.use("/meta-oauth", metaOauthRoutes);
+router.use("/pages", pagesRoutes);
 
 export default router;
