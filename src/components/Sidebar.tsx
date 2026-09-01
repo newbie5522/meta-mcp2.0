@@ -72,6 +72,7 @@ export const menuGroups: MenuItem[] = [
     subs: [
       { id: 'stores', label: '店铺配置' },
       { id: 'meta-config', label: 'Meta 账户配置' },
+      { id: 'pages-management', label: '公共主页管理' },
       { id: 'sync-center', label: '数据同步中心' },
       { id: 'ai-config', label: 'AI 模型设置' },
       { id: 'team-config', label: '运营团队配置' },
