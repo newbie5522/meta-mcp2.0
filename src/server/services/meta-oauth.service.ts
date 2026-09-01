@@ -61,6 +61,8 @@ export function createMetaAuthUrl(): string {
   url.searchParams.set("scope", scopes().join(","));
   url.searchParams.set("state", state);
   url.searchParams.set("auth_type", "rerequest");
+  const configId = process.env.META_LOGIN_CONFIG_ID?.trim();
+  if (configId) url.searchParams.set("config_id", configId);
   return url.toString();
 }
 
